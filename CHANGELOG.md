@@ -3,7 +3,7 @@
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream release: 2.0.0). Format follows [Keep a Changelog](https://keepachangelog.com).
-c her
+
 ## [2.2.3] — 2026-06-03
 
 ### Added

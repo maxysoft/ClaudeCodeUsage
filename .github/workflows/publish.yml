@@ -1,17 +1,27 @@
-# Auto-tag on main push, then build + package on v* tag.
+# Auto-tag on default-branch push, then build + package in the SAME run.
+#
+# Why same-run: GITHUB_TOKEN pushes do NOT trigger new workflow runs
+# (GitHub security: no recursive loops). The tag job outputs new_tag=true
+# and the build job reads that output — no second run needed.
 #
 # Flow:
-#   push to main
-#     → "tag" job reads package.json version, creates v<version> tag if absent
-#     → tag push triggers "build" job
-#   build job:
-#     1. Verifies tag matches package.json version.
-#     2. Compiles TypeScript, packages versioned .vsix.
-#     3. Uploads .vsix as build artifact (30 days).
-#     4. Attaches .vsix to GitHub Release with auto-generated notes.
+#   push to default branch (main)
+#     → "tag" job: reads package.json version, creates v<version> if absent
+#       outputs: new_tag (true/false), tag_name (v<version>)
+#     → "build" job: runs when new_tag=true, builds + packages + releases
 #
-# Manual trigger: Actions → Package Extension → Run workflow
-#   (skips the tag step; builds from whatever ref is selected).
+#   push directly to a v* tag  (e.g. manual `git push origin v2.x.y`)
+#     → "tag" job: skipped (not a branch push)
+#     → "build" job: runs via startsWith(github.ref, 'refs/tags/v')
+#
+#   Manual trigger: Actions → Package Extension → Run workflow
+#     → "tag" job: skipped
+#     → "build" job: runs via workflow_dispatch
+#
+# Skip build: include [skip_build] anywhere in the commit message.
+#
+# NOTE: The push trigger branch ("main") must match the repo default branch.
+# Update it here if the default branch is ever renamed.
 
 name: Package Extension
 
@@ -31,7 +41,11 @@ jobs:
   tag:
     name: Create version tag
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # Run only on default-branch pushes, not on tag pushes or workflow_dispatch.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    outputs:
+      new_tag: ${{ steps.create_tag.outputs.new_tag }}
+      tag_name: ${{ steps.create_tag.outputs.tag_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,24 +53,38 @@ jobs:
           fetch-depth: 0
 
       - name: Tag from package.json version
+        id: create_tag
         run: |
           VER=$(node -p "require('./package.json').version")
           TAG="v${VER}"
+          echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
           if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
             echo "Tag ${TAG} already exists — skipping."
+            echo "new_tag=false" >> "$GITHUB_OUTPUT"
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag "${TAG}"
             git push origin "${TAG}"
             echo "Created and pushed ${TAG}"
+            echo "new_tag=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ── Build & package ─────────────────────────────────────────────────────────
   build:
     name: Build and package
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [tag]
+    # always() lets this job run even when the "tag" job was skipped.
+    # skip_build in commit message suppresses the build (e.g. docs-only commits).
+    if: |
+      always() &&
+      !contains(toJSON(github.event.head_commit.message), 'skip_build') &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        github.event_name == 'workflow_dispatch' ||
+        needs.tag.outputs.new_tag == 'true'
+      )
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,7 +113,7 @@ jobs:
 
       - name: Resolve version
         id: ver
-        run: echo "vsix=claude-code-usage-$(node -p "require('./package.json').version").vsix" >> $GITHUB_OUTPUT
+        run: echo "vsix=claude-code-usage-$(node -p "require('./package.json').version").vsix" >> "$GITHUB_OUTPUT"
 
       - name: Package .vsix
         run: npx -y @vscode/vsce package --no-dependencies --out "${{ steps.ver.outputs.vsix }}"
@@ -98,9 +126,13 @@ jobs:
           retention-days: 30
 
       - name: Attach .vsix to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # Runs for direct tag pushes AND for same-run builds triggered by new_tag=true.
+        # tag_name: use the actual git tag ref when available, otherwise use the
+        # tag_name output from the tag job (same-run build path).
+        if: startsWith(github.ref, 'refs/tags/v') || needs.tag.outputs.new_tag == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.tag.outputs.tag_name }}
           files: ${{ steps.ver.outputs.vsix }}
           generate_release_notes: true
         env:
