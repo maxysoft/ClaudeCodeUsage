@@ -413,7 +413,7 @@ export class ClaudeCodeUsageExtension {
       if (!dataDirectory) {
         const error = 'Claude data directory not found. Please check your configuration.';
         this.statusBar.updateUsageData(null, null, error);
-        this.webviewProvider.updateData(null, null, null, null, [], [], [], error, null);
+        this.webviewProvider.updateData(null, null, null, null, null, [], [], [], error, null);
         return;
       }
 
@@ -448,13 +448,22 @@ export class ClaudeCodeUsageExtension {
       if (records.length === 0) {
         const error = 'No usage records found. Make sure Claude Code is running.';
         this.statusBar.updateUsageData(null, null, error);
-        this.webviewProvider.updateData(null, null, null, null, [], [], [], error, dataDirectory);
+        this.webviewProvider.updateData(null, null, null, null, null, [], [], [], error, dataDirectory);
         return;
       }
 
       // Calculate usage data
       const sessionData = ClaudeDataLoader.getCurrentSessionData(records);
       const todayData = ClaudeDataLoader.getTodayData(records);
+      // Weekly billing window requires the OAuth quota API (usageLimitTracking).
+      // Only compute when resets_at is available; otherwise weekData stays null.
+      const weekResetsAt = usageLimits?.seven_day?.resets_at;
+      const weekData = weekResetsAt
+        ? ClaudeDataLoader.getThisWeekData(
+            records,
+            new Date(new Date(weekResetsAt).getTime() - 7 * 24 * 60 * 60 * 1000)
+          )
+        : null;
       const monthData = ClaudeDataLoader.getThisMonthData(records);
       const allTimeData = ClaudeDataLoader.getAllTimeData(records);
       const dailyDataForMonth = ClaudeDataLoader.getDailyDataForMonth(records);
@@ -466,14 +475,14 @@ export class ClaudeCodeUsageExtension {
 
       // Update UI
       this.statusBar.updateUsageData(todayData, sessionData, undefined, usageLimits);
-      this.webviewProvider.updateData(sessionData, todayData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown);
+      this.webviewProvider.updateData(sessionData, todayData, weekData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       console.error('Error refreshing Claude Code usage data:', error);
 
       this.statusBar.updateUsageData(null, null, errorMessage);
-      this.webviewProvider.updateData(null, null, null, null, [], [], [], errorMessage, null);
+      this.webviewProvider.updateData(null, null, null, null, null, [], [], [], errorMessage, null);
     }
   }
 

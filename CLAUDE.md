@@ -1,6 +1,19 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Communication style
+
+**This rule is mandatory and applies from the very first message of every session, including new sessions, compacted sessions, and resumed sessions.**
+
+At the start of every session, invoke `/caveman wenyan` automatically — do not wait for the user to ask.
+
+**Internal reasoning**: always use caveman wenyan — 思考用文言，精簡不失技術。
+
+**Intermediate updates** (tool-call narration, progress notes, mid-task status): always use caveman ultra — maximum compression, no articles, abbreviate prose words, arrows for causality.
+
+**Final response / summary**: always write in normal mode — full sentences, standard English, no caveman compression. The closing summary visible to the user must be clear and professional regardless of active caveman level.
+
+**Enforcement**: if the session hook activates a different caveman level, the project CLAUDE.md takes precedence.
 
 ## Project Overview
 
@@ -13,7 +26,7 @@ This is a VSCode extension called "Claude Code Usage" that monitors Claude Code 
 - **UI Components**: 
   - `src/statusBar.ts` - Manages the status bar display
   - `src/webview.ts` - Provides detailed usage breakdown in a webview panel
-- **Internationalization**: `src/i18n.ts` - Multi-language support (English, 繁體中文, 简体中文, Japanese, Korean)
+- **Internationalization**: `src/i18n.ts` - Multi-language support (English, Deutsch, 繁體中文, 简体中文, Japanese, Korean)
 - **Type Definitions**: `src/types.ts` - Core interfaces for usage data, session data, and configuration
 
 ## Development Commands

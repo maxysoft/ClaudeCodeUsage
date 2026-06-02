@@ -2,13 +2,88 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream release: 2.0.0). Format follows [Keep a Changelog](https://keepachangelog.com).
+
+## [2.2.2] — 2026-06-03
+
+### Fixed
+
+- **"Get AI Advice" button icon** — replaced `✨` emoji with an inline SVG
+  4-pointed star. The emoji requires a system emoji font and is invisible on
+  many Linux setups; inline SVG renders correctly in all platforms via the
+  Chromium webview engine.
+
+---
+
+## [2.2.1] — 2026-06-03
+
+### Fixed
+
+- **Floating horizontal scrollbar** — native horizontal scrollbar on `.daily-table-container`
+  elements was only reachable after scrolling past all table rows. Now hidden via
+  `scrollbar-width: none` / `::-webkit-scrollbar { display: none }` and replaced by a
+  `position: fixed; bottom: 0` overlay div (`#float-hscroll`) that stays visible at the
+  bottom of the viewport. The floating bar syncs bidirectionally with the active table
+  container; links automatically on tab switch and on hover.
+- **`body { overflow-x: hidden }`** prevents the native page-level horizontal scrollbar
+  from reappearing alongside the floating one.
+- Reverted "Get AI Advice" button icon from inline SVG back to the original `✨` emoji,
+  which renders correctly in VSCode webviews and matches the upstream design.
+
+---
+
+## [2.2.0] — 2026-06-03
+
+### Added
+
+- **`de-DE` (German) added to the `claudeCodeUsage.language` settings enum** — was
+  accepted by the runtime but absent from the VS Code settings picker since 1.0.8.
+
+### Changed
+
+- **Publisher / author** changed from `GrowthJack` to `maxysoft`. Original extension
+  credited in `description`, `contributors` array, and repository links
+  (`github.com/jack21/ClaudeCodeUsage`).
+- **Repository / homepage / bugs URLs** updated to `github.com/maxysoft/ClaudeCodeUsage`.
+- **Webview container** `max-width` increased from `800px` → `1100px` for wider
+  token-breakdown tables and charts.
+- **GitHub Actions workflow** (`publish.yml`): removed VS Code Marketplace (`vsce publish`)
+  and Open VSX (`ovsx publish`) auto-publish steps. Workflow now compiles, packages a
+  versioned `.vsix` (`claude-code-usage-<version>.vsix`), uploads it as a build artifact,
+  and attaches it to the GitHub Release on `v*` tag push. Renamed workflow to
+  `Package Extension`.
+
+---
+
+## [2.1.0] — 2026-06-03
+
+### Added
+
+- **"This Week" tab** in the usage dashboard. Shows usage aggregated for the current
+  Anthropic billing window, derived from the OAuth quota API's `seven_day.resets_at`
+  field (`resets_at - 7 days` = billing window start). Inserted between "Today" and
+  "This Month".
+- `ClaudeDataLoader.getThisWeekData(records, weekStart)` — requires an explicit
+  `weekStart` date; no calendar-Monday fallback.
+- `thisWeek` i18n key added to all six UI languages: English ("This Week"), German
+  ("Diese Woche"), 繁體中文 ("本週"), 简体中文 ("本周"), 日本語 ("今週"),
+  한국어 ("이번 주").
+
+### Changed
+
+- When `usageLimitTracking` is disabled or the OAuth API has not returned
+  `seven_day.resets_at`, the "This Week" tab shows a clear explanation:
+  _"Weekly data not available. Enable `claudeCodeUsage.usageLimitTracking`."_
+  — rather than silently falling back to the most recent Monday.
+
+---
 
 ## [2.0.0] — 2026-05-26
 
 ### Added
 
 #### Pricing accuracy
+
 - **Opus 4.6 / 4.7 / Sonnet 4.5 / Sonnet 4.6 / Haiku 4.5** added to the pricing
   table (verified against the official Anthropic pricing page).
 - Reference pricing for common non-Anthropic models that may appear in proxied
@@ -25,6 +100,7 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
   LiteLLM's public dataset as runtime overrides.
 
 #### Quota tracking (real `/usage` data)
+
 - **5-hour and weekly limit utilisation** + reset times fetched via Claude
   Code's own OAuth session at `~/.claude/.credentials.json` →
   `api.anthropic.com/api/oauth/usage`. Zero configuration. _Approach adapted
@@ -36,6 +112,7 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
   reset weekday/time.
 
 #### Usage insights
+
 - **Sessions tab** — usage per conversation (one row per `.jsonl` file), with
   project, peak context window, duration and a session-id tooltip. Sortable.
 - **Projects tab** — usage aggregated per working directory. Paths that differ
@@ -56,6 +133,7 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
   reports for a single request.
 
 #### AI advice (opt-in)
+
 - **`Get AI Usage Advice`** command + button. Sends an aggregate summary
   plus a sample of your recent user prompts (or just the aggregates if
   prompts are unavailable) to an OpenAI-compatible chat endpoint
@@ -69,11 +147,12 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
   looks like — so users can decide whether to set up a key before
   configuring one. The demo file is filename-marked `…-DEMO-…`, opens
   with a prominent banner ("This file is a static demo, not real advice"
-  + 4 enable steps), and the body is **localised per UI language**
+  and 4 enable steps), and the body is **localised per UI language**
   (en / zh-CN / zh-TW / ja / ko / de-DE) so users can judge the feature
   in their own language.
 
 #### Quality-of-life
+
 - **Status-bar tooltip** is now an aligned Markdown table.
 - Status bar also shows the **current-session cost** next to today's cost.
 - **Compact number format** option (`1.2M` / `345K`).
@@ -84,6 +163,7 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
   Command Palette.
 
 #### Settings (all opt-in)
+
 - `enableContentAnalysis` — toggle the Content tab + analysis pipeline.
 - `projectGroupingMode` — `git` (default), `folder` (no fs walk) or `flat`.
 - `compactNumbers` — toggle `1.2M`/`345K` formatting.
@@ -96,7 +176,7 @@ upstream release: 1.0.8). Format follows [Keep a Changelog](https://keepachangel
 - **`advice.apiKey` is no longer back-compat read from the pre-2.0
   `adviceApiKey` flat key.** Other `advice.*` config still falls back so
   URL / model / effort survive the rename. Reason: with the apiKey
-  fallback, clearing the *new* key in Settings did not actually disable
+  fallback, clearing the _new_ key in Settings did not actually disable
   the feature (the old key kept it alive silently and the demo-mode
   fallback never triggered). Migration: if you set `adviceApiKey`
   before 2.0, re-paste it under **`claudeCodeUsage.advice.apiKey`**.

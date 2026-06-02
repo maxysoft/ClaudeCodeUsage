@@ -609,6 +609,20 @@ export class ClaudeDataLoader {
     return this.calculateUsageData(todayRecords);
   }
 
+  /**
+   * Returns usage for the current Anthropic billing week.
+   * `weekStart` must be derived from `seven_day.resets_at - 7 days` (OAuth quota API).
+   * Call only when that value is available; otherwise show the "data not available" state.
+   */
+  static getThisWeekData(records: ClaudeUsageRecord[], weekStart: Date): UsageData {
+    const weekRecords = records.filter((record) => {
+      const recordDate = new Date(record.timestamp);
+      return recordDate >= weekStart;
+    });
+
+    return this.calculateUsageData(weekRecords);
+  }
+
   static getThisMonthData(records: ClaudeUsageRecord[]): UsageData {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);

@@ -19,7 +19,7 @@ const MILL = 1_000_000;
 
 // =====================================================================
 // Anthropic / Claude pricing
-// Verified 2026-05-21 — https://platform.claude.com/docs/en/about-claude/pricing
+// Verified 2026-05-31 — https://platform.claude.com/docs/en/about-claude/pricing
 //
 // Cache pricing follows Anthropic's standard multipliers vs base input price:
 //   - 5-minute cache write : 1.25x base input  (what Claude Code writes by default)
@@ -27,7 +27,7 @@ const MILL = 1_000_000;
 // `cache_creation_input_token_cost` below uses the 5-minute write rate.
 // =====================================================================
 
-// Opus 4.5 / 4.6 / 4.7 — current Opus tier ($5 / $25)
+// Opus 4.5 / 4.6 / 4.7 / 4.8 — current Opus tier ($5 / $25)
 const OPUS_CURRENT: ModelPricing = {
   input_cost_per_token: 5 / MILL,
   output_cost_per_token: 25 / MILL,
@@ -35,7 +35,7 @@ const OPUS_CURRENT: ModelPricing = {
   cache_read_input_token_cost: 0.5 / MILL,
 };
 
-// Opus 4 / 4.1 — legacy Opus tier ($15 / $75)
+// Opus 4.1 — legacy Opus tier ($15 / $75)
 const OPUS_LEGACY: ModelPricing = {
   input_cost_per_token: 15 / MILL,
   output_cost_per_token: 75 / MILL,
@@ -43,7 +43,7 @@ const OPUS_LEGACY: ModelPricing = {
   cache_read_input_token_cost: 1.5 / MILL,
 };
 
-// Sonnet 3.5 / 4 / 4.5 / 4.6 — Sonnet tier ($3 / $15, <=200K context)
+// Sonnet 4 / 4.5 / 4.6 — Sonnet tier ($3 / $15, <=200K context)
 const SONNET: ModelPricing = {
   input_cost_per_token: 3 / MILL,
   output_cost_per_token: 15 / MILL,
@@ -57,14 +57,6 @@ const HAIKU_45: ModelPricing = {
   output_cost_per_token: 5 / MILL,
   cache_creation_input_token_cost: 1.25 / MILL,
   cache_read_input_token_cost: 0.1 / MILL,
-};
-
-// Haiku 3.5 ($0.80 / $4) — retired, kept for historical logs
-const HAIKU_35: ModelPricing = {
-  input_cost_per_token: 0.8 / MILL,
-  output_cost_per_token: 4 / MILL,
-  cache_creation_input_token_cost: 1.0 / MILL,
-  cache_read_input_token_cost: 0.08 / MILL,
 };
 
 /**
@@ -140,6 +132,10 @@ const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
 // so direct lookups stay fast; anything not listed is resolved by getModelPricing()'s
 // family-aware fallback below.
 const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Claude Opus 4.8
+  'claude-opus-4-8': OPUS_CURRENT,
+  'claude-opus-4-8-20251001': OPUS_CURRENT,
+
   // Claude Opus 4.7 / 4.6
   'claude-opus-4-7': OPUS_CURRENT,
   'claude-opus-4-6': OPUS_CURRENT,
@@ -152,28 +148,17 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-1-20250805': OPUS_LEGACY,
   'claude-opus-4-1': OPUS_LEGACY,
 
-  // Claude Opus 4 (2025-05-14)
-  'claude-opus-4-20250514': OPUS_LEGACY,
-
   // Claude Sonnet 4.6
   'claude-sonnet-4-6': SONNET,
+  'claude-sonnet-4-6-20250514': SONNET,
 
   // Claude Sonnet 4.5 (2025-09-29)
   'claude-sonnet-4-5-20250929': SONNET,
   'claude-sonnet-4-5': SONNET,
 
-  // Claude Sonnet 4 (2025-05-14)
-  'claude-sonnet-4-20250514': SONNET,
-
-  // Claude Sonnet 3.5 (2024-10-22)
-  'claude-3-5-sonnet-20241022': SONNET,
-
   // Claude Haiku 4.5 (2025-10)
   'claude-haiku-4-5-20251001': HAIKU_45,
   'claude-haiku-4-5': HAIKU_45,
-
-  // Claude Haiku 3.5 (2024-10-22) — retired
-  'claude-3-5-haiku-20241022': HAIKU_35,
 
   // Common US / Chinese models (see NON_CLAUDE_PRICING above)
   ...NON_CLAUDE_PRICING,
@@ -199,14 +184,10 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
 
   // --- Anthropic / Claude ---
   if (name.includes('haiku')) {
-    if (name.includes('haiku-3') || name.includes('-3-5-haiku') || name.includes('-3-haiku')) {
-      return { pricing: HAIKU_35, family: 'Haiku 3.5' };
-    }
     return { pricing: HAIKU_45, family: 'Haiku 4.5' };
   }
   if (name.includes('opus')) {
-    // Legacy Opus (4 / 4.1) is always in the exact map, so an unknown opus is
-    // almost certainly a new-tier model.
+    // Opus 4.1 is in the exact map; unknown Opus is almost certainly a new current-tier model ($5/$25).
     return { pricing: OPUS_CURRENT, family: 'Opus (current tier)' };
   }
   if (name.includes('sonnet')) {
@@ -246,8 +227,16 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
     return null;
   }
 
-  // Try different variation matches (similar to ccusage logic)
-  const variations = [modelName, `anthropic/${modelName}`, `claude-3-5-${modelName}`, `claude-3-${modelName}`, `claude-${modelName}`];
+  // Try the exact name and the anthropic/ prefix. Also strip 8-digit date suffixes
+  // (e.g. "claude-opus-4-8" from "claude-opus-4-8-20251001") so dated snapshots
+  // not in the explicit table still resolve to the base model entry.
+  // The old synthetic "claude-3-5-${name}" / "claude-3-${name}" prefixes were removed
+  // because they can silently match unrelated short model strings.
+  const withoutDate = modelName.replace(/-\d{8}$/, '');
+  const variations: string[] = [modelName, `anthropic/${modelName}`];
+  if (withoutDate !== modelName) {
+    variations.push(withoutDate, `anthropic/${withoutDate}`);
+  }
 
   // Runtime overrides (fetched from LiteLLM) take precedence over the built-in table.
   for (const variation of variations) {
@@ -397,6 +386,11 @@ export function fetchLatestPricing(): Promise<{ updated: number }> {
           const json = JSON.parse(body) as Record<string, unknown>;
           let updated = 0;
 
+          // Reject values outside a plausible range — guards against a crafted
+          // payload with zero or extreme values from a compromised upstream.
+          // $1 per token ($1M per million) is far above any real model price.
+          const MAX_PRICE_PER_TOKEN = 1;
+
           for (const [name, raw] of Object.entries(json)) {
             if (raw == null || typeof raw !== 'object') {
               continue;
@@ -405,10 +399,19 @@ export function fetchLatestPricing(): Promise<{ updated: number }> {
             if (typeof info.input_cost_per_token !== 'number') {
               continue;
             }
+            const inputCost = info.input_cost_per_token;
+            if (inputCost <= 0 || inputCost > MAX_PRICE_PER_TOKEN) {
+              console.warn(`fetchLatestPricing: skipping ${name} — input_cost_per_token ${inputCost} out of range`);
+              continue;
+            }
+            const outputCost = typeof info.output_cost_per_token === 'number' ? info.output_cost_per_token : undefined;
+            if (outputCost !== undefined && (outputCost <= 0 || outputCost > MAX_PRICE_PER_TOKEN)) {
+              console.warn(`fetchLatestPricing: skipping ${name} — output_cost_per_token ${outputCost} out of range`);
+              continue;
+            }
             runtimePricingOverrides[name] = {
-              input_cost_per_token: info.input_cost_per_token,
-              output_cost_per_token:
-                typeof info.output_cost_per_token === 'number' ? info.output_cost_per_token : undefined,
+              input_cost_per_token: inputCost,
+              output_cost_per_token: outputCost,
               cache_creation_input_token_cost:
                 typeof info.cache_creation_input_token_cost === 'number' ? info.cache_creation_input_token_cost : undefined,
               cache_read_input_token_cost:

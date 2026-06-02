@@ -12,6 +12,7 @@ export interface Translations {
     title: string;
     currentSession: string;
     today: string;
+    thisWeek: string;
     thisMonth: string;
     allTime: string;
     refresh: string;
@@ -103,6 +104,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: 'Claude Code Usage',
       currentSession: 'Current Session',
       today: 'Today',
+      thisWeek: 'This Week',
       thisMonth: 'This Month',
       allTime: 'All Time',
       refresh: 'Refresh',
@@ -203,6 +205,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: "Claude Code Nutzung",
       currentSession: "Current Session",
       today: "Heute",
+      thisWeek: "Diese Woche",
       thisMonth: "Diesen Monat",
       allTime: "Seit Aufzeichnungsbeginn",
       refresh: "Aktualisieren",
@@ -306,6 +309,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: 'Claude Code 使用量',
       currentSession: '當前會話',
       today: '今日',
+      thisWeek: '本週',
       thisMonth: '本月',
       allTime: '所有',
       refresh: '重新整理',
@@ -406,6 +410,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: 'Claude Code 使用量',
       currentSession: '当前会话',
       today: '今日',
+      thisWeek: '本周',
       thisMonth: '本月',
       allTime: '所有',
       refresh: '刷新',
@@ -506,6 +511,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: 'Claude Code 使用量',
       currentSession: '現在のセッション',
       today: '今日',
+      thisWeek: '今週',
       thisMonth: '今月',
       allTime: 'すべて',
       refresh: '更新',
@@ -607,6 +613,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       title: 'Claude Code 사용량',
       currentSession: '현재 세션',
       today: '오늘',
+      thisWeek: '이번 주',
       thisMonth: '이번 달',
       allTime: '전체',
       refresh: '새로고침',

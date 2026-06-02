@@ -1,19 +1,28 @@
 {
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
-  "description": "Monitor Claude Code usage and costs in VSCode status bar",
-  "version": "2.0.0",
-  "publisher": "GrowthJack",
-  "author": "GrowthJack",
+  "description": "Monitor Claude Code usage and costs in VSCode status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
+  "version": "2.2.2",
+  "publisher": "maxysoft",
+  "author": {
+    "name": "maxysoft",
+    "email": "1979739+maxysoft@users.noreply.github.com"
+  },
+  "contributors": [
+    {
+      "name": "GrowthJack",
+      "url": "https://github.com/jack21/ClaudeCodeUsage"
+    }
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jack21/ClaudeCodeUsage.git"
+    "url": "https://github.com/maxysoft/ClaudeCodeUsage.git"
   },
   "bugs": {
-    "url": "https://github.com/jack21/ClaudeCodeUsage/issues"
+    "url": "https://github.com/maxysoft/ClaudeCodeUsage/issues"
   },
-  "homepage": "https://github.com/jack21/ClaudeCodeUsage",
+  "homepage": "https://github.com/maxysoft/ClaudeCodeUsage",
   "keywords": [
     "claude",
     "claude-code",
@@ -57,6 +66,7 @@
           "enum": [
             "auto",
             "en",
+            "de-DE",
             "zh-TW",
             "zh-CN",
             "ja",

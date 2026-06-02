@@ -8,6 +8,7 @@ probe-*.mjs
 
 .gitignore
 .yarnrc
+.markdownlint.json
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json

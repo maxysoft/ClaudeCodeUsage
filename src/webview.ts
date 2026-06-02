@@ -7,6 +7,7 @@ export class UsageWebviewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private currentSessionData: SessionData | null = null;
   private todayData: UsageData | null = null;
+  private weekData: UsageData | null = null;
   private monthData: UsageData | null = null;
   private allTimeData: UsageData | null = null;
   private dailyDataForMonth: { date: string; data: UsageData }[] = [];
@@ -100,6 +101,7 @@ export class UsageWebviewProvider {
   updateData(
     sessionData: SessionData | null,
     todayData: UsageData | null,
+    weekData: UsageData | null,
     monthData: UsageData | null,
     allTimeData: UsageData | null,
     dailyDataForMonth: { date: string; data: UsageData }[] = [],
@@ -115,6 +117,7 @@ export class UsageWebviewProvider {
   ): void {
     this.currentSessionData = sessionData;
     this.todayData = todayData;
+    this.weekData = weekData;
     this.monthData = monthData;
     this.allTimeData = allTimeData;
     this.dailyDataForMonth = dailyDataForMonth;
@@ -244,6 +247,7 @@ export class UsageWebviewProvider {
     const refresh = I18n.t.popup.refresh;
     const settings = I18n.t.popup.settings;
     const today = I18n.t.popup.today;
+    const thisWeek = I18n.t.popup.thisWeek;
     const thisMonth = I18n.t.popup.thisMonth;
     const allTime = I18n.t.popup.allTime;
     const sessions = I18n.t.popup.sessions;
@@ -252,6 +256,7 @@ export class UsageWebviewProvider {
     const branchesTab = I18n.t.popup.branches;
 
     const todayActive = this.currentTab === 'today' ? 'active' : '';
+    const weekActive = this.currentTab === 'week' ? 'active' : '';
     const monthActive = this.currentTab === 'month' ? 'active' : '';
     const allActive = this.currentTab === 'all' ? 'active' : '';
     const sessionsActive = this.currentTab === 'sessions' ? 'active' : '';
@@ -306,6 +311,11 @@ export class UsageWebviewProvider {
       `" onclick="showTab('today')">` +
       today +
       `</button>
+            <button id="tab-week" class="tab ` +
+      weekActive +
+      `" onclick="showTab('week')">` +
+      thisWeek +
+      `</button>
             <button id="tab-month" class="tab ` +
       monthActive +
       `" onclick="showTab('month')">` +
@@ -341,6 +351,14 @@ export class UsageWebviewProvider {
       `">
             ` +
       this.renderTodayData() +
+      `
+          </div>
+
+          <div id="week" class="tab-content ` +
+      weekActive +
+      `">
+            ` +
+      this.renderWeekData() +
       `
           </div>
 
@@ -388,6 +406,7 @@ export class UsageWebviewProvider {
       `
           </div>
         </div>
+        <div id="float-hscroll"><div id="float-hscroll-inner"></div></div>
         <script>` +
       this.getScript() +
       `</script>
@@ -709,6 +728,17 @@ export class UsageWebviewProvider {
     }
 
     return html;
+  }
+
+  private renderWeekData(): string {
+    if (!this.weekData) {
+      return `<div class="no-data">
+        <p><strong>Weekly data not available.</strong></p>
+        <p>Weekly usage tracks your Anthropic billing window, which requires the Usage Limit Tracking feature to be enabled.<br>
+        Enable it in settings: <code>claudeCodeUsage.usageLimitTracking</code></p>
+      </div>`;
+    }
+    return this.renderUsageData(this.weekData);
   }
 
   private renderMonthData(): string {
@@ -1252,7 +1282,7 @@ export class UsageWebviewProvider {
       '<div class="section-header"><h3>' + t.contentAnalysis + '</h3>' +
       '<span class="section-header-right">' +
       '<span class="cbar-total">' + t.estTokens + ': ~' + I18n.formatNumber(total) + '</span>' +
-      '<button class="btn-secondary btn-small" onclick="getAdvice()">✨ ' + t.getAdvice + '</button>' +
+      '<button class="btn-secondary btn-small" onclick="getAdvice()"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:5px;flex-shrink:0"><path d="M8 0 L9.8 6.2 L16 8 L9.8 9.8 L8 16 L6.2 9.8 L0 8 L6.2 6.2 Z"/></svg>' + t.getAdvice + '</button>' +
       '</span></div>' +
       '<p class="table-hint">' + t.last30days + ' · ' + t.estimatedNote + '</p>' +
       '<div class="cbar-list">' + catRows + '</div>' +
@@ -1513,10 +1543,11 @@ export class UsageWebviewProvider {
         background-color: var(--vscode-editor-background);
         margin: 0;
         padding: 16px;
+        overflow-x: hidden;
       }
 
       .container {
-        max-width: 800px;
+        max-width: 1100px;
         margin: 0 auto;
       }
 
@@ -1858,6 +1889,29 @@ export class UsageWebviewProvider {
       .daily-table-container {
         overflow-x: auto;
         margin-top: 12px;
+        scrollbar-width: none;
+      }
+
+      .daily-table-container::-webkit-scrollbar {
+        display: none;
+      }
+
+      #float-hscroll {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 12px;
+        overflow-x: scroll;
+        overflow-y: hidden;
+        z-index: 9999;
+        display: none;
+        background: var(--vscode-editor-background);
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+
+      #float-hscroll-inner {
+        height: 1px;
       }
 
       .daily-table {
@@ -2711,6 +2765,73 @@ function syncChartBarSelection(date, isSelected) {
     }
   }
 }
+
+// ── Floating horizontal scrollbar ────────────────────────────────────────────
+(function() {
+  const floatBar = document.getElementById('float-hscroll');
+  const floatInner = document.getElementById('float-hscroll-inner');
+  if (!floatBar || !floatInner) return;
+
+  let linked = null;
+  let syncing = false;
+
+  function link(el) {
+    if (linked === el) return;
+    if (linked) linked.removeEventListener('scroll', onContentScroll);
+    linked = el;
+    if (linked) linked.addEventListener('scroll', onContentScroll);
+    refresh();
+  }
+
+  function refresh() {
+    if (!linked) { floatBar.style.display = 'none'; return; }
+    const sw = linked.scrollWidth;
+    const cw = linked.clientWidth;
+    if (sw <= cw) { floatBar.style.display = 'none'; return; }
+    floatInner.style.width = sw + 'px';
+    floatBar.style.display = 'block';
+    if (!syncing) { syncing = true; floatBar.scrollLeft = linked.scrollLeft; syncing = false; }
+  }
+
+  function onContentScroll() {
+    if (syncing) return;
+    syncing = true; floatBar.scrollLeft = linked.scrollLeft; syncing = false;
+  }
+
+  floatBar.addEventListener('scroll', function() {
+    if (syncing || !linked) return;
+    syncing = true; linked.scrollLeft = floatBar.scrollLeft; syncing = false;
+  });
+
+  // Link to first overflowing .daily-table-container in the active tab
+  function linkActiveTab() {
+    const active = document.querySelector('.tab-content.active');
+    if (!active) { link(null); return; }
+    const containers = active.querySelectorAll('.daily-table-container');
+    let found = null;
+    containers.forEach(function(c) { if (!found && c.scrollWidth > c.clientWidth) found = c; });
+    link(found || null);
+  }
+
+  // Hover over any table container to re-link
+  document.addEventListener('mouseover', function(e) {
+    const t = e.target.closest('.daily-table-container');
+    if (t) link(t);
+  });
+
+  // Re-link on tab switch (showTab calls this after DOM update)
+  const origShowTab = window.showTab;
+  window.showTab = function(name) {
+    origShowTab(name);
+    setTimeout(linkActiveTab, 50);
+  };
+
+  // Initial link
+  linkActiveTab();
+
+  // Re-check on window resize
+  window.addEventListener('resize', refresh);
+})();
 
 // Make functions available globally
 window.refresh = refresh;
