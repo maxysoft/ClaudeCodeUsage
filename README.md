@@ -1,7 +1,6 @@
 # Claude Code Usage
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=flat-square&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
-[![Open VSX Registry](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=flat-square&logo=eclipseide&label=Open%20VSX)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Latest Release](https://img.shields.io/github/v/release/maxysoft/ClaudeCodeUsage?style=flat-square&label=Latest%20Release)](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
 > **What this is, in one sentence:** a VS Code status-bar monitor that
@@ -100,24 +99,10 @@ Closes upstream issues
 
 ## Install
 
-### VS Code Marketplace
+Download the `.vsix` from the [latest GitHub Release](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest),
+then:
 
-Search for **`Claude Code Usage`** in the Extensions view (`Ctrl+Shift+X`),
-or:
-
-```
-ext install GrowthJack.claude-code-usage
-```
-
-### Cursor / Windsurf / Antigravity (Open VSX)
-
-Same extension is published at the Open VSX Registry:
-[GrowthJack.claude-code-usage](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage).
-
-### From a `.vsix` file
-
-`Ctrl+Shift+P` → **Extensions: Install from VSIX...** → pick the
-downloaded `.vsix`.
+`Ctrl+Shift+P` → **Extensions: Install from VSIX...** → pick the downloaded `.vsix`.
 
 ---
 

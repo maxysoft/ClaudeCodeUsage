@@ -3,6 +3,18 @@
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream release: 2.0.0). Format follows [Keep a Changelog](https://keepachangelog.com).
+c her
+## [2.2.3] — 2026-06-03
+
+### Added
+
+- **"This Week" reset countdown** — the "This Week" tab now shows a banner
+  with the exact date/time of the next weekly billing window reset and the
+  time remaining (e.g. `Resets: Mon Jun 09 at 14:22 — 5h 38m`). The banner
+  is derived from the `seven_day.resets_at` field already fetched by the
+  OAuth quota API; it only appears when `usageLimitTracking` is enabled.
+
+---
 
 ## [2.2.2] — 2026-06-03
 

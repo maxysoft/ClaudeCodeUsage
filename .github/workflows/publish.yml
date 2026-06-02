@@ -1,33 +1,62 @@
-# Build and package on `v*` tag push or manual trigger.
+# Auto-tag on main push, then build + package on v* tag.
 #
-# What this does:
-#   1. Checks out the tagged commit.
-#   2. Verifies the tag matches package.json's version.
-#   3. Compiles TypeScript, packages a versioned .vsix.
-#   4. Uploads the .vsix as a build artifact.
-#   5. Attaches the .vsix to the GitHub Release for that tag,
-#      auto-generating release notes from PRs merged since the previous release.
+# Flow:
+#   push to main
+#     → "tag" job reads package.json version, creates v<version> tag if absent
+#     → tag push triggers "build" job
+#   build job:
+#     1. Verifies tag matches package.json version.
+#     2. Compiles TypeScript, packages versioned .vsix.
+#     3. Uploads .vsix as build artifact (30 days).
+#     4. Attaches .vsix to GitHub Release with auto-generated notes.
 #
-# Usage:
-#   git tag v2.2.0 && git push origin v2.2.0
-#   ↳ this workflow then runs end to end.
-#
-# Or trigger manually from Actions → Package Extension → Run workflow.
+# Manual trigger: Actions → Package Extension → Run workflow
+#   (skips the tag step; builds from whatever ref is selected).
 
 name: Package Extension
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed by softprops/action-gh-release to create / attach assets
+  contents: write
 
 jobs:
-  build:
+  # ── Auto-tag ────────────────────────────────────────────────────────────────
+  tag:
+    name: Create version tag
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag from package.json version
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          TAG="v${VER}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "Tag ${TAG} already exists — skipping."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "${TAG}"
+            git push origin "${TAG}"
+            echo "Created and pushed ${TAG}"
+          fi
+
+  # ── Build & package ─────────────────────────────────────────────────────────
+  build:
+    name: Build and package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +69,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Refuse to proceed if the tag doesn't match the version in package.json.
       - name: Verify tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |

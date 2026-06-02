@@ -8,6 +8,7 @@ export class UsageWebviewProvider {
   private currentSessionData: SessionData | null = null;
   private todayData: UsageData | null = null;
   private weekData: UsageData | null = null;
+  private weekResetsAt: string | null = null;
   private monthData: UsageData | null = null;
   private allTimeData: UsageData | null = null;
   private dailyDataForMonth: { date: string; data: UsageData }[] = [];
@@ -113,11 +114,13 @@ export class UsageWebviewProvider {
     sessionBreakdown: SessionUsage[] = [],
     projectBreakdown: ProjectGroup[] = [],
     contentAnalysis: ContentAnalysis | null = null,
-    branchBreakdown: BranchUsage[] = []
+    branchBreakdown: BranchUsage[] = [],
+    weekResetsAt: string | null = null
   ): void {
     this.currentSessionData = sessionData;
     this.todayData = todayData;
     this.weekData = weekData;
+    this.weekResetsAt = weekResetsAt;
     this.monthData = monthData;
     this.allTimeData = allTimeData;
     this.dailyDataForMonth = dailyDataForMonth;
@@ -731,14 +734,40 @@ export class UsageWebviewProvider {
   }
 
   private renderWeekData(): string {
-    if (!this.weekData) {
-      return `<div class="no-data">
-        <p><strong>Weekly data not available.</strong></p>
-        <p>Weekly usage tracks your Anthropic billing window, which requires the Usage Limit Tracking feature to be enabled.<br>
-        Enable it in settings: <code>claudeCodeUsage.usageLimitTracking</code></p>
-      </div>`;
+    let resetBanner = '';
+    if (this.weekResetsAt) {
+      const resetsDate = new Date(this.weekResetsAt);
+      const diffMs = resetsDate.getTime() - Date.now();
+      if (diffMs > 0) {
+        const totalSecs = Math.floor(diffMs / 1000);
+        const days = Math.floor(totalSecs / 86400);
+        const hours = Math.floor((totalSecs % 86400) / 3600);
+        const minutes = Math.floor((totalSecs % 3600) / 60);
+        const timeLeft = (days > 0 ? days + 'd ' : '') + hours + 'h ' + minutes + 'm';
+        const dateStr =
+          resetsDate.toLocaleDateString(I18n.getLocale(), I18n.dateFormatOptions({ weekday: 'short', month: 'short', day: 'numeric' })) +
+          ' ' +
+          resetsDate.toLocaleTimeString(I18n.getLocale(), { hour: '2-digit', minute: '2-digit' });
+        resetBanner =
+          '<div class="week-reset-banner">' +
+          '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75">' +
+          '<path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z"/>' +
+          '<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0"/>' +
+          '</svg>' +
+          '<span>' + I18n.t.popup.resets + ': <strong>' + dateStr + '</strong>' +
+          ' — ' + timeLeft + '</span>' +
+          '</div>';
+      }
     }
-    return this.renderUsageData(this.weekData);
+
+    if (!this.weekData) {
+      return '<div class="no-data">' +
+        '<p><strong>Weekly data not available.</strong></p>' +
+        '<p>Weekly usage tracks your Anthropic billing window, which requires the Usage Limit Tracking feature to be enabled.<br>' +
+        'Enable it in settings: <code>claudeCodeUsage.usageLimitTracking</code></p>' +
+        '</div>';
+    }
+    return resetBanner + this.renderUsageData(this.weekData);
   }
 
   private renderMonthData(): string {
@@ -2422,6 +2451,19 @@ export class UsageWebviewProvider {
 
       .cf-5 {
         background: var(--vscode-charts-red);
+      }
+
+      .week-reset-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--vscode-input-background);
+        border: 1px solid var(--vscode-input-border);
+        border-left: 3px solid var(--vscode-focusBorder);
+        border-radius: 6px;
+        margin-bottom: 16px;
+        font-size: 13px;
       }
     `;
   }

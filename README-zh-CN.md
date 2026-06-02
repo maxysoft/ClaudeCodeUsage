@@ -54,17 +54,13 @@
 
 ## 📥 下载
 
-### VSCode Marketplace
+### GitHub Releases
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
-
-### Open VSX Registry（适用于 Cursor / Windsurf / Antigravity）
-
-[![Open VSX](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Latest Release](https://img.shields.io/github/v/release/maxysoft/ClaudeCodeUsage?style=for-the-badge&label=Latest%20Release)](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest)
 
 ## 安装
 
-1. 从 VSCode 市场安装扩展
+1. 从 [GitHub Releases](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest) 下载 `.vsix`，然后通过 `Ctrl+Shift+P` → **从 VSIX 安装...** 安装
 2. 扩展会自动检测您的 Claude Code 数据目录
 3. 开始使用 Claude Code，您的使用量会出现在状态栏中
 

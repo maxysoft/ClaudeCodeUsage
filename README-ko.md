@@ -54,17 +54,13 @@ Claude Code 사용량과 비용을 상세한 분석과 인터랙티브 시각화
 
 ## 📥 다운로드
 
-### VSCode Marketplace
+### GitHub Releases
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
-
-### Open VSX Registry（Cursor / Windsurf / Antigravity용）
-
-[![Open VSX](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Latest Release](https://img.shields.io/github/v/release/maxysoft/ClaudeCodeUsage?style=for-the-badge&label=Latest%20Release)](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest)
 
 ## 설치
 
-1. VSCode 마켓플레이스에서 확장 프로그램 설치
+1. [GitHub Releases](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest)에서 `.vsix` 다운로드 후 `Ctrl+Shift+P` → **VSIX에서 설치...** 로 설치
 2. 확장 프로그램이 Claude Code 데이터 디렉토리를 자동 감지
 3. Claude Code 사용을 시작하면 상태 표시줄에 사용량이 나타납니다
 

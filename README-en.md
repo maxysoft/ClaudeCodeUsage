@@ -54,17 +54,13 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 
 ## 📥 Download
 
-### VSCode Marketplace
+### GitHub Releases
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
-
-### Open VSX Registry (for Cursor / Windsurf / Antigravity)
-
-[![Open VSX](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Latest Release](https://img.shields.io/github/v/release/maxysoft/ClaudeCodeUsage?style=for-the-badge&label=Latest%20Release)](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest)
 
 ## Installation
 
-1. Install the extension from the VSCode marketplace
+1. Download the `.vsix` from [GitHub Releases](https://github.com/maxysoft/ClaudeCodeUsage/releases/latest), then install via `Ctrl+Shift+P` → **Extensions: Install from VSIX...**
 2. The extension will automatically detect your Claude Code data directory
 3. Start using Claude Code and see your usage appear in the status bar
 

@@ -475,7 +475,7 @@ export class ClaudeCodeUsageExtension {
 
       // Update UI
       this.statusBar.updateUsageData(todayData, sessionData, undefined, usageLimits);
-      this.webviewProvider.updateData(sessionData, todayData, weekData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown);
+      this.webviewProvider.updateData(sessionData, todayData, weekData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, weekResetsAt || null);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
