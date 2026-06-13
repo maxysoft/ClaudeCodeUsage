@@ -60,6 +60,13 @@ export class UsageWebviewProvider {
         case 'getAdvice':
           vscode.commands.executeCommand('claudeCodeUsage.getAdvice');
           break;
+        case 'setPauseDashboardRefresh':
+          // Persist the in-dashboard toggle so it survives reload and stays in
+          // sync with VS Code Settings.
+          await vscode.workspace
+            .getConfiguration('claudeCodeUsage')
+            .update('pauseDashboardRefresh', !!message.value, vscode.ConfigurationTarget.Global);
+          break;
         case 'tabChanged':
           this.currentTab = message.tab;
           break;
@@ -292,22 +299,37 @@ export class UsageWebviewProvider {
       this.getStyles() +
       `</style>
       </head>
-      <body>
+      <body class="${
+        vscode.workspace.getConfiguration('claudeCodeUsage').get('pauseDashboardRefresh', false)
+          ? 'auto-off'
+          : ''
+      }">
         <div class="container">
           <header>
             <h1>` +
       title +
       `</h1>
             <div class="actions">
-              <button onclick="refresh()" class="btn-secondary">` +
+              <label class="auto-refresh-switch" title="${this.escapeHtml(I18n.t.popup.autoRefresh)}">
+                <span class="auto-refresh-label">${I18n.t.popup.autoRefresh}</span>
+                <span class="switch">
+                  <input type="checkbox" id="autoRefreshCheckbox" ${
+                    vscode.workspace.getConfiguration('claudeCodeUsage').get('pauseDashboardRefresh', false)
+                      ? ''
+                      : 'checked'
+                  } onchange="toggleAutoRefresh()">
+                  <span class="slider"></span>
+                </span>
+              </label>
+              <button onclick="refresh()" id="refreshNowBtn" class="btn-secondary btn-refresh-now">↻ ` +
       refresh +
       `</button>
               <button onclick="openSettings()" class="btn-secondary">` +
       settings +
       `</button>
             </div>
-          </header>
-
+          </header>` +
+      `
           <div class="tabs">
             <button id="tab-today" class="tab ` +
       todayActive +
@@ -409,7 +431,6 @@ export class UsageWebviewProvider {
       `
           </div>
         </div>
-        <div id="float-hscroll"><div id="float-hscroll-inner"></div></div>
         <script>` +
       this.getScript() +
       `</script>
@@ -749,19 +770,19 @@ export class UsageWebviewProvider {
           ' ' +
           resetsDate.toLocaleTimeString(I18n.getLocale(), { hour: '2-digit', minute: '2-digit' });
         resetBanner =
-          '<div class="week-reset-banner">' +
-          '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75">' +
-          '<path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z"/>' +
-          '<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0"/>' +
+          '<div class=\"week-reset-banner\">' +
+          '<svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"currentColor\" style=\"flex-shrink:0;opacity:0.75\">' +
+          '<path d=\"M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z\"/>' +
+          '<path d=\"M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0\"/>' +
           '</svg>' +
           '<span>' + I18n.t.popup.resets + ': <strong>' + dateStr + '</strong>' +
-          ' — ' + timeLeft + '</span>' +
+          ' \u2014 ' + timeLeft + '</span>' +
           '</div>';
       }
     }
 
     if (!this.weekData) {
-      return '<div class="no-data">' +
+      return '<div class=\"no-data\">' +
         '<p><strong>Weekly data not available.</strong></p>' +
         '<p>Weekly usage tracks your Anthropic billing window, which requires the Usage Limit Tracking feature to be enabled.<br>' +
         'Enable it in settings: <code>claudeCodeUsage.usageLimitTracking</code></p>' +
@@ -793,11 +814,9 @@ export class UsageWebviewProvider {
           <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
         </div>
 
-        <!-- Chart Container -->
-        <div class="chart-container">
-          <div class="chart-content" id="dailyChart">
-            ${this.renderDailyChart()}
-          </div>
+        <!-- Chart Container (hc-wrap is self-contained: Y-axis + gridlines + scroll) -->
+        <div class="chart-content" id="dailyChart">
+          ${this.renderDailyChart()}
         </div>
 
         ${this.renderCompositionChart(
@@ -883,11 +902,9 @@ export class UsageWebviewProvider {
           <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
         </div>
 
-        <!-- Chart Container -->
-        <div class="chart-container">
-          <div class="chart-content" id="allTimeChart">
-            ${this.renderAllTimeChart()}
-          </div>
+        <!-- Chart Container (hc-wrap is self-contained: Y-axis + gridlines + scroll) -->
+        <div class="chart-content" id="allTimeChart">
+          ${this.renderAllTimeChart()}
         </div>
 
         ${this.renderCompositionChart(
@@ -960,9 +977,14 @@ export class UsageWebviewProvider {
     let rows = '';
     this.sessionBreakdown.forEach((s) => {
       const d = s.data;
+      // Conversation title (the name `claude --resume` shows); falls back to a
+      // short session id so same-project rows stay distinguishable either way.
+      const fullName = s.title || s.sessionId;
+      const displayName = fullName.length > 40 ? fullName.slice(0, 40) + '…' : fullName;
       rows +=
         '<tr class="sort-row"' +
         ' data-sort-time="' + s.startTime.getTime() + '"' +
+        ' data-sort-session="' + this.escapeHtml(fullName.toLowerCase()) + '"' +
         ' data-sort-project="' + this.escapeHtml((s.projectName || '').toLowerCase()) + '"' +
         ' data-sort-context="' + s.peakContextTokens + '"' +
         ' data-sort-duration="' + (s.endTime.getTime() - s.startTime.getTime()) + '"' +
@@ -970,6 +992,9 @@ export class UsageWebviewProvider {
         '>' +
         '<td class="date-cell" title="' + this.escapeHtml(s.sessionId) + '">' +
         this.escapeHtml(this.formatDateTime(s.startTime)) +
+        '</td>' +
+        '<td class="name-cell" title="' + this.escapeHtml(fullName + ' (' + s.sessionId + ')') + '">' +
+        this.escapeHtml(displayName) +
         '</td>' +
         this.renderProjectCell(s.projectName, s.projectPath) +
         '<td class="cost-cell">' + I18n.formatCurrency(d.totalCost) + '</td>' +
@@ -994,6 +1019,7 @@ export class UsageWebviewProvider {
       '<table class="daily-table sortable-table">' +
       '<thead><tr>' +
       th('time', t.startTime) +
+      th('session', t.sessionTitle) +
       th('project', t.project) +
       th('cost', t.cost) +
       th('input', t.inputTokens) +
@@ -1311,7 +1337,7 @@ export class UsageWebviewProvider {
       '<div class="section-header"><h3>' + t.contentAnalysis + '</h3>' +
       '<span class="section-header-right">' +
       '<span class="cbar-total">' + t.estTokens + ': ~' + I18n.formatNumber(total) + '</span>' +
-      '<button class="btn-secondary btn-small" onclick="getAdvice()"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:5px;flex-shrink:0"><path d="M8 0 L9.8 6.2 L16 8 L9.8 9.8 L8 16 L6.2 9.8 L0 8 L6.2 6.2 Z"/></svg>' + t.getAdvice + '</button>' +
+      '<button class="btn-secondary btn-small" onclick="getAdvice()"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:4px"><path d="M8 1a5 5 0 0 1 3.5 8.5c-.6.6-1 1.4-1 2.2V12H5.5v-.3c0-.8-.4-1.6-1-2.2A5 5 0 0 1 8 1zm2 12.5H6a2 2 0 0 0 4 0z"/></svg>' + t.getAdvice + '</button>' +
       '</span></div>' +
       '<p class="table-hint">' + t.last30days + ' · ' + t.estimatedNote + '</p>' +
       '<div class="cbar-list">' + catRows + '</div>' +
@@ -1411,79 +1437,106 @@ export class UsageWebviewProvider {
   }
 
   private renderDailyChart(): string {
-    if (this.dailyDataForMonth.length === 0) {
-      return '<div class="no-chart-data">No data available</div>';
-    }
-
-    // Sort data by date (oldest first for chart display)
     const sortedData = [...this.dailyDataForMonth].sort((a, b) => a.date.localeCompare(b.date));
-
-    // Generate chart bars for cost (default metric)
-    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
-    const maxHeight = 120; // Max height in pixels
-
-    return `
-      <div class="chart-bars">
-        ${sortedData
-          .map(({ date, data }) => {
-            const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
-            return `
-            <div class="chart-bar-container" data-date="${date}">
-              <div class="chart-bar cost-bar clickable"
-                   style="height: ${height}px;"
-                   data-cost="${data.totalCost}"
-                   data-input="${data.totalInputTokens}"
-                   data-output="${data.totalOutputTokens}"
-                   data-cache-creation="${data.totalCacheCreationTokens}"
-                   data-cache-read="${data.totalCacheReadTokens}"
-                   data-messages="${data.messageCount}"
-                   title="${this.formatDate(date)}: ${I18n.formatCurrency(data.totalCost)}">
-              </div>
-              <div class="chart-label">${this.getShortDate(date)}</div>
-            </div>
-          `;
-          })
-          .join('')}
-      </div>
-    `;
+    return this.renderMainCostChart(sortedData);
   }
 
   private renderAllTimeChart(): string {
-    if (this.dailyDataForAllTime.length === 0) {
+    const sortedData = [...this.dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
+    return this.renderMainCostChart(sortedData);
+  }
+
+  /**
+   * Daily / monthly time-series chart. Default (cost) metric renders each bar
+   * as a stacked cost-composition (input / output / cache-write / cache-read,
+   * same colours as the summary's Cost Composition). A Y-axis and two dashed
+   * reference lines give scale; the metric switcher re-renders bars in place
+   * (stacked for cost, single-colour for token/message metrics).
+   *
+   * Bars carry the cost breakdown as data attributes so updateMainChart can
+   * rebuild the stack on the client without another round-trip. Drill-down is
+   * preserved by making the cost segments pointer-events:none so clicks reach
+   * the parent .chart-bar.clickable.
+   */
+  /** Stacked cost segments for one bar (input / cache-read / cache-write /
+   * output), heights proportional to each component's share of the bar's
+   * cost. Order + colours match renderCompositionChart. Shared by the daily /
+   * monthly and today-hourly cost charts. */
+  private costStackHtml(data: UsageData, barHeight: number): string {
+    const t = I18n.t.popup;
+    const cb = data.costBreakdown;
+    const total = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
+    const seg = (value: number, cls: string, label: string): string => {
+      const h = total > 0 ? (value / total) * barHeight : 0;
+      return (
+        '<div class="stack-seg ' + cls + '" style="height: ' + h + 'px;" title="' +
+        this.escapeHtml(label) + ': ' + I18n.formatCurrency(value) + '"></div>'
+      );
+    };
+    return (
+      seg(cb.input, 'seg-input', t.inputTokens) +
+      seg(cb.cacheRead, 'seg-cache-read', t.cacheRead) +
+      seg(cb.cacheWrite, 'seg-cache-creation', t.cacheCreation) +
+      seg(cb.output, 'seg-output', t.outputTokens)
+    );
+  }
+
+  private renderMainCostChart(sortedData: { date: string; data: UsageData }[]): string {
+    if (sortedData.length === 0) {
       return '<div class="no-chart-data">No data available</div>';
     }
+    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost), 0);
+    const maxHeight = 120;
 
-    // Sort data by date (oldest first for chart display)
-    const sortedData = [...this.dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
+    const costStack = (data: UsageData, barHeight: number): string => this.costStackHtml(data, barHeight);
 
-    // Generate chart bars for cost (default metric)
-    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
-    const maxHeight = 120; // Max height in pixels
+    const bars = sortedData
+      .map(({ date, data }) => {
+        const barHeight = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
+        const cb = data.costBreakdown;
+        return (
+          '<div class="hc-col" data-date="' + date + '">' +
+          '<div class="hc-barval">' + I18n.formatCurrency(data.totalCost) + '</div>' +
+          '<div class="chart-bar cost-bar cost-stacked clickable" style="height: ' + barHeight + 'px;" ' +
+          'data-cost="' + data.totalCost + '" ' +
+          'data-input="' + data.totalInputTokens + '" ' +
+          'data-output="' + data.totalOutputTokens + '" ' +
+          'data-cache-creation="' + data.totalCacheCreationTokens + '" ' +
+          'data-cache-read="' + data.totalCacheReadTokens + '" ' +
+          'data-messages="' + data.messageCount + '" ' +
+          'data-cost-input="' + cb.input + '" ' +
+          'data-cost-output="' + cb.output + '" ' +
+          'data-cost-cachewrite="' + cb.cacheWrite + '" ' +
+          'data-cost-cacheread="' + cb.cacheRead + '" ' +
+          'title="' + this.escapeHtml(this.formatDate(date)) + ': ' + I18n.formatCurrency(data.totalCost) + '">' +
+          costStack(data, barHeight) +
+          '</div>' +
+          '</div>'
+        );
+      })
+      .join('');
 
-    return `
-      <div class="chart-bars">
-        ${sortedData
-          .map(({ date, data }) => {
-            const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
-            return `
-            <div class="chart-bar-container" data-date="${date}">
-              <div class="chart-bar cost-bar clickable"
-                   style="height: ${height}px;"
-                   data-cost="${data.totalCost}"
-                   data-input="${data.totalInputTokens}"
-                   data-output="${data.totalOutputTokens}"
-                   data-cache-creation="${data.totalCacheCreationTokens}"
-                   data-cache-read="${data.totalCacheReadTokens}"
-                   data-messages="${data.messageCount}"
-                   title="${this.formatDate(date)}: ${I18n.formatCurrency(data.totalCost)}">
-              </div>
-              <div class="chart-label">${this.getShortDate(date)}</div>
-            </div>
-          `;
-          })
-          .join('')}
-      </div>
-    `;
+    const xlabels = sortedData
+      .map(({ date }) => '<div class="hc-xlabel">' + this.getShortDate(date) + '</div>')
+      .join('');
+
+    return (
+      '<div class="hc-wrap">' +
+      '<div class="hc-yaxis">' +
+      '<span class="hc-yval">' + I18n.formatCurrency(maxCost) + '</span>' +
+      '<span class="hc-yval">' + I18n.formatCurrency(maxCost / 2) + '</span>' +
+      '<span class="hc-yval">' + I18n.formatCurrency(0) + '</span>' +
+      '</div>' +
+      '<div class="hc-main"><div class="hc-scroll">' +
+      '<div class="hc-plot">' +
+      '<div class="hc-grid hc-grid-top"></div>' +
+      '<div class="hc-grid hc-grid-mid"></div>' +
+      '<div class="hc-bars">' + bars + '</div>' +
+      '</div>' +
+      '<div class="hc-xlabels">' + xlabels + '</div>' +
+      '</div></div>' +
+      '</div>'
+    );
   }
 
   /**
@@ -1503,17 +1556,24 @@ export class UsageWebviewProvider {
     const bars = sortedData
       .map(({ hour, data }) => {
         const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
+        const cb = data.costBreakdown;
         return (
           '<div class="hc-col" data-hour="' + hour + '">' +
           '<div class="hc-barval">' + I18n.formatCurrency(data.totalCost) + '</div>' +
-          '<div class="chart-bar cost-bar" style="height: ' + height + 'px;" ' +
+          '<div class="chart-bar cost-bar cost-stacked" style="height: ' + height + 'px;" ' +
           'data-cost="' + data.totalCost + '" ' +
           'data-input="' + data.totalInputTokens + '" ' +
           'data-output="' + data.totalOutputTokens + '" ' +
           'data-cache-creation="' + data.totalCacheCreationTokens + '" ' +
           'data-cache-read="' + data.totalCacheReadTokens + '" ' +
           'data-messages="' + data.messageCount + '" ' +
-          'title="' + I18n.formatCurrency(data.totalCost) + '"></div>' +
+          'data-cost-input="' + cb.input + '" ' +
+          'data-cost-output="' + cb.output + '" ' +
+          'data-cost-cachewrite="' + cb.cacheWrite + '" ' +
+          'data-cost-cacheread="' + cb.cacheRead + '" ' +
+          'title="' + I18n.formatCurrency(data.totalCost) + '">' +
+          this.costStackHtml(data, height) +
+          '</div>' +
           '</div>'
         );
       })
@@ -1543,14 +1603,14 @@ export class UsageWebviewProvider {
   }
 
   private getShortDate(dateString: string): string {
-    const date = new Date(dateString);
-    // Check if this is a month-only date (ends with -01)
+    // Parse 'YYYY-MM-DD' textually — new Date('YYYY-MM-DD') is UTC midnight,
+    // which shifts the displayed day back by one in negative-UTC timezones.
+    const [y, m, d] = dateString.split('-').map(Number);
+    // Month-only dates (first of month) label as YYYY/MM for monthly charts.
     if (dateString.endsWith('-01')) {
-      // Format as YYYY/MM for monthly data
-      return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}`;
+      return `${y}/${String(m).padStart(2, '0')}`;
     }
-    // Format as MM/DD for daily data
-    return `${date.getMonth() + 1}/${date.getDate()}`;
+    return `${m}/${d}`;
   }
 
   private formatDate(dateString: string): string {
@@ -1572,11 +1632,10 @@ export class UsageWebviewProvider {
         background-color: var(--vscode-editor-background);
         margin: 0;
         padding: 16px;
-        overflow-x: hidden;
       }
 
       .container {
-        max-width: 1100px;
+        max-width: 800px;
         margin: 0 auto;
       }
 
@@ -1621,6 +1680,74 @@ export class UsageWebviewProvider {
 
       .btn-secondary:hover {
         background: var(--vscode-button-secondaryHoverBackground);
+      }
+
+      /* Refresh-Now button is only relevant when auto-refresh is OFF — hide
+         it by default, show only when the body carries the .auto-off class. */
+      .btn-refresh-now {
+        display: none;
+      }
+      body.auto-off .btn-refresh-now {
+        display: inline-block;
+      }
+
+      /* iOS-style auto-refresh toggle. The label/switch sit next to the other
+         buttons in the header actions row. Slider colour mirrors the
+         status-bar success colour so on/off state reads at a glance. */
+      .auto-refresh-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 13px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .auto-refresh-label {
+        white-space: nowrap;
+      }
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 32px;
+        height: 18px;
+      }
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+        position: absolute;
+      }
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: var(--vscode-input-background, #888);
+        border: 1px solid var(--vscode-input-border, #555);
+        transition: background-color 0.2s, border-color 0.2s;
+        border-radius: 18px;
+      }
+      .slider::before {
+        position: absolute;
+        content: "";
+        height: 12px;
+        width: 12px;
+        left: 2px;
+        top: 2px;
+        background-color: #fff;
+        transition: transform 0.2s;
+        border-radius: 50%;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+      }
+      .switch input:checked + .slider {
+        background-color: #34c759; /* iOS green when on */
+        border-color: #34c759;
+      }
+      .switch input:checked + .slider::before {
+        transform: translateX(14px);
+      }
+      .switch input:focus + .slider {
+        box-shadow: 0 0 0 2px var(--vscode-focusBorder);
       }
 
       .tabs {
@@ -1918,29 +2045,6 @@ export class UsageWebviewProvider {
       .daily-table-container {
         overflow-x: auto;
         margin-top: 12px;
-        scrollbar-width: none;
-      }
-
-      .daily-table-container::-webkit-scrollbar {
-        display: none;
-      }
-
-      #float-hscroll {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 12px;
-        overflow-x: scroll;
-        overflow-y: hidden;
-        z-index: 9999;
-        display: none;
-        background: var(--vscode-editor-background);
-        border-top: 1px solid var(--vscode-panel-border);
-      }
-
-      #float-hscroll-inner {
-        height: 1px;
       }
 
       .daily-table {
@@ -2154,6 +2258,20 @@ export class UsageWebviewProvider {
 
       .stack-seg {
         width: 100%;
+      }
+
+      /* Cost bar rendered as a stacked composition: no gradient fill, segments
+         stack from the bottom up. Segments ignore pointer events so a click
+         falls through to the parent .chart-bar.clickable (drill-down). */
+      .chart-bar.cost-stacked {
+        background: none;
+        display: flex;
+        flex-direction: column-reverse;
+        overflow: hidden;
+        padding: 0;
+      }
+      .chart-bar.cost-stacked .stack-seg {
+        pointer-events: none;
       }
 
       .seg-input {
@@ -2452,7 +2570,6 @@ export class UsageWebviewProvider {
       .cf-5 {
         background: var(--vscode-charts-red);
       }
-
       .week-reset-banner {
         display: flex;
         align-items: center;
@@ -2491,6 +2608,13 @@ const __dateOpts = (extra) => {
 function refresh() {
   console.log("[DEBUG] refresh called");
   vscode.postMessage({ command: 'refresh' });
+}
+
+function toggleAutoRefresh() {
+  var checkbox = document.getElementById('autoRefreshCheckbox');
+  var nowOff = !checkbox.checked;
+  document.body.classList.toggle('auto-off', nowOff);
+  vscode.postMessage({ command: 'setPauseDashboardRefresh', value: nowOff });
 }
 
 function openSettings() {
@@ -2639,6 +2763,11 @@ function toggleHourlyDetail(date) {
           vscode.postMessage({ command: 'getHourlyData', date: date });
           container.dataset.loaded = 'true';
         }
+
+        // Scroll the newly-revealed detail into view — clicking a bar at the
+        // top of the tab otherwise expands a detail far down the table that
+        // the user never notices.
+        try { detailRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
       } else {
         // Hide detail
         detailRow.style.display = 'none';
@@ -2725,6 +2854,9 @@ function toggleMonthlyDetail(monthDate) {
           vscode.postMessage({ command: 'getDailyData', month: monthDate });
           container.dataset.loaded = 'true';
         }
+
+        // Scroll the newly-revealed detail into view (see toggleHourlyDetail).
+        try { detailRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
       } else {
         // Hide detail
         detailRow.style.display = 'none';
@@ -2807,73 +2939,6 @@ function syncChartBarSelection(date, isSelected) {
     }
   }
 }
-
-// ── Floating horizontal scrollbar ────────────────────────────────────────────
-(function() {
-  const floatBar = document.getElementById('float-hscroll');
-  const floatInner = document.getElementById('float-hscroll-inner');
-  if (!floatBar || !floatInner) return;
-
-  let linked = null;
-  let syncing = false;
-
-  function link(el) {
-    if (linked === el) return;
-    if (linked) linked.removeEventListener('scroll', onContentScroll);
-    linked = el;
-    if (linked) linked.addEventListener('scroll', onContentScroll);
-    refresh();
-  }
-
-  function refresh() {
-    if (!linked) { floatBar.style.display = 'none'; return; }
-    const sw = linked.scrollWidth;
-    const cw = linked.clientWidth;
-    if (sw <= cw) { floatBar.style.display = 'none'; return; }
-    floatInner.style.width = sw + 'px';
-    floatBar.style.display = 'block';
-    if (!syncing) { syncing = true; floatBar.scrollLeft = linked.scrollLeft; syncing = false; }
-  }
-
-  function onContentScroll() {
-    if (syncing) return;
-    syncing = true; floatBar.scrollLeft = linked.scrollLeft; syncing = false;
-  }
-
-  floatBar.addEventListener('scroll', function() {
-    if (syncing || !linked) return;
-    syncing = true; linked.scrollLeft = floatBar.scrollLeft; syncing = false;
-  });
-
-  // Link to first overflowing .daily-table-container in the active tab
-  function linkActiveTab() {
-    const active = document.querySelector('.tab-content.active');
-    if (!active) { link(null); return; }
-    const containers = active.querySelectorAll('.daily-table-container');
-    let found = null;
-    containers.forEach(function(c) { if (!found && c.scrollWidth > c.clientWidth) found = c; });
-    link(found || null);
-  }
-
-  // Hover over any table container to re-link
-  document.addEventListener('mouseover', function(e) {
-    const t = e.target.closest('.daily-table-container');
-    if (t) link(t);
-  });
-
-  // Re-link on tab switch (showTab calls this after DOM update)
-  const origShowTab = window.showTab;
-  window.showTab = function(name) {
-    origShowTab(name);
-    setTimeout(linkActiveTab, 50);
-  };
-
-  // Initial link
-  linkActiveTab();
-
-  // Re-check on window resize
-  window.addEventListener('resize', refresh);
-})();
 
 // Make functions available globally
 window.refresh = refresh;
@@ -2975,7 +3040,9 @@ document.addEventListener('click', function(event) {
     console.log("[DEBUG] Clickable chart bar clicked:", event.target);
 
     event.preventDefault();
-    const container = event.target.closest('.chart-bar-container');
+    // Daily/monthly charts now use .hc-col; the JS-rendered drill-downs still
+    // use .chart-bar-container — support both.
+    const container = event.target.closest('.hc-col') || event.target.closest('.chart-bar-container');
     if (container) {
       const date = container.dataset.date;
       if (date) {
@@ -3081,12 +3148,19 @@ function updateMainChart(metric, container) {
     // Update height
     bar.style.height = height + 'px';
 
-    // Update class - preserve clickable and selected states
-    const baseClass = 'chart-bar ' + getBarClass(metric);
     const hasClickable = bar.classList.contains('clickable');
     const hasSelected = bar.classList.contains('selected');
 
-    bar.className = baseClass;
+    // Cost metric on a chart that carries the cost breakdown (daily / monthly)
+    // renders a stacked composition; every other case is a single-colour bar.
+    const canStack = bar.dataset.costInput !== undefined;
+    if (metric === 'cost' && canStack) {
+      bar.className = 'chart-bar cost-bar cost-stacked';
+      bar.innerHTML = buildCostStack(bar, height);
+    } else {
+      bar.className = 'chart-bar ' + getBarClass(metric);
+      bar.innerHTML = '';
+    }
     if (hasClickable) {
       bar.classList.add('clickable');
     }
@@ -3114,8 +3188,14 @@ function updateMainChart(metric, container) {
     }
   });
 
-  // Update the hourly chart's Y-axis reference labels, if present.
-  const yvals = targetContainer.querySelectorAll('.hc-yaxis .hc-yval');
+  // Update the main chart's Y-axis reference labels for the new metric.
+  // Scope to the wrap that holds the bars we just updated — the same container
+  // also holds the token-composition chart's own hc-yaxis, so a container-wide
+  // query would find 6 values (not 3) and silently skip the update, leaving
+  // the axis stuck on the previous metric's units.
+  const firstBar = chartBars[0];
+  const wrap = firstBar && firstBar.closest ? firstBar.closest('.hc-wrap') : null;
+  const yvals = wrap ? wrap.querySelectorAll('.hc-yaxis .hc-yval') : [];
   if (yvals.length === 3) {
     yvals[0].textContent = formatValue(maxValue, metric);
     yvals[1].textContent = formatValue(maxValue / 2, metric);
@@ -3147,6 +3227,22 @@ function getBarClass(metric) {
   return mapping[metric] || 'cost-bar';
 }
 
+// Rebuild a cost bar's stacked composition (input / cache-read / cache-write /
+// output) from its data attributes. Matches the server-side renderMainCostChart
+// order and colours; segments are pointer-events:none so drill-down still works.
+function buildCostStack(bar, barHeight) {
+  const ci = parseFloat(bar.dataset.costInput) || 0;
+  const co = parseFloat(bar.dataset.costOutput) || 0;
+  const cw = parseFloat(bar.dataset.costCachewrite) || 0;
+  const cr = parseFloat(bar.dataset.costCacheread) || 0;
+  const total = ci + co + cw + cr;
+  function seg(v, cls) {
+    const h = total > 0 ? (v / total) * barHeight : 0;
+    return '<div class="stack-seg ' + cls + '" style="height: ' + h + 'px;"></div>';
+  }
+  return seg(ci, 'seg-input') + seg(cr, 'seg-cache-read') + seg(cw, 'seg-cache-creation') + seg(co, 'seg-output');
+}
+
 function formatValue(value, metric) {
   if (metric === 'cost') {
     return '$' + value.toFixed(2);
@@ -3172,10 +3268,10 @@ function renderHourlyData(hourlyData, date) {
   html += '<button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>';
   html += '</div>';
 
-  html += '<div class="chart-container">';
+  // hc-wrap is self-contained (own Y-axis + scroll); a fixed-height
+  // chart-container wrapper would add a second scrollbar.
   html += '<div class="chart-content" id="hourly-chart-' + date + '">';
   html += renderHourlyChart(hourlyData, 'cost');
-  html += '</div>';
   html += '</div>';
 
   html += '<div class="daily-table-container"><table class="daily-table"><thead><tr>';
@@ -3223,10 +3319,9 @@ function renderDailyData(dailyData, monthDate) {
   html += '<button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>';
   html += '</div>';
 
-  html += '<div class="chart-container">';
+  // hc-wrap is self-contained (own Y-axis + scroll); no chart-container.
   html += '<div class="chart-content" id="daily-chart-' + monthDate + '">';
   html += renderDailyChart(dailyData, 'cost');
-  html += '</div>';
   html += '</div>';
 
   html += '<div class="daily-table-container"><table class="daily-table"><thead><tr>';
@@ -3260,146 +3355,105 @@ function renderDailyData(dailyData, monthDate) {
   return html;
 }
 
-function renderDailyChart(dailyData, metric) {
-  console.log("[DEBUG] renderDailyChart called with metric:", metric);
-
-  const maxValues = {
-    cost: Math.max(...dailyData.map(d => d.data.totalCost)),
-    inputTokens: Math.max(...dailyData.map(d => d.data.totalInputTokens)),
-    outputTokens: Math.max(...dailyData.map(d => d.data.totalOutputTokens)),
-    cacheCreation: Math.max(...dailyData.map(d => d.data.totalCacheCreationTokens)),
-    cacheRead: Math.max(...dailyData.map(d => d.data.totalCacheReadTokens)),
-    messages: Math.max(...dailyData.map(d => d.data.messageCount))
-  };
-
+// Shared gridded chart for the drill-down details (daily under a month,
+// hourly under a day). Matches the server-rendered main charts: a Y-axis,
+// two dashed reference lines, and — for the cost metric — stacked
+// composition bars (input / cache-read / cache-write / output). Other metrics
+// render single-colour bars. Each bar carries the cost breakdown as data
+// attributes so the in-place metric switcher (updateMainChart) can rebuild.
+function griddedChart(items, metric, opts) {
+  if (!items || items.length === 0) {
+    return '<div class="no-chart-data">No data available</div>';
+  }
   const maxHeight = 120;
-  const maxValue = maxValues[metric] || 0;
-
-  let html = '<div class="chart-bars">';
-
-  dailyData.forEach(function(item) {
-    let value = 0;
-    let barClass = 'cost-bar';
-
-    switch(metric) {
-      case 'cost':
-        value = item.data.totalCost;
-        barClass = 'cost-bar';
-        break;
-      case 'inputTokens':
-        value = item.data.totalInputTokens;
-        barClass = 'input-bar';
-        break;
-      case 'outputTokens':
-        value = item.data.totalOutputTokens;
-        barClass = 'output-bar';
-        break;
-      case 'cacheCreation':
-        value = item.data.totalCacheCreationTokens;
-        barClass = 'cache-creation-bar';
-        break;
-      case 'cacheRead':
-        value = item.data.totalCacheReadTokens;
-        barClass = 'cache-read-bar';
-        break;
-      case 'messages':
-        value = item.data.messageCount;
-        barClass = 'messages-bar';
-        break;
+  function metricValue(d) {
+    switch (metric) {
+      case 'inputTokens': return d.totalInputTokens;
+      case 'outputTokens': return d.totalOutputTokens;
+      case 'cacheCreation': return d.totalCacheCreationTokens;
+      case 'cacheRead': return d.totalCacheReadTokens;
+      case 'messages': return d.messageCount;
+      default: return d.totalCost;
     }
+  }
+  const values = items.map(function(it) { return metricValue(it.data); });
+  const maxValue = Math.max.apply(null, values.concat([0]));
 
-    const height = maxValue > 0 ? Math.max((value / maxValue) * maxHeight, 2) : 2;
-    const dateObj = new Date(item.date);
-    const shortDate = dateObj.getDate().toString();
+  let bars = '';
+  items.forEach(function(it, i) {
+    const d = it.data;
+    const value = values[i];
+    const height = maxValue > 0 ? (value / maxValue) * maxHeight : 0;
+    const cb = d.costBreakdown || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+    const keyAttr = opts.keyName === 'hour' ? 'data-hour' : 'data-date';
+    const key = opts.keyName === 'hour' ? it.hour : it.date;
 
-    html += '<div class="chart-bar-container" data-date="' + item.date + '">';
-    html += '<div class="chart-bar ' + barClass + '" ';
-    html += 'style="height: ' + height + 'px;" ';
-    html += 'data-cost="' + item.data.totalCost + '" ';
-    html += 'data-input="' + item.data.totalInputTokens + '" ';
-    html += 'data-output="' + item.data.totalOutputTokens + '" ';
-    html += 'data-cache-creation="' + item.data.totalCacheCreationTokens + '" ';
-    html += 'data-cache-read="' + item.data.totalCacheReadTokens + '" ';
-    html += 'data-messages="' + item.data.messageCount + '" ';
-    html += 'title="' + dateObj.toLocaleDateString(__locale, __dateOpts()) + ': ' + formatValue(value, metric) + '">';
-    html += '</div>';
-    html += '<div class="chart-label">' + shortDate + '</div>';
-    html += '</div>';
+    let inner = '';
+    let cls = 'chart-bar ' + getBarClass(metric);
+    if (metric === 'cost') {
+      cls = 'chart-bar cost-bar cost-stacked';
+      const total = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
+      function seg(v, c) {
+        const h = total > 0 ? (v / total) * height : 0;
+        return '<div class="stack-seg ' + c + '" style="height: ' + h + 'px;"></div>';
+      }
+      inner = seg(cb.input, 'seg-input') + seg(cb.cacheRead, 'seg-cache-read') +
+              seg(cb.cacheWrite, 'seg-cache-creation') + seg(cb.output, 'seg-output');
+    }
+    if (opts.clickable) { cls += ' clickable'; }
+
+    bars += '<div class="hc-col" ' + keyAttr + '="' + key + '">' +
+      '<div class="hc-barval">' + formatValue(value, metric) + '</div>' +
+      '<div class="' + cls + '" style="height: ' + height + 'px;" ' +
+      'data-cost="' + d.totalCost + '" data-input="' + d.totalInputTokens + '" data-output="' + d.totalOutputTokens + '" ' +
+      'data-cache-creation="' + d.totalCacheCreationTokens + '" data-cache-read="' + d.totalCacheReadTokens + '" data-messages="' + d.messageCount + '" ' +
+      'data-cost-input="' + cb.input + '" data-cost-output="' + cb.output + '" data-cost-cachewrite="' + cb.cacheWrite + '" data-cost-cacheread="' + cb.cacheRead + '" ' +
+      'title="' + opts.getTitle(it, value) + '">' + inner + '</div>' +
+      '</div>';
   });
 
-  html += '</div>';
+  const xlabels = items.map(function(it) {
+    return '<div class="hc-xlabel">' + opts.getLabel(it) + '</div>';
+  }).join('');
 
-  return html;
+  return '<div class="hc-wrap">' +
+    '<div class="hc-yaxis">' +
+    '<span class="hc-yval">' + formatValue(maxValue, metric) + '</span>' +
+    '<span class="hc-yval">' + formatValue(maxValue / 2, metric) + '</span>' +
+    '<span class="hc-yval">' + formatValue(0, metric) + '</span>' +
+    '</div>' +
+    '<div class="hc-main"><div class="hc-scroll">' +
+    '<div class="hc-plot"><div class="hc-grid hc-grid-top"></div><div class="hc-grid hc-grid-mid"></div>' +
+    '<div class="hc-bars">' + bars + '</div></div>' +
+    '<div class="hc-xlabels">' + xlabels + '</div>' +
+    '</div></div></div>';
+}
+
+function renderDailyChart(dailyData, metric) {
+  // Parse 'YYYY-MM-DD' textually: new Date('YYYY-MM-DD') is interpreted as
+  // UTC midnight, so getMonth()/getDate() shift back a day in negative-UTC
+  // timezones. String parts are timezone-proof.
+  function parts(dateStr) { return dateStr.split('-').map(Number); }
+  return griddedChart(dailyData, metric, {
+    keyName: 'date',
+    clickable: false,
+    // Show month/day (not just the day number) so the axis isn't ambiguous.
+    getLabel: function(it) { var p = parts(it.date); return p[1] + '/' + p[2]; },
+    getTitle: function(it, v) {
+      var p = parts(it.date);
+      var d = new Date(p[0], p[1] - 1, p[2]); // local-time construction
+      return d.toLocaleDateString(__locale) + ': ' + formatValue(v, metric);
+    }
+  });
 }
 
 function renderHourlyChart(hourlyData, metric) {
-  console.log("[DEBUG] renderHourlyChart called with metric:", metric);
-
-  const maxValues = {
-    cost: Math.max(...hourlyData.map(d => d.data.totalCost)),
-    inputTokens: Math.max(...hourlyData.map(d => d.data.totalInputTokens)),
-    outputTokens: Math.max(...hourlyData.map(d => d.data.totalOutputTokens)),
-    cacheCreation: Math.max(...hourlyData.map(d => d.data.totalCacheCreationTokens)),
-    cacheRead: Math.max(...hourlyData.map(d => d.data.totalCacheReadTokens)),
-    messages: Math.max(...hourlyData.map(d => d.data.messageCount))
-  };
-
-  const maxHeight = 120;
-  const maxValue = maxValues[metric] || 0;
-
-  let html = '<div class="chart-bars">';
-
-  hourlyData.forEach(function(item) {
-    let value = 0;
-    let barClass = 'cost-bar';
-
-    switch(metric) {
-      case 'cost':
-        value = item.data.totalCost;
-        barClass = 'cost-bar';
-        break;
-      case 'inputTokens':
-        value = item.data.totalInputTokens;
-        barClass = 'input-bar';
-        break;
-      case 'outputTokens':
-        value = item.data.totalOutputTokens;
-        barClass = 'output-bar';
-        break;
-      case 'cacheCreation':
-        value = item.data.totalCacheCreationTokens;
-        barClass = 'cache-creation-bar';
-        break;
-      case 'cacheRead':
-        value = item.data.totalCacheReadTokens;
-        barClass = 'cache-read-bar';
-        break;
-      case 'messages':
-        value = item.data.messageCount;
-        barClass = 'messages-bar';
-        break;
-    }
-
-    const height = maxValue > 0 ? Math.max((value / maxValue) * maxHeight, 2) : 2;
-
-    html += '<div class="chart-bar-container" data-hour="' + item.hour + '">';
-    html += '<div class="chart-bar ' + barClass + '" ';
-    html += 'style="height: ' + height + 'px;" ';
-    html += 'data-cost="' + item.data.totalCost + '" ';
-    html += 'data-input="' + item.data.totalInputTokens + '" ';
-    html += 'data-output="' + item.data.totalOutputTokens + '" ';
-    html += 'data-cache-creation="' + item.data.totalCacheCreationTokens + '" ';
-    html += 'data-cache-read="' + item.data.totalCacheReadTokens + '" ';
-    html += 'data-messages="' + item.data.messageCount + '" ';
-    html += 'title="' + item.hour + ': ' + formatValue(value, metric) + '">';
-    html += '</div>';
-    html += '<div class="chart-label">' + item.hour + '</div>';
-    html += '</div>';
+  return griddedChart(hourlyData, metric, {
+    keyName: 'hour',
+    clickable: false,
+    getLabel: function(it) { return it.hour; },
+    getTitle: function(it, v) { return it.hour + ': ' + formatValue(v, metric); }
   });
-
-  html += '</div>';
-
-  return html;
 }
 
 // Initialize chart tab events for existing elements

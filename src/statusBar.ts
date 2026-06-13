@@ -16,7 +16,11 @@ export class StatusBarManager {
     this.quotaItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
     this.quotaItem.command = 'claudeCodeUsage.showDetails';
 
-    this.updateStatusBar();
+    // Visible from t=0: an empty-text status bar item renders as nothing, so
+    // without this the extension appears "missing" until the first full
+    // refresh lands (which can lag behind a slow first quota fetch on a cold
+    // network). Reported as "usage not showing the first time I open VS Code".
+    this.setLoading(true);
   }
 
   setLoading(loading: boolean): void {
@@ -30,22 +34,27 @@ export class StatusBarManager {
     error?: string,
     usageLimits?: ClaudeApiUsageResponse | null
   ): void {
+    // Quota is account-level and decoupled from local-data state: the caller
+    // is expected to call updateQuota() separately so workspaces without
+    // history still see it. We only touch the cost item here.
     this.isLoading = false;
 
     if (error) {
       this.showError(error);
-      this.quotaItem.hide();
       return;
     }
 
     if (!todayData) {
       this.showNoData();
-      this.quotaItem.hide();
       return;
     }
 
     this.showTodayData(todayData, sessionData ?? null);
-    this.updateQuota(usageLimits ?? null);
+    // The usageLimits arg is kept for callers that want a single-call update
+    // path; quota was already refreshed earlier in this cycle.
+    if (usageLimits !== undefined) {
+      this.updateQuota(usageLimits ?? null);
+    }
   }
 
   private updateStatusBar(): void {
@@ -76,8 +85,9 @@ export class StatusBarManager {
    * Public so it can be refreshed on its own while the rest of the UI is idle.
    */
   updateQuota(usageLimits: ClaudeApiUsageResponse | null): void {
-    const fiveHour = usageLimits?.five_hour;
-    const weekly = usageLimits?.seven_day;
+    const live = this.liveWindows(usageLimits);
+    const fiveHour = live?.five_hour;
+    const weekly = live?.seven_day;
     if (!fiveHour && !weekly) {
       this.quotaItem.hide();
       return;
@@ -105,8 +115,52 @@ export class StatusBarManager {
       this.quotaItem.backgroundColor = undefined;
     }
 
-    this.quotaItem.tooltip = this.createQuotaTooltip(usageLimits as ClaudeApiUsageResponse);
+    this.quotaItem.tooltip = this.createQuotaTooltip(live as ClaudeApiUsageResponse);
     this.quotaItem.show();
+  }
+
+  /**
+   * Return a copy of the usage response containing only windows still inside
+   * their current period. A window whose resets_at has already passed has
+   * rolled over, so its cached utilization is stale and must not be shown.
+   * Returns null when nothing current remains.
+   */
+  private liveWindows(usageLimits: ClaudeApiUsageResponse | null): ClaudeApiUsageResponse | null {
+    if (!usageLimits) {
+      return null;
+    }
+    const now = Date.now();
+    const H5 = 5 * 60 * 60 * 1000;
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+    const roll = (limit: ClaudeUsageLimit | undefined, periodMs: number): ClaudeUsageLimit | undefined => {
+      if (!limit) {
+        return undefined;
+      }
+      const t = Date.parse(limit.resets_at);
+      if (isNaN(t)) {
+        return limit;
+      }
+      if (t > now) {
+        return limit;
+      }
+      if (now - t > 2 * periodMs) {
+        return undefined;
+      }
+      let next = t;
+      while (next <= now) {
+        next += periodMs;
+      }
+      return { utilization: 0, resets_at: new Date(next).toISOString() };
+    };
+    const out: ClaudeApiUsageResponse = {
+      five_hour: roll(usageLimits.five_hour, H5),
+      seven_day: roll(usageLimits.seven_day, WEEK),
+      seven_day_opus: roll(usageLimits.seven_day_opus, WEEK)
+    };
+    if (!out.five_hour && !out.seven_day && !out.seven_day_opus) {
+      return null;
+    }
+    return out;
   }
 
   private showNoData(): void {
@@ -175,47 +229,59 @@ export class StatusBarManager {
     const t = I18n.t.popup;
     const md = new vscode.MarkdownString();
     md.supportThemeIcons = true;
-    // supportHtml lets us use <br> inside table cells to put the weekly
-    // reset time and countdown on two lines (otherwise the cell gets long).
     md.supportHtml = true;
     md.appendMarkdown(`**${t.quota}**\n\n`);
-    // Pad each cell with non-breaking spaces on both sides so column text does
-    // not crowd the separators — VS Code's tooltip markdown renderer collapses
-    // ordinary leading/trailing whitespace, but &nbsp; survives.
-    const PAD = '  ';
-    const GAP = '    ';
+    md.appendMarkdown(`<table>\n`);
     md.appendMarkdown(
-      `|${PAD}${t.quotaWindow}${PAD}|${PAD}${t.share}${PAD}|${GAP}${PAD}${t.resets}${PAD}|\n`
+      `<tr><th align="left">${t.quotaWindow}</th>` +
+      `<th></th><th align="right">${t.share}</th>` +
+      `<th align="right">${t.resets}</th></tr>\n`
     );
-    md.appendMarkdown(`|:--|--:|--:|\n`);
-
     if (usageLimits.five_hour) {
-      this.appendQuotaRow(md, t.quota5h, usageLimits.five_hour, false);
+      md.appendMarkdown(this.quotaRowHtml(t.quota5h, usageLimits.five_hour, false));
     }
     if (usageLimits.seven_day) {
-      this.appendQuotaRow(md, t.quotaWeekly, usageLimits.seven_day, true);
+      md.appendMarkdown(this.quotaRowHtml(t.quotaWeekly, usageLimits.seven_day, true));
     }
     if (usageLimits.seven_day_opus) {
-      this.appendQuotaRow(md, `${t.quotaWeekly} (Opus)`, usageLimits.seven_day_opus, true);
+      md.appendMarkdown(this.quotaRowHtml(`${t.quotaWeekly} (Opus)`, usageLimits.seven_day_opus, true));
     }
-
-    md.appendMarkdown(`\n\n*${t.quotaHint}*`);
+    md.appendMarkdown(`</table>\n\n*${t.quotaHint}*`);
     return md;
   }
 
-  private appendQuotaRow(md: vscode.MarkdownString, label: string, limit: ClaudeUsageLimit, weekly: boolean): void {
+  private quotaRowHtml(label: string, limit: ClaudeUsageLimit, weekly: boolean): string {
     const resetDate = new Date(limit.resets_at);
-    // Weekly cell renders the reset time on one line and the countdown on
-    // the next via <br>, so the cell stays narrow with both pieces present.
     const resets = isNaN(resetDate.getTime())
-      ? '—'
+      ? '\u2014'
       : weekly
         ? `${this.formatWeeklyReset(resetDate)}<br>${this.formatCountdown(resetDate)}`
         : this.formatCountdown(resetDate);
-    const PAD = '  ';
-    const GAP = '    ';
-    md.appendMarkdown(
-      `|${PAD}${label}${PAD}|${PAD}${limit.utilization.toFixed(1)}%${PAD}|${GAP}${PAD}${resets}${PAD}|\n`
+    const pct = Math.max(0, Math.min(100, limit.utilization));
+    const bar = this.progressBarSvg(pct);
+    return (
+      `<tr>` +
+      `<td align="left"><b>${label}</b></td>` +
+      `<td>${bar}</td>` +
+      `<td align="right">${pct.toFixed(1)}%</td>` +
+      `<td align="right">${resets}</td>` +
+      `</tr>\n`
+    );
+  }
+
+  private progressBarSvg(pct: number): string {
+    const TOTAL = 24;
+    const filled = Math.max(0, Math.min(TOTAL, Math.round((pct / 100) * TOTAL)));
+    const empty = TOTAL - filled;
+    let color = '#4caf50';
+    if (pct >= 95) { color = '#f44336'; }
+    else if (pct >= 80) { color = '#ff9800'; }
+    const nbsp = (n: number) => '&nbsp;'.repeat(n);
+    return (
+      `<span style="background-color:#bbbbbb;font-size:48%;border-radius:3px;">` +
+        `<span style="background-color:${color};border-radius:3px;">${nbsp(filled)}</span>` +
+        `${nbsp(empty)}` +
+      `</span>`
     );
   }
 

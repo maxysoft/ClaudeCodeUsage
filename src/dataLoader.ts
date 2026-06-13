@@ -55,36 +55,41 @@ async function findJsonlFiles(dir: string): Promise<string[]> {
   return files;
 }
 
-// Native validation function to replace zod
+// Identify usage records by structural shape only.
+//
+// Previously we dropped any record whose secondary fields had an unexpected
+// type (e.g. `model` is null, `requestId` is a number). That cost us records
+// from proxies and from new Claude Code features (xhigh / ultracode /
+// workflow) that occasionally write atypical field types. Now we accept any
+// record that has the minimum it takes to count tokens — timestamp + the
+// numeric token fields — and downstream code is responsible for coercing the
+// optional fields safely.
+//
+// The companion function `validationDropReason` lets the loader log *why* a
+// record was rejected so users can spot format drift without us guessing.
 function validateUsageRecord(data: any): data is ClaudeUsageRecord {
-  // Basic structure validation
   if (!data || typeof data !== 'object') return false;
-
-  // Required timestamp
   if (typeof data.timestamp !== 'string') return false;
-
-  // Required message with usage
   if (!data.message || typeof data.message !== 'object') return false;
   if (!data.message.usage || typeof data.message.usage !== 'object') return false;
-
   const usage = data.message.usage;
-
-  // Required token fields must be numbers
+  // We require both token fields to be numbers — they are the whole point of
+  // the record. Anything else is best-effort: a missing model, a null
+  // requestId, an isApiErrorMessage that's "true" (string) — they get
+  // accepted now, and the aggregators treat the value as 0/undefined.
   if (typeof usage.input_tokens !== 'number') return false;
   if (typeof usage.output_tokens !== 'number') return false;
-
-  // Optional fields validation
-  if (usage.cache_creation_input_tokens !== undefined && typeof usage.cache_creation_input_tokens !== 'number') return false;
-  if (usage.cache_read_input_tokens !== undefined && typeof usage.cache_read_input_tokens !== 'number') return false;
-
-  // Optional fields validation
-  if (data.message.model !== undefined && typeof data.message.model !== 'string') return false;
-  if (data.message.id !== undefined && typeof data.message.id !== 'string') return false;
-  if (data.costUSD !== undefined && typeof data.costUSD !== 'number') return false;
-  if (data.requestId !== undefined && typeof data.requestId !== 'string') return false;
-  if (data.isApiErrorMessage !== undefined && typeof data.isApiErrorMessage !== 'boolean') return false;
-
   return true;
+}
+
+function validationDropReason(data: any): string {
+  if (!data || typeof data !== 'object') return 'not-an-object';
+  if (typeof data.timestamp !== 'string') return 'timestamp-missing-or-non-string';
+  if (!data.message || typeof data.message !== 'object') return 'message-missing';
+  if (!data.message.usage || typeof data.message.usage !== 'object') return 'usage-missing';
+  if (typeof data.message.usage.input_tokens !== 'number') return 'input_tokens-not-a-number';
+  if (typeof data.message.usage.output_tokens !== 'number') return 'output_tokens-not-a-number';
+  return 'other';
 }
 
 // --- Content-consumption analysis helpers ---
@@ -319,9 +324,10 @@ export class ClaudeDataLoader {
 
   static async loadUsageRecords(
     dataDirectory?: string,
-    options?: { analyzeContent?: boolean }
+    options?: { analyzeContent?: boolean; log?: (line: string) => void }
   ): Promise<{ records: ClaudeUsageRecord[]; contentAnalysis: ContentAnalysis | null }> {
     const analyzeContent = options?.analyzeContent !== false; // default true
+    const log = options?.log;
     try {
       const claudePaths = dataDirectory ? [dataDirectory] : this.getClaudePaths();
       const allFiles: string[] = [];
@@ -335,12 +341,37 @@ export class ClaudeDataLoader {
       }
 
       const sortedFiles = await this.sortFilesByTimestamp(allFiles);
-      const processedHashes = new Set<string>();
+      // hash → records[] index. Some proxies (mimo / CC Switch) write two
+      // records per message: a tokens=0 placeholder when streaming starts,
+      // and the real values when the response finishes. Both records share
+      // the same messageId, so they hash identically. We keep whichever
+      // record has the higher total token sum (issue #18).
+      const processedHashes = new Map<string, number>();
       const records: ClaudeUsageRecord[] = [];
+      // sessionId → conversation title. Current Claude Code writes
+      // `custom-title` (user-set) and `ai-title` (auto) lines; older versions
+      // wrote `summary`. A custom title always wins over an AI one.
+      const aiTitleBySession: Record<string, string> = {};
+      const customTitleBySession: Record<string, string> = {};
       // Content analysis (last 30 days) is optional — skipped when the user
       // disables it via claudeCodeUsage.enableContentAnalysis.
       const analysis = analyzeContent ? newAnalysisAcc(Date.now() - 30 * 24 * 60 * 60 * 1000) : null;
       let fileIndex = 0;
+      // Diagnostic counters so the "Show Diagnostic Logs" command can explain
+      // how many records were seen / rejected / deduped without speculation.
+      const stats = {
+        files: sortedFiles.length,
+        linesScanned: 0,
+        parseErrors: 0,
+        rejected: {} as Record<string, number>,
+        replacedByDedup: 0,
+        skippedByDedup: 0,
+        kept: 0,
+        userPrompts: 0,
+        // model name → { count, totalTokens }. totalTokens lets us tell whether
+        // records exist but are all zeros (proxy-placeholder only).
+        models: {} as Record<string, { count: number; tokens: number }>,
+      };
 
       for (const file of sortedFiles) {
         try {
@@ -352,8 +383,13 @@ export class ClaudeDataLoader {
 
           // Each .jsonl file is one Claude Code conversation/session.
           const sessionInfo = this.parseSessionInfo(file);
+          // Sub-agent / workflow logs: count their usage, but never harvest
+          // user prompts from them (their "user" lines are agent-framework
+          // task dispatches, not something the user typed).
+          const isSubagentFile = /[\\/]subagents[\\/]/.test(file);
 
           for (const line of lines) {
+            stats.linesScanned += 1;
             try {
               const parsed = JSON.parse(line) as unknown;
 
@@ -362,26 +398,78 @@ export class ClaudeDataLoader {
                 analyzeLine(parsed, analysis);
               }
 
+              // Conversation title lines. Keep the last seen of each kind —
+              // titles get refreshed as the chat evolves.
+              const lineAny = parsed as Record<string, unknown>;
+              if (lineAny.type === 'ai-title' && typeof lineAny.aiTitle === 'string') {
+                aiTitleBySession[sessionInfo.sessionId] = lineAny.aiTitle;
+              } else if (lineAny.type === 'custom-title' && typeof lineAny.customTitle === 'string') {
+                customTitleBySession[sessionInfo.sessionId] = lineAny.customTitle;
+              } else if (lineAny.type === 'summary' && typeof lineAny.summary === 'string') {
+                // Legacy location (older Claude Code versions).
+                aiTitleBySession[sessionInfo.sessionId] = lineAny.summary;
+              }
+
+              // Genuine user prompts become synthetic zero-usage records so
+              // "Messages" counts what the user actually typed (not API
+              // calls). Excludes meta lines (command output), sidechain
+              // dispatches and anything inside sub-agent logs.
+              if (
+                !isSubagentFile &&
+                (lineAny.type === 'user' || (lineAny.message as { role?: unknown } | undefined)?.role === 'user') &&
+                !lineAny.isMeta &&
+                !lineAny.isSidechain &&
+                typeof lineAny.timestamp === 'string'
+              ) {
+                const content = (lineAny.message as { content?: unknown } | undefined)?.content;
+                const text =
+                  typeof content === 'string'
+                    ? content
+                    : Array.isArray(content)
+                      ? content
+                          .filter((b: { type?: unknown; text?: unknown }) => b?.type === 'text' && typeof b.text === 'string')
+                          .map((b: { text: string }) => b.text)
+                          .join('')
+                      : '';
+                if (text.trim().length > 0 && !this.isSyntheticUserText(text)) {
+                  const prompt: ClaudeUsageRecord = {
+                    timestamp: lineAny.timestamp,
+                    message: { usage: { input_tokens: 0, output_tokens: 0 } },
+                    _isUserPrompt: true,
+                    _sessionId: sessionInfo.sessionId,
+                    _projectDirEncoded: sessionInfo.projectPath,
+                  };
+                  const pcwd = lineAny.cwd;
+                  if (typeof pcwd === 'string' && pcwd.trim() !== '') {
+                    prompt._projectPath = pcwd;
+                    prompt._projectName = this.lastPathSegment(pcwd);
+                  } else {
+                    prompt._projectPath = sessionInfo.projectPath;
+                    prompt._projectName = sessionInfo.projectName;
+                  }
+                  const pBranch = lineAny.gitBranch;
+                  prompt._gitBranch = typeof pBranch === 'string' && pBranch.trim() !== '' ? pBranch : undefined;
+                  records.push(prompt);
+                  stats.userPrompts += 1;
+                  continue;
+                }
+              }
+
               if (!validateUsageRecord(parsed)) {
+                const reason = validationDropReason(parsed);
+                stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;
                 continue;
               }
 
               const data = parsed;
               const uniqueHash = this.createUniqueHash(data);
 
-              if (uniqueHash && processedHashes.has(uniqueHash)) {
-                continue;
-              }
-
-              if (uniqueHash) {
-                processedHashes.add(uniqueHash);
-              }
-
               // Tag the record with the session/project it came from.
               // Prefer the real working directory (`cwd`) recorded in the log line
               // over the lossy, dash-encoded folder name when it is available.
               const record = data as ClaudeUsageRecord;
               record._sessionId = sessionInfo.sessionId;
+              record._projectDirEncoded = sessionInfo.projectPath;
               const cwd = (parsed as { cwd?: unknown }).cwd;
               if (typeof cwd === 'string' && cwd.trim() !== '') {
                 record._projectPath = cwd;
@@ -392,8 +480,35 @@ export class ClaudeDataLoader {
               }
               const gitBranch = (parsed as { gitBranch?: unknown }).gitBranch;
               record._gitBranch = typeof gitBranch === 'string' && gitBranch.trim() !== '' ? gitBranch : undefined;
+
+              if (uniqueHash && processedHashes.has(uniqueHash)) {
+                // Duplicate — keep whichever record has more tokens. This
+                // resolves the proxy "placeholder + real value" pair from
+                // issue #18 without needing to detect the proxy.
+                const existingIndex = processedHashes.get(uniqueHash)!;
+                if (this.tokenSum(record) > this.tokenSum(records[existingIndex])) {
+                  records[existingIndex] = record;
+                  stats.replacedByDedup += 1;
+                } else {
+                  stats.skippedByDedup += 1;
+                }
+                continue;
+              }
+
               records.push(record);
+              stats.kept += 1;
+              const modelName =
+                typeof record.message?.model === 'string' ? record.message.model : '<no-model>';
+              if (!stats.models[modelName]) {
+                stats.models[modelName] = { count: 0, tokens: 0 };
+              }
+              stats.models[modelName].count += 1;
+              stats.models[modelName].tokens += this.tokenSum(record);
+              if (uniqueHash) {
+                processedHashes.set(uniqueHash, records.length - 1);
+              }
             } catch (parseError) {
+              stats.parseErrors += 1;
               console.warn(`Failed to parse line in ${file}:`, parseError);
             }
           }
@@ -408,6 +523,45 @@ export class ClaudeDataLoader {
         }
       }
 
+      // Attach harvested conversation titles (custom beats AI). A post-pass
+      // because a session's title lines and its usage records can sit in
+      // different files (sub-agent logs share the parent session's id).
+      for (const record of records) {
+        if (!record._sessionId) {
+          continue;
+        }
+        const title = customTitleBySession[record._sessionId] || aiTitleBySession[record._sessionId];
+        if (title) {
+          record._sessionTitle = title;
+        }
+      }
+
+      if (log) {
+        const rejectedSummary = Object.entries(stats.rejected)
+          .map(([reason, count]) => `${reason}=${count}`)
+          .join(', ') || 'none';
+        // List models sorted by kept-record count desc, with each entry's
+        // total token sum. If a model shows up with N records but 0 tokens
+        // it means every record for that model was a proxy zero-placeholder
+        // and the real values were never written — that's the missing-Flash
+        // story.
+        const fmt = (n: number): string =>
+          n >= 1e6 ? `${(n / 1e6).toFixed(1)}M`
+          : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K`
+          : `${n}`;
+        const modelsSummary = Object.entries(stats.models)
+          .sort(([, a], [, b]) => b.count - a.count)
+          .map(([name, m]) => `${name}=${m.count}/${fmt(m.tokens)}`)
+          .join(', ') || 'none';
+        log(
+          `loader: ${stats.files} files, ${stats.linesScanned} lines | ` +
+            `kept=${stats.kept}, user-prompts=${stats.userPrompts}, ` +
+            `dedup-replaced=${stats.replacedByDedup}, ` +
+            `dedup-skipped=${stats.skippedByDedup}, parse-errors=${stats.parseErrors} | ` +
+            `rejected: ${rejectedSummary}`
+        );
+        log(`loader: models seen: ${modelsSummary}`);
+      }
       return { records, contentAnalysis: analysis ? finalizeAnalysis(analysis) : null };
     } catch (error) {
       console.error('Error loading usage records:', error);
@@ -426,18 +580,68 @@ export class ClaudeDataLoader {
     return `${messageId || 'no-msg'}-${requestId || 'no-req'}`;
   }
 
+  /** Total tokens recorded on a usage record, across all four buckets. Used
+   * to decide which of two records sharing the same uniqueHash to keep
+   * (issue #18 — proxy writes placeholder then real values). */
+  private static tokenSum(r: any): number {
+    const u = r?.message?.usage || {};
+    return (u.input_tokens || 0) + (u.output_tokens || 0)
+      + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  }
+
   /**
    * Derive session + project info from a usage log file path.
    * Claude Code stores logs as: <claudeDir>/projects/<encoded-cwd>/<session-id>.jsonl
    * The encoded-cwd folder is the working directory with path separators replaced by '-'.
    */
   private static parseSessionInfo(filePath: string): { sessionId: string; projectName: string; projectPath: string } {
-    const sessionId = path.basename(filePath, '.jsonl');
-    const projectPath = path.basename(path.dirname(filePath));
+    // Layouts under ~/.claude/projects/:
+    //   <proj-encoded>/<session-id>.jsonl                                 (main conversation)
+    //   <proj-encoded>/<session-id>/subagents/workflows/<wf>/agent-*.jsonl (workflow sub-agents)
+    // Walk up from the 'projects' directory so sub-agent files resolve to
+    // their parent session and real project — the old basename-only logic
+    // attributed them to a 'wf_xxx' pseudo-project with an 'agent-xxx'
+    // session id, fragmenting Sessions/Projects aggregation.
+    const parts = filePath.split(/[\\/]/);
+    const projIdx = parts.lastIndexOf(CLAUDE_PROJECTS_DIR_NAME);
+    let projectPath: string;
+    let sessionId = path.basename(filePath, '.jsonl');
+    if (projIdx >= 0 && projIdx + 1 < parts.length - 1) {
+      projectPath = parts[projIdx + 1];
+      if (projIdx + 2 < parts.length - 1) {
+        // File is nested below a session directory: the session is that
+        // directory's name, not the (agent-xxx / journal) file name.
+        sessionId = parts[projIdx + 2];
+      }
+    } else {
+      projectPath = path.basename(path.dirname(filePath));
+    }
     // Use the last meaningful segment of the encoded path as a friendly project name.
     const segments = projectPath.split('-').filter((s) => s.length > 0);
     const projectName = segments.length > 0 ? segments[segments.length - 1] : projectPath || 'unknown';
     return { sessionId, projectName, projectPath };
+  }
+
+  /** True if a `user` line's text is a Claude Code system marker rather than
+   * something the user actually typed: an interruption notice, or the echo of
+   * a slash command (`/model`, `/clear`, …) and its output. These otherwise
+   * inflate the "Messages" count (one session showed 106 vs ~80 real prompts:
+   * `[Request interrupted by user]` ×3, `<command-name>/model…` ×8, etc.). */
+  private static isSyntheticUserText(text: string): boolean {
+    const t = text.trim();
+    if (/^\[Request interrupted/i.test(t)) {
+      return true;
+    }
+    // Slash-command echo blocks wrap the invocation/output in these tags.
+    if (
+      t.startsWith('<command-name>') ||
+      t.startsWith('<command-message>') ||
+      t.includes('<local-command-stdout>') ||
+      t.includes('<local-command-caveat>')
+    ) {
+      return true;
+    }
+    return false;
   }
 
   /** Last segment of a path, handling both '/' and '\\' separators. */
@@ -510,6 +714,12 @@ export class ClaudeDataLoader {
     };
 
     for (const record of records) {
+      // Synthetic user-prompt markers: count towards Messages and nothing else.
+      // "Messages" therefore means messages the user typed, not API calls.
+      if (record._isUserPrompt) {
+        data.messageCount++;
+        continue;
+      }
       // Only count records with usage and model (typically assistant type)
       if (!record.message.usage || !record.message.model) {
         continue;
@@ -542,7 +752,8 @@ export class ClaudeDataLoader {
       data.costBreakdown.output += costParts.output;
       data.costBreakdown.cacheWrite += costParts.cacheWrite;
       data.costBreakdown.cacheRead += costParts.cacheRead;
-      data.messageCount++;
+      // messageCount intentionally NOT incremented here — it counts the
+      // synthetic user-prompt markers above, i.e. messages the user typed.
 
       if (!data.modelBreakdown[model]) {
         data.modelBreakdown[model] = {
@@ -567,33 +778,90 @@ export class ClaudeDataLoader {
     return data;
   }
 
-  static getCurrentSessionData(records: ClaudeUsageRecord[]): SessionData | null {
+  /**
+   * The "current session" shown next to today's cost in the status bar — the
+   * single most-recently-active conversation (one `.jsonl` / `_sessionId`),
+   * scoped to the current workspace when one is given.
+   *
+   * Previously this aggregated *all* records from the last 5 hours across every
+   * project, so every VS Code window showed the same number regardless of which
+   * workspace it was. Now each window reflects its own workspace's current
+   * conversation. Returns null if there's been no activity in the last 5 hours
+   * (so a stale session doesn't masquerade as "current").
+   *
+   * @param workspacePath optional current workspace folder; records whose cwd
+   *   sits under it are preferred. Falls back to all records if the workspace
+   *   has no matching records (e.g. a brand-new folder).
+   */
+  /** Records belonging to the given workspace folder.
+   *
+   * Primary match: the session's home project directory (`_projectDirEncoded`,
+   * derived from where the .jsonl lives = where the session was started)
+   * equals the workspace folder encoded the same way Claude Code does
+   * (`D:\Jiaming\My_Proj` → `d--Jiaming-My-Proj`). This attributes the WHOLE
+   * conversation to its workspace even though per-record `cwd` wanders as
+   * work moves between folders mid-session (observed: one session split
+   * 10/71 across two cwds, fragmenting the per-project figure).
+   *
+   * Secondary match: the record's cwd sits under the folder — catches
+   * sessions started elsewhere that did work inside this workspace.
+   *
+   * Returns all records when no workspace is given. */
+  static filterByWorkspace(records: ClaudeUsageRecord[], workspacePath?: string): ClaudeUsageRecord[] {
+    if (!workspacePath) {
+      return records;
+    }
+    const norm = (p: string): string => (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const wp = norm(workspacePath);
+    const encoded = workspacePath.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    return records.filter((r) => {
+      if ((r._projectDirEncoded || '').toLowerCase() === encoded) {
+        return true;
+      }
+      const p = norm(r._projectPath || '');
+      return p.startsWith(wp) || p === encoded;
+    });
+  }
+
+  static getCurrentSessionData(records: ClaudeUsageRecord[], workspacePath?: string): SessionData | null {
     if (records.length === 0) {
       return null;
     }
 
-    // Sort records by timestamp
-    const sortedRecords = records.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    let pool = records;
+    if (workspacePath) {
+      const scoped = this.filterByWorkspace(records, workspacePath);
+      if (scoped.length > 0) {
+        pool = scoped;
+      }
+    }
 
-    const now = new Date();
-    const sessionRecords = sortedRecords.filter((record) => {
-      const recordTime = new Date(record.timestamp);
-      const timeDiff = now.getTime() - recordTime.getTime();
-      return timeDiff <= 5 * 60 * 60 * 1000; // 5 hours in milliseconds
-    });
+    // The most recent record identifies the current session.
+    let latest = pool[0];
+    for (const r of pool) {
+      if (new Date(r.timestamp).getTime() > new Date(latest.timestamp).getTime()) {
+        latest = r;
+      }
+    }
 
+    // Recency guard: if the latest activity is older than the 5-hour window,
+    // there is no "current" session to show.
+    if (Date.now() - new Date(latest.timestamp).getTime() > 5 * 60 * 60 * 1000) {
+      return null;
+    }
+
+    const sessionId = latest._sessionId;
+    const sessionRecords = pool.filter((r) => r._sessionId === sessionId);
     if (sessionRecords.length === 0) {
       return null;
     }
 
     const usageData = this.calculateUsageData(sessionRecords);
-    const sessionStart = new Date(sessionRecords[0].timestamp);
-    const sessionEnd = new Date(sessionRecords[sessionRecords.length - 1].timestamp);
-
+    const times = sessionRecords.map((r) => new Date(r.timestamp).getTime());
     return {
       ...usageData,
-      sessionStart,
-      sessionEnd,
+      sessionStart: new Date(Math.min(...times)),
+      sessionEnd: new Date(Math.max(...times)),
     };
   }
 
@@ -698,8 +966,11 @@ export class ClaudeDataLoader {
       const first = sessionRecords[0];
       const peakContextTokens = sessionRecords.reduce((peak, r) => Math.max(peak, this.recordContextTokens(r)), 0);
 
+      const title = sessionRecords.find((r) => r._sessionTitle)?._sessionTitle;
+
       return {
         sessionId,
+        title,
         projectName: first._projectName || 'unknown',
         projectPath: first._projectPath || '',
         startTime,
@@ -710,7 +981,9 @@ export class ClaudeDataLoader {
     });
 
     return sessions
-      .filter((s) => s.data.messageCount > 0)
+      // messageCount now means user-typed prompts; keep sessions that have
+      // real spend even if no prompt landed in the window (e.g. continuations).
+      .filter((s) => s.data.messageCount > 0 || s.data.totalCost > 0)
       .sort((a, b) => b.endTime.getTime() - a.endTime.getTime())
       .slice(0, limit);
   }

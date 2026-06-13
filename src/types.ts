@@ -20,6 +20,16 @@ export interface ClaudeUsageRecord {
   _projectName?: string;
   _projectPath?: string;
   _gitBranch?: string;
+  // Human-readable conversation title (what `claude --resume` shows),
+  // harvested from `custom-title` / `ai-title` / legacy `summary` log lines.
+  _sessionTitle?: string;
+  // Encoded project directory the session file lives in (where the session
+  // was started), e.g. "d--Jiaming-My-Proj". Stable per session, unlike the
+  // per-record cwd which wanders as work moves between folders.
+  _projectDirEncoded?: string;
+  // Synthetic marker record for one genuine user prompt (zero usage).
+  // messageCount counts these, so "Messages" means what users typed.
+  _isUserPrompt?: boolean;
 }
 
 export interface UsageData {
@@ -54,6 +64,8 @@ export interface SessionData extends UsageData {
 // Per-conversation breakdown: one entry per Claude Code session (.jsonl file).
 export interface SessionUsage {
   sessionId: string;
+  // Conversation title (from the session's summary line), when available.
+  title?: string;
   projectName: string;
   projectPath: string;
   startTime: Date;
@@ -135,6 +147,14 @@ export interface ExtensionConfig {
   //   - 'folder' group by the heuristic top-level project folder only
   //   - 'flat'   no grouping; every working directory is its own row
   projectGroupingMode: 'git' | 'folder' | 'flat';
+  // Watch log files and refresh within ~1.5s of each new message. When false
+  // the extension falls back to the interval-based refresh, which is calmer
+  // but lags behind real-time.
+  fileWatching: boolean;
+  // Skip the dashboard webview on auto-refreshes (status bar still updates).
+  // Use when the constantly-reloading dashboard interferes with reading
+  // numbers while an agent is actively writing.
+  pauseDashboardRefresh: boolean;
 }
 
 export interface ModelPricing {

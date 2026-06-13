@@ -19,7 +19,7 @@ const MILL = 1_000_000;
 
 // =====================================================================
 // Anthropic / Claude pricing
-// Verified 2026-05-31 — https://platform.claude.com/docs/en/about-claude/pricing
+// Verified 2026-05-21 — https://platform.claude.com/docs/en/about-claude/pricing
 //
 // Cache pricing follows Anthropic's standard multipliers vs base input price:
 //   - 5-minute cache write : 1.25x base input  (what Claude Code writes by default)
@@ -27,12 +27,13 @@ const MILL = 1_000_000;
 // `cache_creation_input_token_cost` below uses the 5-minute write rate.
 // =====================================================================
 
-// Fable 5 / Mythos 5 — most-capable tier ($10 / $50)
-const FABLE: ModelPricing = {
+// Fable 5 / Mythos 5 — frontier tier ($10 / $50), verified 2026-06-09
+// https://platform.claude.com/docs/en/about-claude/pricing
+const FABLE_5: ModelPricing = {
   input_cost_per_token: 10 / MILL,
   output_cost_per_token: 50 / MILL,
   cache_creation_input_token_cost: 12.5 / MILL,
-  cache_read_input_token_cost: 1.0 / MILL,
+  cache_read_input_token_cost: 1 / MILL,
 };
 
 // Opus 4.5 / 4.6 / 4.7 / 4.8 — current Opus tier ($5 / $25)
@@ -43,7 +44,7 @@ const OPUS_CURRENT: ModelPricing = {
   cache_read_input_token_cost: 0.5 / MILL,
 };
 
-// Opus 4.1 — legacy Opus tier ($15 / $75)
+// Opus 4 / 4.1 — legacy Opus tier ($15 / $75)
 const OPUS_LEGACY: ModelPricing = {
   input_cost_per_token: 15 / MILL,
   output_cost_per_token: 75 / MILL,
@@ -51,7 +52,7 @@ const OPUS_LEGACY: ModelPricing = {
   cache_read_input_token_cost: 1.5 / MILL,
 };
 
-// Sonnet 4 / 4.5 / 4.6 — Sonnet tier ($3 / $15, <=200K context)
+// Sonnet 3.5 / 4 / 4.5 / 4.6 — Sonnet tier ($3 / $15, <=200K context)
 const SONNET: ModelPricing = {
   input_cost_per_token: 3 / MILL,
   output_cost_per_token: 15 / MILL,
@@ -65,6 +66,14 @@ const HAIKU_45: ModelPricing = {
   output_cost_per_token: 5 / MILL,
   cache_creation_input_token_cost: 1.25 / MILL,
   cache_read_input_token_cost: 0.1 / MILL,
+};
+
+// Haiku 3.5 ($0.80 / $4) — retired, kept for historical logs
+const HAIKU_35: ModelPricing = {
+  input_cost_per_token: 0.8 / MILL,
+  output_cost_per_token: 4 / MILL,
+  cache_creation_input_token_cost: 1.0 / MILL,
+  cache_read_input_token_cost: 0.08 / MILL,
 };
 
 /**
@@ -113,9 +122,13 @@ const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
   'gemini-2.5-flash-lite': priced(0.1, 0.4, 0.01),
   'gemini-2.0-flash': priced(0.1, 0.4, 0.025),
 
-  // --- DeepSeek --- https://api-docs.deepseek.com (cache-hit price applied to cache reads)
-  'deepseek-chat': priced(0.14, 0.28, 0.0028),
-  'deepseek-reasoner': priced(0.14, 0.28, 0.0028),
+  // --- DeepSeek --- https://api-docs.deepseek.com/quick_start/pricing/
+  // The `deepseek-chat` alias has pointed to the current V4 Pro tier since
+  // 2024-09; `deepseek-reasoner` is the matched reasoner at the same price.
+  // Don't lump them in with V4 Flash, which is the cheap tier.
+  'deepseek-chat': priced(0.435, 0.87, 0.003625),
+  'deepseek-reasoner': priced(0.435, 0.87, 0.003625),
+  'deepseek-v4-pro': priced(0.435, 0.87, 0.003625),
   'deepseek-v4-flash': priced(0.14, 0.28, 0.0028),
 
   // --- Moonshot / Kimi --- prices published in USD by Moonshot
@@ -140,15 +153,13 @@ const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
 // so direct lookups stay fast; anything not listed is resolved by getModelPricing()'s
 // family-aware fallback below.
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Claude Fable 5 / Mythos 5 (most-capable tier)
-  'claude-fable-5': FABLE,
-  'claude-mythos-5': FABLE,
+  // Claude Fable 5 / Mythos 5 (2026-06) — frontier tier
+  'claude-fable-5': FABLE_5,
+  'claude-mythos-5': FABLE_5,
 
-  // Claude Opus 4.8
+  // Claude Opus 4.8 / 4.7 / 4.6 — current Opus tier rate, verified 2026-06-09
+  // against the official pricing page ($5 / $25 / $6.25 / $0.5 per MTok).
   'claude-opus-4-8': OPUS_CURRENT,
-  'claude-opus-4-8-20251001': OPUS_CURRENT,
-
-  // Claude Opus 4.7 / 4.6
   'claude-opus-4-7': OPUS_CURRENT,
   'claude-opus-4-6': OPUS_CURRENT,
 
@@ -160,17 +171,28 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-1-20250805': OPUS_LEGACY,
   'claude-opus-4-1': OPUS_LEGACY,
 
+  // Claude Opus 4 (2025-05-14)
+  'claude-opus-4-20250514': OPUS_LEGACY,
+
   // Claude Sonnet 4.6
   'claude-sonnet-4-6': SONNET,
-  'claude-sonnet-4-6-20250514': SONNET,
 
   // Claude Sonnet 4.5 (2025-09-29)
   'claude-sonnet-4-5-20250929': SONNET,
   'claude-sonnet-4-5': SONNET,
 
+  // Claude Sonnet 4 (2025-05-14)
+  'claude-sonnet-4-20250514': SONNET,
+
+  // Claude Sonnet 3.5 (2024-10-22)
+  'claude-3-5-sonnet-20241022': SONNET,
+
   // Claude Haiku 4.5 (2025-10)
   'claude-haiku-4-5-20251001': HAIKU_45,
   'claude-haiku-4-5': HAIKU_45,
+
+  // Claude Haiku 3.5 (2024-10-22) — retired
+  'claude-3-5-haiku-20241022': HAIKU_35,
 
   // Common US / Chinese models (see NON_CLAUDE_PRICING above)
   ...NON_CLAUDE_PRICING,
@@ -195,16 +217,18 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
   const name = modelName.toLowerCase();
 
   // --- Anthropic / Claude ---
-  // Check fable/mythos before the generic branches: these are the $10/$50 top tier,
-  // and an unknown fable snapshot must not silently fall through to Sonnet pricing.
   if (name.includes('fable') || name.includes('mythos')) {
-    return { pricing: FABLE, family: 'Fable / Mythos (top tier)' };
+    return { pricing: FABLE_5, family: 'Fable 5 (frontier tier)' };
   }
   if (name.includes('haiku')) {
+    if (name.includes('haiku-3') || name.includes('-3-5-haiku') || name.includes('-3-haiku')) {
+      return { pricing: HAIKU_35, family: 'Haiku 3.5' };
+    }
     return { pricing: HAIKU_45, family: 'Haiku 4.5' };
   }
   if (name.includes('opus')) {
-    // Opus 4.1 is in the exact map; unknown Opus is almost certainly a new current-tier model ($5/$25).
+    // Legacy Opus (4 / 4.1) is always in the exact map, so an unknown opus is
+    // almost certainly a new-tier model.
     return { pricing: OPUS_CURRENT, family: 'Opus (current tier)' };
   }
   if (name.includes('sonnet')) {
@@ -244,16 +268,14 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
     return null;
   }
 
-  // Try the exact name and the anthropic/ prefix. Also strip 8-digit date suffixes
-  // (e.g. "claude-opus-4-8" from "claude-opus-4-8-20251001") so dated snapshots
-  // not in the explicit table still resolve to the base model entry.
-  // The old synthetic "claude-3-5-${name}" / "claude-3-${name}" prefixes were removed
-  // because they can silently match unrelated short model strings.
-  const withoutDate = modelName.replace(/-\d{8}$/, '');
-  const variations: string[] = [modelName, `anthropic/${modelName}`];
-  if (withoutDate !== modelName) {
-    variations.push(withoutDate, `anthropic/${withoutDate}`);
-  }
+  // Strip a trailing bracket suffix like "[1m]" (long-context variant marker
+  // used in Claude Code model settings, e.g. "claude-fable-5[1m]"). 1M-context
+  // variants are billed at standard per-token rates, so the base model's
+  // pricing applies.
+  modelName = modelName.replace(/\[[^\]]*\]\s*$/, '');
+
+  // Try different variation matches (similar to ccusage logic)
+  const variations = [modelName, `anthropic/${modelName}`, `claude-3-5-${modelName}`, `claude-3-${modelName}`, `claude-${modelName}`];
 
   // Runtime overrides (fetched from LiteLLM) take precedence over the built-in table.
   for (const variation of variations) {
@@ -403,11 +425,6 @@ export function fetchLatestPricing(): Promise<{ updated: number }> {
           const json = JSON.parse(body) as Record<string, unknown>;
           let updated = 0;
 
-          // Reject values outside a plausible range — guards against a crafted
-          // payload with zero or extreme values from a compromised upstream.
-          // $1 per token ($1M per million) is far above any real model price.
-          const MAX_PRICE_PER_TOKEN = 1;
-
           for (const [name, raw] of Object.entries(json)) {
             if (raw == null || typeof raw !== 'object') {
               continue;
@@ -416,19 +433,10 @@ export function fetchLatestPricing(): Promise<{ updated: number }> {
             if (typeof info.input_cost_per_token !== 'number') {
               continue;
             }
-            const inputCost = info.input_cost_per_token;
-            if (inputCost <= 0 || inputCost > MAX_PRICE_PER_TOKEN) {
-              console.warn(`fetchLatestPricing: skipping ${name} — input_cost_per_token ${inputCost} out of range`);
-              continue;
-            }
-            const outputCost = typeof info.output_cost_per_token === 'number' ? info.output_cost_per_token : undefined;
-            if (outputCost !== undefined && (outputCost <= 0 || outputCost > MAX_PRICE_PER_TOKEN)) {
-              console.warn(`fetchLatestPricing: skipping ${name} — output_cost_per_token ${outputCost} out of range`);
-              continue;
-            }
             runtimePricingOverrides[name] = {
-              input_cost_per_token: inputCost,
-              output_cost_per_token: outputCost,
+              input_cost_per_token: info.input_cost_per_token,
+              output_cost_per_token:
+                typeof info.output_cost_per_token === 'number' ? info.output_cost_per_token : undefined,
               cache_creation_input_token_cost:
                 typeof info.cache_creation_input_token_cost === 'number' ? info.cache_creation_input_token_cost : undefined,
               cache_read_input_token_cost:

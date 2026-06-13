@@ -2,7 +2,64 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream release: 2.0.0). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream merge: 2.0.2 / `a5b4e1f`). Format follows [Keep a Changelog](https://keepachangelog.com).
+
+## [2.5.1] — 2026-06-14
+
+### Fixed
+
+- **"Get AI Advice" button icon** — replaced `✨` emoji (invisible on Linux/no-emoji-font systems) with an inline SVG lightbulb. Upstream v2.0.1 reintroduced the emoji; this restores the SVG approach from our v2.2.2 fix.
+
+---
+
+## [2.5.0] — 2026-06-13
+
+### Added
+
+- **Auto-refresh toggle** — header now includes an on/off switch for the
+  dashboard auto-refresh. Mirrors `claudeCodeUsage.pauseDashboardRefresh`
+  setting; toggling via the UI updates the VS Code config immediately
+  (upstream `v2.0.2`).
+- **File-watching setting** — new `claudeCodeUsage.fileWatching` boolean:
+  when enabled the status bar refreshes within ~1.5 s of each new message;
+  disable to fall back to the interval-based refresh (upstream `v2.0.1`).
+- **Session title in Sessions tab** — the Sessions breakdown table now shows
+  the extracted session title (`custom-title` / `ai-title` / `summary`)
+  alongside the project path (upstream `v2.0.1`).
+- **Stacked cost charts** — monthly and all-time daily charts now render as
+  stacked bars broken down by model family (upstream `v2.0.1`).
+- **DeepSeek V4 Pro pricing** — added `deepseek-v4-pro` model entry.
+- **Upstream upstream/main issue templates** — four GitHub issue templates
+  plus a pull-request template added to `.github/`.
+
+### Changed
+
+- **Upstream merge** — merged `jack21/ClaudeCodeUsage` commits `b5d69b9`
+  (v2.0.1) and `fae6d4b` (v2.0.2) into our fork. All fork-exclusive
+  features retained (see below).
+- **Dedup logic** — session record deduplication switched from `Set` to
+  `Map` keyed on `requestId`; when duplicates exist the entry with the
+  higher token count is kept (upstream `v2.0.1`).
+- **Quota expired-window handling** — `liveWindows()` rolls expired quota
+  windows forward rather than hiding them instantly; windows older than
+  2× the period are dropped completely (upstream `v2.0.1`).
+- **429 cool-down** — OAuth rate-limit back-off reduced from 5 min to 60 s
+  (upstream `v2.0.1`).
+- **Token expiry re-read** — credentials are re-read from disk before each
+  quota refresh, fixing "quota dead until restart" after a token rotation
+  (upstream `v2.0.1`).
+
+### Retained (fork-exclusive features)
+
+- **"This Week" billing tab** — shows usage aggregated over the current
+  Anthropic weekly billing window (not present in upstream).
+- **Week reset countdown** — banner in "This Week" tab shows exact
+  reset date/time and time remaining.
+- **Session cost in status bar** — `$(history) $0.12` secondary cost
+  alongside `$(pulse) $1.45` daily cost (not present in upstream).
+- **publisher** — kept as `maxysoft`; upstream publisher rebrand not applied.
+
+---
 
 ## [2.2.4] — 2026-06-13
 

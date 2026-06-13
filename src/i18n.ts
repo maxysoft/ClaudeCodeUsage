@@ -15,7 +15,9 @@ export interface Translations {
     thisWeek: string;
     thisMonth: string;
     allTime: string;
+    workspaceToday: string;
     refresh: string;
+    autoRefresh: string;
     settings: string;
     totalTokens: string;
     inputTokens: string;
@@ -67,6 +69,7 @@ export interface Translations {
     branches: string;
     branchBreakdown: string;
     branch: string;
+    sessionTitle: string;
     getAdvice: string;
     adviceNeedsKey: string;
     adviceGenerating: string;
@@ -107,7 +110,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: 'This Week',
       thisMonth: 'This Month',
       allTime: 'All Time',
+      workspaceToday: 'This project',
       refresh: 'Refresh',
+      autoRefresh: 'Auto refresh',
       settings: 'Settings',
       totalTokens: 'Total Tokens',
       inputTokens: 'Input Tokens',
@@ -159,6 +164,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: 'Branches',
       branchBreakdown: 'Branch Usage',
       branch: 'Branch',
+      sessionTitle: 'Session',
       getAdvice: 'Get AI Advice',
       adviceNeedsKey: 'Set an API key in Settings to use AI advice.',
       adviceGenerating: 'Generating usage advice…',
@@ -208,7 +214,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: "Diese Woche",
       thisMonth: "Diesen Monat",
       allTime: "Seit Aufzeichnungsbeginn",
+      workspaceToday: "Dieses Projekt",
       refresh: "Aktualisieren",
+      autoRefresh: "Auto-Aktualisierung",
       settings: "Einstellungen",
       totalTokens: "Gesamte Token",
       inputTokens: "Eingabe Token",
@@ -260,6 +268,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: "Branches",
       branchBreakdown: "Nutzung nach Branch",
       branch: "Branch",
+      sessionTitle: "Sitzung",
       getAdvice: "KI-Rat holen",
       adviceNeedsKey: "API-Schlüssel in den Einstellungen festlegen, um KI-Rat zu nutzen.",
       adviceGenerating: "Nutzungsrat wird erstellt…",
@@ -312,7 +321,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: '本週',
       thisMonth: '本月',
       allTime: '所有',
+      workspaceToday: '本專案',
       refresh: '重新整理',
+      autoRefresh: '自動刷新',
       settings: '設定',
       totalTokens: '總 Token 數',
       inputTokens: '輸入 Token',
@@ -364,6 +375,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: '分支',
       branchBreakdown: '各分支使用量',
       branch: '分支',
+      sessionTitle: '會話',
       getAdvice: '取得 AI 建議',
       adviceNeedsKey: '請先在設定中填入 API 金鑰以使用 AI 建議。',
       adviceGenerating: '正在產生使用建議…',
@@ -413,7 +425,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: '本周',
       thisMonth: '本月',
       allTime: '所有',
+      workspaceToday: '本项目',
       refresh: '刷新',
+      autoRefresh: '自动刷新',
       settings: '设置',
       totalTokens: '总 Token 数',
       inputTokens: '输入 Token',
@@ -465,6 +479,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: '分支',
       branchBreakdown: '各分支使用量',
       branch: '分支',
+      sessionTitle: '会话',
       getAdvice: '获取 AI 建议',
       adviceNeedsKey: '请先在设置中填入 API 密钥以使用 AI 建议。',
       adviceGenerating: '正在生成使用建议…',
@@ -514,7 +529,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: '今週',
       thisMonth: '今月',
       allTime: 'すべて',
+      workspaceToday: 'このプロジェクト',
       refresh: '更新',
+      autoRefresh: '自動更新',
       settings: '設定',
       totalTokens: '総トークン数',
       inputTokens: '入力トークン',
@@ -566,6 +583,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: 'ブランチ',
       branchBreakdown: 'ブランチ別使用量',
       branch: 'ブランチ',
+      sessionTitle: 'セッション',
       getAdvice: 'AI アドバイスを取得',
       adviceNeedsKey: '設定で API キーを入力してください。',
       adviceGenerating: '使用アドバイスを生成中…',
@@ -616,7 +634,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       thisWeek: '이번 주',
       thisMonth: '이번 달',
       allTime: '전체',
+      workspaceToday: '이 프로젝트',
       refresh: '새로고침',
+      autoRefresh: '자동 새로고침',
       settings: '설정',
       totalTokens: '총 토큰 수',
       inputTokens: '입력 토큰',
@@ -668,6 +688,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       branches: '브랜치',
       branchBreakdown: '브랜치별 사용량',
       branch: '브랜치',
+      sessionTitle: '세션',
       getAdvice: 'AI 조언 받기',
       adviceNeedsKey: '설정에서 API 키를 입력하세요.',
       adviceGenerating: '사용 조언 생성 중…',
