@@ -27,6 +27,14 @@ const MILL = 1_000_000;
 // `cache_creation_input_token_cost` below uses the 5-minute write rate.
 // =====================================================================
 
+// Fable 5 / Mythos 5 — most-capable tier ($10 / $50)
+const FABLE: ModelPricing = {
+  input_cost_per_token: 10 / MILL,
+  output_cost_per_token: 50 / MILL,
+  cache_creation_input_token_cost: 12.5 / MILL,
+  cache_read_input_token_cost: 1.0 / MILL,
+};
+
 // Opus 4.5 / 4.6 / 4.7 / 4.8 — current Opus tier ($5 / $25)
 const OPUS_CURRENT: ModelPricing = {
   input_cost_per_token: 5 / MILL,
@@ -132,6 +140,10 @@ const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
 // so direct lookups stay fast; anything not listed is resolved by getModelPricing()'s
 // family-aware fallback below.
 const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Claude Fable 5 / Mythos 5 (most-capable tier)
+  'claude-fable-5': FABLE,
+  'claude-mythos-5': FABLE,
+
   // Claude Opus 4.8
   'claude-opus-4-8': OPUS_CURRENT,
   'claude-opus-4-8-20251001': OPUS_CURRENT,
@@ -183,6 +195,11 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
   const name = modelName.toLowerCase();
 
   // --- Anthropic / Claude ---
+  // Check fable/mythos before the generic branches: these are the $10/$50 top tier,
+  // and an unknown fable snapshot must not silently fall through to Sonnet pricing.
+  if (name.includes('fable') || name.includes('mythos')) {
+    return { pricing: FABLE, family: 'Fable / Mythos (top tier)' };
+  }
   if (name.includes('haiku')) {
     return { pricing: HAIKU_45, family: 'Haiku 4.5' };
   }

@@ -4,6 +4,25 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream release: 2.0.0). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.2.4] — 2026-06-13
+
+### Added
+
+- **Claude Fable 5 / Mythos 5 pricing** — added the top-tier `claude-fable-5`
+  and `claude-mythos-5` models at their published $10 / $50 per-million
+  input/output rates (5-minute cache write $12.50, cache read $1.00). The
+  family-detection fallback now recognises `fable`/`mythos` model ids before
+  the generic Claude branches.
+
+### Fixed
+
+- **Fable/Mythos cost undercount** — usage logged against a Fable or Mythos
+  model previously matched no pricing family and fell back to Sonnet rates
+  ($3 / $15), undercounting cost by ~3.3×. These models now resolve to the
+  correct top-tier pricing.
+
+---
+
 ## [2.2.3] — 2026-06-03
 
 ### Added
