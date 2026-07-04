@@ -1,0 +1,47 @@
+# Auto first-pass reply on every NEW issue — a CONTROLLED single model call
+# (not an autonomous agent). See .github/scripts/first-pass.mjs: it reads the
+# project docs, asks the model once, and posts one comment. No tools run, so a
+# malicious public issue can't steer it into misusing the token or key.
+#
+# INERT until the owner sets:
+#   AUTOMATION_ENABLED = 'true'   (repo variable, kill switch)
+#   ANTHROPIC_API_KEY             (repo secret — official or third-party key)
+# Optional repo variables: ANTHROPIC_BASE_URL (third-party Anthropic-format
+# endpoint), CCU_BOT_MODEL (defaults to deepseek-v4-flash).
+name: Issue first-pass (auto)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read # read the repo docs the reply is grounded in
+  issues: write # post the comment
+
+concurrency:
+  group: issue-first-pass-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  reply:
+    if: vars.AUTOMATION_ENABLED == 'true' && github.event.issue.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: First-pass reply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_KIND: issue
+          ITEM_NUMBER: ${{ github.event.issue.number }}
+          ITEM_TITLE: ${{ github.event.issue.title }}
+          ITEM_BODY: ${{ github.event.issue.body }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          CCU_BOT_MODEL: ${{ vars.CCU_BOT_MODEL }}
+        run: node .github/scripts/first-pass.mjs

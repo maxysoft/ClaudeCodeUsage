@@ -10,3 +10,18 @@ node_modules
 .env.*
 *.env.local
 secrets.json
+
+# Personal, per-maintainer Claude Code notes (the shared CLAUDE.md is committed).
+CLAUDE.local.md
+
+# Locally generated AI-advice reports — contain the maintainer's own prompt
+# samples. Curated excerpts may be hand-copied into the README, but the raw
+# reports must never be committed.
+
+# Local-only planning / dev-reference docs. The whole docs/ tree is the
+# maintainer's private context pack (product direction lives in
+# docs/ARCHITECTURE-private.md) — synced to a personal repo, never public.
+# README / CHANGELOG / ARCHITECTURE live at the repo root and ARE public:
+# ARCHITECTURE.md is the technical map the @ccu-bot automation + contributors
+# read (product strategy is kept out of it, in docs/ARCHITECTURE-private.md).
+docs/

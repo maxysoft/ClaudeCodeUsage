@@ -1,0 +1,51 @@
+# Auto first-pass review on every NEW pull request — a CONTROLLED single model
+# call (not an autonomous agent). Uses pull_request_target for the token but
+# NEVER runs the PR's code: it checks out the BASE repo, fetches the diff via the
+# API, asks the model once, and posts one comment. No tools → injection-safe.
+#
+# INERT until AUTOMATION_ENABLED = 'true' + the ANTHROPIC_API_KEY secret.
+# Optional repo vars: ANTHROPIC_BASE_URL, CCU_BOT_MODEL (default deepseek-v4-flash).
+name: PR first-pass (auto)
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-first-pass-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: vars.AUTOMATION_ENABLED == 'true' && github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      # Base repo only — never checks out or runs the PR head with the token.
+      - name: Checkout base repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Fetch PR diff (via API, no code run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} > /tmp/pr.diff || true
+
+      - name: First-pass review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_KIND: pr
+          ITEM_NUMBER: ${{ github.event.pull_request.number }}
+          ITEM_TITLE: ${{ github.event.pull_request.title }}
+          ITEM_BODY: ${{ github.event.pull_request.body }}
+          DIFF_FILE: /tmp/pr.diff
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          CCU_BOT_MODEL: ${{ vars.CCU_BOT_MODEL }}
+        run: node .github/scripts/first-pass.mjs
