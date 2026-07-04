@@ -754,7 +754,7 @@ export class ClaudeCodeUsageExtension {
         this.statusBar.updateUsageData(null, null, error);
         this.statusBar.updateContext(null);
         if (updateWebview) {
-          this.webviewProvider.updateData(null, null, null, null, [], [], [], error, null);
+          this.webviewProvider.updateData(null, null, null, null, null, [], [], [], error, null);
         }
         return;
       }
@@ -812,7 +812,7 @@ export class ClaudeCodeUsageExtension {
         this.statusBar.updateUsageData(null, null, error);
         this.statusBar.updateContext(null);
         if (updateWebview) {
-          this.webviewProvider.updateData(null, null, null, null, [], [], [], error, dataDirectory);
+          this.webviewProvider.updateData(null, null, null, null, null, [], [], [], error, dataDirectory);
         }
         return;
       }
@@ -843,7 +843,7 @@ export class ClaudeCodeUsageExtension {
         ClaudeDataLoader.getCurrentContextInfo(records, workspacePath, config.contextWindowOverride)
       );
       if (updateWebview) {
-        this.webviewProvider.updateData(sessionData, todayData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, workflowBreakdown);
+        this.webviewProvider.updateData(sessionData, todayData, null, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, workflowBreakdown);
       }
 
     } catch (error) {
@@ -853,7 +853,7 @@ export class ClaudeCodeUsageExtension {
       this.statusBar.updateUsageData(null, null, errorMessage);
       this.statusBar.updateContext(null);
       if (manualTrigger || !this.getConfiguration().pauseDashboardRefresh) {
-        this.webviewProvider.updateData(null, null, null, null, [], [], [], errorMessage, null);
+        this.webviewProvider.updateData(null, null, null, null, null, [], [], [], errorMessage, null);
       }
     } finally {
       this.isRefreshing = false;
