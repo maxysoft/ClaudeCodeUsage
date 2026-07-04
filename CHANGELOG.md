@@ -4,6 +4,37 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.1.1 / `e52634c`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.6.0] — 2026-06-14
+
+### Added (merged from upstream v2.1.1)
+
+- **Claude Sonnet 5 context window fix** — `contextWindowFor()` now recognises `claude-sonnet-5` (no `-4-` segment) and shows the correct 1M window instead of falling back to 200K.
+- **Brazilian Portuguese (pt-BR)** — seventh interface language.
+- **Sessions: resume / copy / delete** — per-row actions plus a Current project / All filter.
+- **Monthly cost in the status bar** — `statusBarMetric: 'monthly-cost'` option.
+- **Quota display options** — `quotaFiveHourOnly`, `showResetInStatusBar` settings.
+- **Sturdier quota** — last `/usage` result cached to disk, shown instantly on startup; 429 back-off.
+- **Quota refresh on account switch** — OAuth credentials re-read on every quota fetch and the credentials file is watched, so switching accounts no longer leaves the status bar stuck on stale usage.
+- **Wider dashboard** (up to 1600px) with indented sub-project rows.
+- **Settings tab in the dashboard** — most settings now live in extension storage and are edited from a ⚙ Settings tab instead of VS Code's Settings UI.
+- **Workflows tab** — per-run breakdown of multi-agent sessions (models, cost, cache hit rate, per-agent tasks).
+- **Usage attribution panel** — cost/tokens broken down by skill, subagent, plugin, and model across day/week/month/session/project scopes.
+- **Thinking token estimation** — estimated thinking-token share per session.
+- **Context-window indicator** — new status bar item showing the current session's context fill (`$(layers)` icon).
+- Numerous model-pricing corrections (GLM, MiniMax, MiMo, Kimi, Qwen, Hunyuan, Step families).
+
+### Changed (fork-specific)
+
+- **Status bar now shows three cost segments** — today's total (`$(pulse)`), this project's cost today (`$(folder)`), and the current session's cost (`$(history)`), each with its own tooltip column.
+- **"Get AI Advice" icon** — inline SVG lightbulb instead of emoji, in both the header shortcut button and the advice card.
+- **Restored `npm run test` script** in `package.json` for the unit tests carried over from upstream.
+
+### Upstream alignment
+
+This fork is aligned with `jack21/ClaudeCodeUsage` v2.1.1 (`e52634c`) — every upstream feature through that commit is present. Fork-exclusive additions on top: "This Week" billing tab with reset countdown, session cost in the status bar, and `maxysoft` publisher branding.
+
+---
+
 ## [2.5.1] — 2026-06-14
 
 ### Fixed

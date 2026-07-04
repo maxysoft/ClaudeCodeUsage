@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ClaudeApiUsageResponse, ClaudeUsageLimit, ContextWindowInfo, UsageData } from './types';
+import { ClaudeApiUsageResponse, ClaudeUsageLimit, ContextWindowInfo, SessionData, UsageData } from './types';
 import { I18n } from './i18n';
 import { formatQuotaStatusText, worstShownUtilisation, QuotaStatusOptions } from './quotaFormat';
 
@@ -99,7 +99,8 @@ export class StatusBarManager {
     workspaceTodayData?: UsageData | null,
     error?: string,
     usageLimits?: ClaudeApiUsageResponse | null,
-    monthData?: UsageData | null
+    monthData?: UsageData | null,
+    sessionData?: SessionData | null
   ): void {
     // Quota is account-level and decoupled from local-data state: the caller
     // is expected to call updateQuota() separately so workspaces without
@@ -116,7 +117,7 @@ export class StatusBarManager {
       return;
     }
 
-    this.showTodayData(todayData, workspaceTodayData ?? null, monthData ?? null);
+    this.showTodayData(todayData, workspaceTodayData ?? null, monthData ?? null, sessionData ?? null);
     // The usageLimits arg is kept for callers that want a single-call update
     // path; quota was already refreshed earlier in this cycle.
     if (usageLimits !== undefined) {
@@ -133,11 +134,19 @@ export class StatusBarManager {
     }
   }
 
-  private showTodayData(todayData: UsageData, workspaceTodayData: UsageData | null, monthData: UsageData | null): void {
+  private showTodayData(
+    todayData: UsageData,
+    workspaceTodayData: UsageData | null,
+    monthData: UsageData | null,
+    sessionData: SessionData | null
+  ): void {
     // Primary figure = today across all projects; secondary = today for the
-    // current workspace, so you can see this project's share next to the global
-    // total. Both reset at midnight. The metric setting switches cost ↔ tokens ↔ monthly cost.
+    // current workspace; tertiary = the current session's cost, so you can see
+    // both this project's daily share and the live session next to the global
+    // total. Today/workspace reset at midnight; session resets each new
+    // session. The metric setting switches cost ↔ tokens ↔ monthly cost.
     const ws = workspaceTodayData ?? null;
+    const session = sessionData && sessionData.messageCount > 0 ? sessionData : null;
     const totalTokens = (d: UsageData): number =>
       d.totalInputTokens + d.totalOutputTokens + d.totalCacheCreationTokens + d.totalCacheReadTokens;
     let text: string;
@@ -145,6 +154,9 @@ export class StatusBarManager {
       text = `$(symbol-number) ${I18n.formatTokensCompact(totalTokens(todayData))}`;
       if (ws) {
         text += ` $(folder) ${I18n.formatTokensCompact(totalTokens(ws))}`;
+      }
+      if (session) {
+        text += ` $(history) ${I18n.formatTokensCompact(totalTokens(session))}`;
       }
     } else if (this.metric === 'monthly-cost') {
       text = `$(calendar) ${I18n.formatCurrency(monthData?.totalCost ?? 0)}`;
@@ -155,12 +167,15 @@ export class StatusBarManager {
       if (ws) {
         text += ` $(folder) ${I18n.formatCurrency(ws.totalCost)}`;
       }
+      if (session) {
+        text += ` $(history) ${I18n.formatCurrency(session.totalCost)}`;
+      }
     }
     this.statusBarItem.text = text;
 
     this.statusBarItem.tooltip = this.metric === 'monthly-cost'
       ? this.createMonthlyTooltip(monthData)
-      : this.createTooltip(todayData, ws);
+      : this.createTooltip(todayData, ws, session);
     this.statusBarItem.backgroundColor = undefined;
     this.applyCostVisibility();
   }
@@ -341,47 +356,42 @@ export class StatusBarManager {
    * Hover tooltip as a Markdown table so figures line up in neat, right-aligned
    * columns (a plain-text tooltip cannot align reliably).
    */
-  private createTooltip(todayData: UsageData, workspaceTodayData: UsageData | null): vscode.MarkdownString {
+  private createTooltip(
+    todayData: UsageData,
+    workspaceTodayData: UsageData | null,
+    sessionData: SessionData | null
+  ): vscode.MarkdownString {
     const t = I18n.t.popup;
-    const ws = workspaceTodayData;
+    // Build the column list dynamically: "Today" is always shown; workspace
+    // and session columns only appear when that data exists, so the tooltip
+    // stays compact for users without a workspace open or without an active
+    // session yet.
+    const columns: { icon: string; label: string; data: UsageData }[] = [
+      { icon: '$(pulse)', label: t.today, data: todayData }
+    ];
+    if (workspaceTodayData) {
+      columns.push({ icon: '$(folder)', label: t.workspaceToday, data: workspaceTodayData });
+    }
+    if (sessionData) {
+      columns.push({ icon: '$(history)', label: t.currentSession, data: sessionData });
+    }
 
     const md = new vscode.MarkdownString();
     md.supportThemeIcons = true;
 
-    if (ws) {
-      md.appendMarkdown(`| | $(pulse) ${t.today} | $(folder) ${t.workspaceToday} |\n`);
-      md.appendMarkdown(`|:--|--:|--:|\n`);
-    } else {
-      md.appendMarkdown(`| | $(pulse) ${t.today} |\n`);
-      md.appendMarkdown(`|:--|--:|\n`);
-    }
+    md.appendMarkdown(`| | ${columns.map((c) => `${c.icon} ${c.label}`).join(' | ')} |\n`);
+    md.appendMarkdown(`|:--${columns.map(() => '|--:').join('')}|\n`);
 
-    const row = (label: string, todayValue: string, sessionValue: string): void => {
-      md.appendMarkdown(ws ? `| ${label} | ${todayValue} | ${sessionValue} |\n` : `| ${label} | ${todayValue} |\n`);
+    const row = (label: string, value: (d: UsageData) => string): void => {
+      md.appendMarkdown(`| ${label} | ${columns.map((c) => value(c.data)).join(' | ')} |\n`);
     };
 
-    row(t.cost, I18n.formatCurrency(todayData.totalCost), ws ? I18n.formatCurrency(ws.totalCost) : '');
-    row(
-      t.inputTokens,
-      I18n.formatNumber(todayData.totalInputTokens),
-      ws ? I18n.formatNumber(ws.totalInputTokens) : ''
-    );
-    row(
-      t.outputTokens,
-      I18n.formatNumber(todayData.totalOutputTokens),
-      ws ? I18n.formatNumber(ws.totalOutputTokens) : ''
-    );
-    row(
-      t.cacheCreation,
-      I18n.formatNumber(todayData.totalCacheCreationTokens),
-      ws ? I18n.formatNumber(ws.totalCacheCreationTokens) : ''
-    );
-    row(
-      t.cacheRead,
-      I18n.formatNumber(todayData.totalCacheReadTokens),
-      ws ? I18n.formatNumber(ws.totalCacheReadTokens) : ''
-    );
-    row(t.messages, I18n.formatNumber(todayData.messageCount), ws ? I18n.formatNumber(ws.messageCount) : '');
+    row(t.cost, (d) => I18n.formatCurrency(d.totalCost));
+    row(t.inputTokens, (d) => I18n.formatNumber(d.totalInputTokens));
+    row(t.outputTokens, (d) => I18n.formatNumber(d.totalOutputTokens));
+    row(t.cacheCreation, (d) => I18n.formatNumber(d.totalCacheCreationTokens));
+    row(t.cacheRead, (d) => I18n.formatNumber(d.totalCacheReadTokens));
+    row(t.messages, (d) => I18n.formatNumber(d.messageCount));
 
     md.appendMarkdown(`\n\n*Click for detailed breakdown*`);
     return md;

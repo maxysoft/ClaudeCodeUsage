@@ -838,7 +838,7 @@ export class ClaudeCodeUsageExtension {
 
       // Update UI. Quota is pushed asynchronously by the fire-and-forget fetch
       // above; passing undefined leaves the quota item untouched here.
-      this.statusBar.updateUsageData(todayData, workspaceTodayData, undefined, undefined, monthData);
+      this.statusBar.updateUsageData(todayData, workspaceTodayData, undefined, undefined, monthData, sessionData);
       this.statusBar.updateContext(
         ClaudeDataLoader.getCurrentContextInfo(records, workspacePath, config.contextWindowOverride)
       );

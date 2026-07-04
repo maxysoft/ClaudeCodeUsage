@@ -557,7 +557,7 @@ export class UsageWebviewProvider {
               )}">↻ ` +
       refresh +
       `</button>
-              <button onclick="showTab('content')" class="btn-secondary">✨ ` +
+              <button onclick="showTab('content')" class="btn-secondary"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:4px"><path d="M8 1a5 5 0 0 1 3.5 8.5c-.6.6-1 1.4-1 2.2V12H5.5v-.3c0-.8-.4-1.6-1-2.2A5 5 0 0 1 8 1zm2 12.5H6a2 2 0 0 0 4 0z"/></svg>` +
       I18n.t.popup.adviceCardTitle +
       `</button>
               <button onclick="showTab('settings')" class="btn-secondary">⚙ ` +
@@ -2148,7 +2148,7 @@ export class UsageWebviewProvider {
     return (
       '<div class="action-card">' +
       '<div class="action-card-head">' +
-      '<span class="action-icon">✨</span>' +
+      '<span class="action-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a5 5 0 0 1 3.5 8.5c-.6.6-1 1.4-1 2.2V12H5.5v-.3c0-.8-.4-1.6-1-2.2A5 5 0 0 1 8 1zm2 12.5H6a2 2 0 0 0 4 0z"/></svg></span>' +
       '<div class="action-card-titles">' +
       '<h3>' + t.adviceCardTitle + '</h3>' +
       '<p class="action-card-desc">' + t.adviceCardDesc + '</p>' +
