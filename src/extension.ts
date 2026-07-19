@@ -1211,6 +1211,15 @@ export class ClaudeCodeUsageExtension {
         const workspaceTodayData = workspacePath
           ? ClaudeDataLoader.getTodayData(ClaudeDataLoader.filterByWorkspace(records, workspacePath))
           : null;
+        // Weekly billing window requires the OAuth quota API (usageLimitTracking).
+        // Only compute when resets_at is available; otherwise weekData stays null.
+        const weekResetsAt = this.cache.usageLimits?.seven_day?.resets_at;
+        const weekData = weekResetsAt
+          ? ClaudeDataLoader.getThisWeekData(
+              records,
+              new Date(new Date(weekResetsAt).getTime() - 7 * 24 * 60 * 60 * 1000)
+            )
+          : null;
         const monthData = ClaudeDataLoader.getThisMonthData(records);
         const allTimeData = ClaudeDataLoader.getAllTimeData(records);
         const dailyDataForMonth = ClaudeDataLoader.getDailyDataForMonth(records);
@@ -1227,7 +1236,7 @@ export class ClaudeCodeUsageExtension {
           ClaudeDataLoader.getCurrentContextInfo(records, workspacePath, config.contextWindowOverride)
         );
         if (updateWebview) {
-          this.webviewProvider.updateData(sessionData, todayData, null, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, workflowBreakdown, costliestMessages, null);
+          this.webviewProvider.updateData(sessionData, todayData, weekData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, workflowBreakdown, costliestMessages, weekResetsAt || null);
         }
       }
 

@@ -1249,6 +1249,16 @@ export class ClaudeDataLoader {
     return this.calculateUsageData(todayRecords);
   }
 
+  /** Usage for the current Anthropic weekly billing window, given its start
+   * (derived by the caller from the OAuth quota API's seven_day.resets_at). */
+  static getThisWeekData(records: ClaudeUsageRecord[], weekStart: Date): UsageData {
+    const weekRecords = records.filter((record) => {
+      const recordDate = new Date(record.timestamp);
+      return recordDate >= weekStart;
+    });
+    return this.calculateUsageData(weekRecords);
+  }
+
   /** Per-day usage keyed by 'YYYY-MM-DD' (in the configured timezone) for the
    * heatmap: tokens (all four token types), cost, and distinct sessions.
    * Skips synthetic / API-error records, mirroring the dashboard totals. */

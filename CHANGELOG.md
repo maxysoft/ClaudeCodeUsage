@@ -23,6 +23,11 @@ upstream merge: 2.2.1 / `ade48ab`). Format follows [Keep a Changelog](https://ke
 - **Daily/monthly date labels** — first-of-month rows keep their daily label and monthly keys no longer shift a month backward in negative-UTC zones.
 - **Timezone-aware bucketing and cache-write cost accuracy** — day/month totals bucket consistently in the configured timezone, and TTL-tagged cache writes are priced correctly.
 
+### Changed (fork-specific)
+
+- **Restored the "This Week" tab's data** — `getThisWeekData()` and its wiring in `extension.ts` had been dropped silently in a prior merge, so the tab always showed "not available"; both are back and covered by the existing tests.
+- **`publish.yml` no longer publishes to the VS Code Marketplace or Open VSX** — reverted to this fork's own tag-push → build → package → attach-to-GitHub-Release flow, dropping the upstream release-triggered `VSCE_PAT`/`OVSX_PAT` publish steps a prior merge had reintroduced.
+
 ### Upstream alignment
 
 This fork is aligned with `jack21/ClaudeCodeUsage` v2.2.1 (`ade48ab`) — every upstream feature through that commit is present. Fork-exclusive additions on top: "This Week" billing tab with reset countdown, session cost in the status bar, and `maxysoft` publisher branding.
