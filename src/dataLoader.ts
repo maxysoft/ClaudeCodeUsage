@@ -4,12 +4,24 @@ import * as os from 'os';
 import * as path from 'path';
 // Removed tinyglobby dependency - using native fs instead
 // Removed zod dependency - using native validation instead
-import { calculateCostBreakdown } from './pricing';
+import { calculateCostBreakdown, getModelRatesPerMillion } from './pricing';
+import { isRetryDuplicatePrompt } from './promptDedup';
+import { dayKeyInZone, monthKeyInZone } from './dateKeys';
+import { I18n } from './i18n';
+import { DayUsage } from './heatmap';
+import { ShareInput, ShareRange, rangeLabel as shareRangeLabel } from './shareCard';
+import {
+  scanUsageManifest,
+  sortUsageFilesByEarliestTimestamp,
+  UsageManifest,
+} from './claudeUsageFiles';
+import { LoadUsageDiagnostics } from './refreshDiagnostics';
 import {
   AttributionEntry,
   AttributionScope,
   BranchUsage,
   ClaudeUsageRecord,
+  CostlyMessage,
   ContentAnalysis,
   ContextWindowInfo,
   ContentSlice,
@@ -34,33 +46,6 @@ const USER_HOME_DIR = os.homedir();
 // XDG config directory
 const XDG_CONFIG_DIR = process.env.XDG_CONFIG_HOME || path.join(USER_HOME_DIR, '.config');
 const DEFAULT_CLAUDE_CONFIG_PATH = path.join(XDG_CONFIG_DIR, 'claude');
-
-// Native file search function to replace tinyglobby
-async function findJsonlFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  async function searchRecursively(currentDir: string) {
-    try {
-      const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(currentDir, entry.name);
-
-        if (entry.isDirectory()) {
-          await searchRecursively(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          files.push(fullPath);
-        }
-      }
-    } catch (error) {
-      // Ignore permission errors and continue
-      console.warn(`Cannot read directory ${currentDir}:`, error);
-    }
-  }
-
-  await searchRecursively(dir);
-  return files;
-}
 
 // Identify usage records by structural shape only.
 //
@@ -157,14 +142,14 @@ const TRIVIAL_COMMANDS = new Set([
   '/mcp', '/agents', '/export', '/rewind', '/init', '/add-dir', '/ide',
 ]);
 
-// Local "YYYY-MM-DD" key for a log line's timestamp ('' when unparsable).
+// "YYYY-MM-DD" key for a log line's timestamp, in the user's configured
+// timezone (empty = system zone), so day/month bucketing is consistent
+// (see dateKeys.ts). '' when unparsable.
 function localDayKey(timestamp: unknown): string {
-  const ts = typeof timestamp === 'string' ? new Date(timestamp) : null;
-  if (!ts || isNaN(ts.getTime())) {
+  if (typeof timestamp !== 'string') {
     return '';
   }
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${ts.getFullYear()}-${pad(ts.getMonth() + 1)}-${pad(ts.getDate())}`;
+  return dayKeyInZone(new Date(timestamp), I18n.getTimezone());
 }
 
 // Collect an actual user prompt (capped + truncated) for the AI-advice feature.
@@ -294,7 +279,7 @@ function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = false, sess
   if (role === 'assistant') {
     // Thinking share: estimated thinking tokens vs. all assistant output
     // (text + thinking + tool-call JSON), per session and per local day.
-    const trackThinking = (thinkingTokens: number, totalTokens: number): void => {
+    const trackThinking = (thinkingTokens: number, totalTokens: number, hidden = false): void => {
       if (totalTokens <= 0) {
         return;
       }
@@ -307,6 +292,9 @@ function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = false, sess
         }
         map[key].thinking += thinkingTokens;
         map[key].assistantTotal += totalTokens;
+        if (hidden) {
+          map[key].hiddenThinking = true;
+        }
       };
       add(acc.thinkingBySession, sessionId);
       add(acc.thinkingByDay, localDayKey(parsed.timestamp));
@@ -314,6 +302,7 @@ function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = false, sess
     if (Array.isArray(content)) {
       let thinkingTokens = 0;
       let totalTokens = 0;
+      let hiddenThinking = false;
       for (const block of content) {
         if (!block || typeof block !== 'object') {
           continue;
@@ -326,6 +315,12 @@ function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = false, sess
           const est = estimateTokens(block.thinking);
           thinkingTokens += est;
           totalTokens += est;
+          // Thinking happened but the raw text isn't exposed (Fable 5 / Opus 4.8
+          // omit it, leaving "" + an encrypted signature). Flag it so the UI can
+          // say "hidden" instead of an untrue 0%.
+          if (est === 0 && typeof (block as { signature?: unknown }).signature === 'string') {
+            hiddenThinking = true;
+          }
         } else if (block.type === 'tool_use') {
           if (typeof block.id === 'string' && typeof block.name === 'string') {
             acc.toolIdToName[block.id] = block.name;
@@ -349,7 +344,7 @@ function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = false, sess
           totalTokens += estimateTokens(inputJson);
         }
       }
-      trackThinking(thinkingTokens, totalTokens);
+      trackThinking(thinkingTokens, totalTokens, hiddenThinking);
     } else if (typeof content === 'string') {
       addToBucket(acc.cat, 'assistantText', content);
       trackThinking(0, estimateTokens(content));
@@ -505,27 +500,42 @@ export class ClaudeDataLoader {
 
   static async loadUsageRecords(
     dataDirectory?: string,
-    options?: { analyzeContent?: boolean; windowDays?: number; log?: (line: string) => void }
-  ): Promise<{ records: ClaudeUsageRecord[]; contentAnalysis: ContentAnalysis | null }> {
+    options?: {
+      analyzeContent?: boolean;
+      windowDays?: number;
+      log?: (line: string) => void;
+      manifest?: UsageManifest;
+    }
+  ): Promise<{
+    records: ClaudeUsageRecord[];
+    contentAnalysis: ContentAnalysis | null;
+    diagnostics: LoadUsageDiagnostics;
+  }> {
     const analyzeContent = options?.analyzeContent !== false; // default true
     // How many days back the content analysis (and its prompt sample) looks.
     // Configurable via advice.promptWindowDays; defaults to 30.
     const windowDays = Math.min(365, Math.max(1, Math.round(options?.windowDays ?? 30)));
     const windowMs = windowDays * 24 * 60 * 60 * 1000;
     const log = options?.log;
+    const readParseStarted = performance.now();
+    let filesDiscovered = 0;
+    let filesFailed = 0;
+    let bytesRead = 0;
+    let linesParsed = 0;
+    const diagnostics = (): LoadUsageDiagnostics => ({
+      filesDiscovered,
+      filesFailed,
+      bytesRead,
+      linesParsed,
+      readParseMs: performance.now() - readParseStarted,
+    });
     try {
       const claudePaths = dataDirectory ? [dataDirectory] : this.getClaudePaths();
-      const allFiles: string[] = [];
-
-      for (const claudePath of claudePaths) {
-        const claudeDir = path.join(claudePath, CLAUDE_PROJECTS_DIR_NAME);
-        if (fs.existsSync(claudeDir)) {
-          const files = await findJsonlFiles(claudeDir);
-          allFiles.push(...files);
-        }
-      }
-
-      const sortedFiles = await this.sortFilesByTimestamp(allFiles);
+      const manifest = options?.manifest ?? await scanUsageManifest(claudePaths);
+      filesDiscovered = manifest.entries.size;
+      const sorted = await sortUsageFilesByEarliestTimestamp([...manifest.entries.values()]);
+      bytesRead += sorted.bytesRead;
+      const sortedFiles = sorted.files;
       // hash → records[] index. Some proxies (mimo / CC Switch) write two
       // records per message: a tokens=0 placeholder when streaming starts,
       // and the real values when the response finishes. Both records share
@@ -566,6 +576,7 @@ export class ClaudeDataLoader {
       for (const file of sortedFiles) {
         try {
           const content = await readFile(file, 'utf-8');
+          bytesRead += Buffer.byteLength(content, 'utf8');
           const lines = content
             .trim()
             .split('\n')
@@ -600,7 +611,12 @@ export class ClaudeDataLoader {
             }
           }
 
+          // Per-session (per-file) map of prompt text → last-counted epoch ms,
+          // to drop API-error retry re-logs of the same prompt from the Messages
+          // count (see promptDedup.ts).
+          const recentPrompts = new Map<string, number>();
           for (const line of lines) {
+            linesParsed += 1;
             stats.linesScanned += 1;
             try {
               const parsed = JSON.parse(line) as unknown;
@@ -671,10 +687,19 @@ export class ClaudeDataLoader {
                           .join('')
                       : '';
                 if (text.trim().length > 0 && !this.isSyntheticUserText(text)) {
+                  // Skip API-error retry re-logs: the same prompt re-appearing
+                  // within a short window is one message, not several.
+                  if (isRetryDuplicatePrompt(text.trim(), Date.parse(lineAny.timestamp), recentPrompts)) {
+                    continue;
+                  }
                   const prompt: ClaudeUsageRecord = {
                     timestamp: lineAny.timestamp,
                     message: { usage: { input_tokens: 0, output_tokens: 0 } },
                     _isUserPrompt: true,
+                    // Kept generous so the "costliest messages" panel can show
+                    // the whole triggering prompt (scrollable); giant pastes are
+                    // capped so a few huge prompts can't bloat memory.
+                    _promptText: text.trim().slice(0, 4000),
                     _sessionId: sessionInfo.sessionId,
                     _projectDirEncoded: sessionInfo.projectPath,
                   };
@@ -766,6 +791,7 @@ export class ClaudeDataLoader {
             }
           }
         } catch (fileError) {
+          filesFailed += 1;
           console.warn(`Failed to read file ${file}:`, fileError);
         }
 
@@ -839,10 +865,11 @@ export class ClaudeDataLoader {
           contentAnalysis.calibration = { realOutputTokens, realInputSideTokens };
         }
       }
-      return { records, contentAnalysis };
+      return { records, contentAnalysis, diagnostics: diagnostics() };
     } catch (error) {
+      filesFailed = Math.max(filesFailed, 1);
       console.error('Error loading usage records:', error);
-      return { records: [], contentAnalysis: null };
+      return { records: [], contentAnalysis: null, diagnostics: diagnostics() };
     }
   }
 
@@ -909,6 +936,12 @@ export class ClaudeDataLoader {
     if (/^\[Request interrupted/i.test(t)) {
       return true;
     }
+    // Compaction continuation: when a session is auto-compacted, Claude Code
+    // injects the summary as a *user* message — the user never typed it, so it
+    // must not count towards "Messages".
+    if (/^This session is being continued from a previous conversation/i.test(t)) {
+      return true;
+    }
     // Slash-command echo blocks wrap the invocation/output in these tags.
     if (
       t.startsWith('<command-name>') ||
@@ -935,47 +968,6 @@ export class ClaudeDataLoader {
   private static recordContextTokens(record: ClaudeUsageRecord): number {
     const usage = record.message.usage;
     return (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
-  }
-
-  private static async getEarliestTimestamp(filePath: string): Promise<Date | null> {
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      const lines = content.trim().split('\n');
-
-      for (const line of lines) {
-        if (line.trim() === '') continue;
-
-        try {
-          const json = JSON.parse(line) as Record<string, unknown>;
-          if (typeof json.timestamp === 'string') {
-            const date = new Date(json.timestamp);
-            if (!isNaN(date.getTime())) {
-              return date;
-            }
-          }
-        } catch {
-          // Skip invalid lines
-        }
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private static async sortFilesByTimestamp(files: string[]): Promise<string[]> {
-    const filesWithTimestamps = await Promise.all(
-      files.map(async (file) => {
-        const timestamp = await this.getEarliestTimestamp(file);
-        return {
-          file,
-          timestamp: timestamp || new Date(0),
-        };
-      })
-    );
-
-    return filesWithTimestamps.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()).map((item) => item.file);
   }
 
   static calculateUsageData(records: ClaudeUsageRecord[]): UsageData {
@@ -1257,34 +1249,66 @@ export class ClaudeDataLoader {
     return this.calculateUsageData(todayRecords);
   }
 
-  static getThisMonthData(records: ClaudeUsageRecord[]): UsageData {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  /** Per-day usage keyed by 'YYYY-MM-DD' (in the configured timezone) for the
+   * heatmap: tokens (all four token types), cost, and distinct sessions.
+   * Skips synthetic / API-error records, mirroring the dashboard totals. */
+  static getDailyUsageMap(records: ClaudeUsageRecord[], tz: string): Record<string, DayUsage> {
+    const daily: Record<string, DayUsage> = {};
+    const sessionsByDay: Record<string, Set<string>> = {};
+    for (const r of records) {
+      const u = r.message.usage;
+      const model = r.message.model;
+      if (!u || !model || model === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      const tokens =
+        u.input_tokens + u.output_tokens + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+      if (tokens <= 0) {
+        continue;
+      }
+      const key = dayKeyInZone(new Date(r.timestamp), tz);
+      if (!key) {
+        continue;
+      }
+      const cb = calculateCostBreakdown(u, model);
+      const d = daily[key] ?? (daily[key] = { tokens: 0, cost: 0, sessions: 0 });
+      d.tokens += tokens;
+      d.cost += cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
+      if (r._sessionId) {
+        (sessionsByDay[key] ?? (sessionsByDay[key] = new Set())).add(r._sessionId);
+      }
+    }
+    for (const key of Object.keys(daily)) {
+      daily[key].sessions = sessionsByDay[key]?.size ?? 0;
+    }
+    return daily;
+  }
 
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart;
-    });
+  static getThisMonthData(records: ClaudeUsageRecord[]): UsageData {
+    const tz = I18n.getTimezone();
+    const thisMonth = monthKeyInZone(new Date(), tz);
+    const monthRecords = records.filter(
+      (record) => monthKeyInZone(new Date(record.timestamp), tz) === thisMonth
+    );
 
     return this.calculateUsageData(monthRecords);
   }
 
   static getDailyDataForMonth(records: ClaudeUsageRecord[]): { date: string; data: UsageData }[] {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const tz = I18n.getTimezone();
+    const thisMonth = monthKeyInZone(new Date(), tz);
 
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart;
-    });
-
-    // Group records by date
+    // Group records by their calendar day in the configured timezone, keeping
+    // only days that belong to the current month in that same zone (so a record
+    // just after local midnight on the 1st isn't filed under the previous
+    // month's last day).
     const recordsByDate: Record<string, ClaudeUsageRecord[]> = {};
 
-    monthRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const dateKey = recordDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
+    records.forEach((record) => {
+      const dateKey = dayKeyInZone(new Date(record.timestamp), tz);
+      if (!dateKey || dateKey.slice(0, 7) !== thisMonth) {
+        return;
+      }
       if (!recordsByDate[dateKey]) {
         recordsByDate[dateKey] = [];
       }
@@ -1306,13 +1330,757 @@ export class ClaudeDataLoader {
     return this.calculateUsageData(records);
   }
 
+  /** The costliest individual assistant turns (single billed responses), each
+   * with the user prompt that triggered it and the skill/plugin/model in play.
+   * Walks each session in timestamp order to attach the preceding prompt; keeps
+   * only the top `limit` by cost (bounded insertion, no full-array sort). */
+  static getCostliestMessages(records: ClaudeUsageRecord[], limit: number = 10): CostlyMessage[] {
+    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    for (const r of records) {
+      const sid = r._sessionId || 'unknown';
+      (bySession[sid] ?? (bySession[sid] = [])).push(r);
+    }
+
+    const top: CostlyMessage[] = [];
+    const consider = (m: CostlyMessage): void => {
+      if (top.length < limit) {
+        top.push(m);
+        top.sort((a, b) => b.cost - a.cost);
+      } else if (m.cost > top[top.length - 1].cost) {
+        top[top.length - 1] = m;
+        top.sort((a, b) => b.cost - a.cost);
+      }
+    };
+
+    for (const sid of Object.keys(bySession)) {
+      const recs = bySession[sid]
+        .slice()
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      let lastPrompt: string | undefined;
+      let prevTurnMs: number | undefined; // previous billable turn's timestamp
+      let prevModel: string | undefined; // previous billable turn's model
+      for (const r of recs) {
+        if (r._isUserPrompt) {
+          if (r._promptText) {
+            lastPrompt = r._promptText;
+          }
+          continue;
+        }
+        const u = r.message.usage;
+        const model = r.message.model;
+        if (!u || !model || model === '<synthetic>' || r.isApiErrorMessage) {
+          continue;
+        }
+        const cb = calculateCostBreakdown(u, model);
+        const cost = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
+        const nowMs = Date.parse(r.timestamp);
+        const gapMs = prevTurnMs !== undefined && !isNaN(nowMs) ? nowMs - prevTurnMs : undefined;
+        const priorModel = prevModel;
+        if (!isNaN(nowMs)) {
+          prevTurnMs = nowMs;
+        }
+        prevModel = model;
+        if (cost <= 0) {
+          continue;
+        }
+        consider({
+          timestamp: r.timestamp,
+          cost,
+          gapMs,
+          prevModel: priorModel,
+          inputTokens: u.input_tokens,
+          outputTokens: u.output_tokens,
+          cacheCreationTokens: u.cache_creation_input_tokens || 0,
+          cacheReadTokens: u.cache_read_input_tokens || 0,
+          costInput: cb.input,
+          costOutput: cb.output,
+          costCacheWrite: cb.cacheWrite,
+          costCacheRead: cb.cacheRead,
+          model,
+          skill: r._skill,
+          plugin: r._plugin,
+          prompt: lastPrompt,
+          projectName: r._projectName || '',
+          sessionId: sid,
+        });
+      }
+    }
+    return top.sort((a, b) => b.cost - a.cost);
+  }
+
+  /** Estimate how long the prompt cache stays warm while idle, inferred from the
+   * user's own turns (the TTL is platform-side and may be dynamic, so we measure
+   * it rather than assume "5 min"). Method: for consecutive SAME-model turns
+   * where a cache already existed, a turn that mostly READS cache = still warm;
+   * one that only WRITES cache (0 reads) = went cold. The boundary between the
+   * longest warm gap and the shortest cold gap ≈ the TTL. Returns null when there
+   * aren't enough clean samples. */
+  static estimateCacheTtl(
+    records: ClaudeUsageRecord[]
+  ): { estimateMin: number; coldFromMin: number; sampleN: number } | null {
+    // Bucket same-model consecutive turns by idle gap and measure the hit rate
+    // per bucket. The cache is warm while the hit rate stays high; the bucket
+    // where it drops marks the TTL. (A big new context is a rare miss at small
+    // gaps — it doesn't move the small buckets, which stay ~100%.)
+    const edges = [0, 1, 2, 5, 10, 15, 30, 60, 120, 240, Infinity]; // minutes
+    const warm = new Array(edges.length - 1).fill(0);
+    const cold = new Array(edges.length - 1).fill(0);
+
+    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    for (const r of records) {
+      const sid = r._sessionId || 'unknown';
+      (bySession[sid] ?? (bySession[sid] = [])).push(r);
+    }
+    for (const sid of Object.keys(bySession)) {
+      const recs = bySession[sid]
+        .filter((r) => {
+          const u = r.message.usage;
+          const m = r.message.model;
+          return u && m && m !== '<synthetic>' && !r.isApiErrorMessage;
+        })
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      for (let i = 1; i < recs.length; i++) {
+        const prev = recs[i - 1];
+        const cur = recs[i];
+        if (prev.message.model !== cur.message.model) {
+          continue; // model switch flushes the cache — not an idle-TTL sample
+        }
+        const pu = prev.message.usage;
+        if ((pu.cache_creation_input_tokens || 0) + (pu.cache_read_input_tokens || 0) < 1000) {
+          continue; // no meaningful cache existed to keep warm
+        }
+        const gapMin = (Date.parse(cur.timestamp) - Date.parse(prev.timestamp)) / 60000;
+        if (!(gapMin >= 0)) {
+          continue;
+        }
+        let bi = edges.findIndex((_, idx) => idx < edges.length - 1 && gapMin >= edges[idx] && gapMin < edges[idx + 1]);
+        if (bi < 0) {
+          bi = edges.length - 2;
+        }
+        const cu = cur.message.usage;
+        if ((cu.cache_read_input_tokens || 0) > 0) {
+          warm[bi]++; // read the cache → warm
+        } else if ((cu.cache_creation_input_tokens || 0) > 0) {
+          cold[bi]++; // had to rewrite → cold
+        }
+      }
+    }
+
+    // Walk buckets ascending; the cache is warm while hit rate stays ≥ 85% in
+    // buckets with enough samples. The first qualifying drop marks the TTL.
+    let warmUpTo = 0;
+    let coldFrom = Infinity;
+    let total = 0;
+    for (let i = 0; i < edges.length - 1; i++) {
+      const n = warm[i] + cold[i];
+      total += n;
+      if (n < 8) {
+        continue;
+      }
+      const hit = warm[i] / n;
+      if (hit >= 0.85) {
+        warmUpTo = edges[i + 1] === Infinity ? edges[i] : edges[i + 1];
+      } else if (coldFrom === Infinity) {
+        coldFrom = edges[i];
+      }
+    }
+    if (total < 40 || coldFrom === Infinity || warmUpTo === 0) {
+      return null; // not a clean enough boundary to claim a number
+    }
+    return { estimateMin: warmUpTo, coldFromMin: coldFrom, sampleN: total };
+  }
+
+  /** "Cache-churn bill" (缓存损耗账单): estimate the $ spent RE-writing cache that
+   * a warm cache would have served cheaply, split by the two AVOIDABLE causes —
+   * a model switch (per-model cache flushed) and an idle gap past the cache TTL.
+   * A turn counts only if the previous same-session turn had a real cache AND
+   * this turn had to rewrite it (read≈0, write>0), so a genuine big-new-context
+   * (which still reads the reused prefix) isn't blamed. Waste per turn ≈
+   * cacheCreationTokens × (writeRate − readRate). NOTE for the caller: a switch
+   * can still be net-worth-it if the other model is cheaper per token — this is
+   * the churn cost, not a "never switch" verdict. `ttlMin` defaults to 60
+   * (the measured warm window). Returns null when there isn't enough signal. */
+  static estimateCacheChurnCost(
+    records: ClaudeUsageRecord[],
+    windowDays = 30,
+    ttlMin = 60
+  ): { wastedUsd: number; switchUsd: number; idleUsd: number; switchCount: number; idleCount: number } | null {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    for (const r of records) {
+      if (new Date(r.timestamp).getTime() < cutoff) {
+        continue;
+      }
+      const sid = r._sessionId || 'unknown';
+      (bySession[sid] ?? (bySession[sid] = [])).push(r);
+    }
+
+    let switchUsd = 0;
+    let idleUsd = 0;
+    let switchCount = 0;
+    let idleCount = 0;
+    let considered = 0;
+    for (const sid of Object.keys(bySession)) {
+      const recs = bySession[sid]
+        .filter((r) => {
+          const u = r.message.usage;
+          const m = r.message.model;
+          return u && m && m !== '<synthetic>' && !r.isApiErrorMessage;
+        })
+        .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      for (let i = 1; i < recs.length; i++) {
+        const prev = recs[i - 1];
+        const cur = recs[i];
+        const pu = prev.message.usage;
+        const cu = cur.message.usage;
+        const model = cur.message.model as string;
+        const prevCache = (pu.cache_creation_input_tokens || 0) + (pu.cache_read_input_tokens || 0);
+        const write = cu.cache_creation_input_tokens || 0;
+        const read = cu.cache_read_input_tokens || 0;
+        // A rewrite of a cache that existed just before, with ~no reads = churn.
+        if (prevCache < 1000 || write <= 0 || read > write * 0.1) {
+          continue;
+        }
+        const switched = prev.message.model !== model;
+        const gapMin = (Date.parse(cur.timestamp) - Date.parse(prev.timestamp)) / 60000;
+        const idled = gapMin > ttlMin;
+        if (!switched && !idled) {
+          continue; // rewrite for some other reason — don't blame churn
+        }
+        const rates = getModelRatesPerMillion(model);
+        if (!rates) {
+          continue;
+        }
+        const waste = (write * Math.max(0, rates.cacheWrite - rates.cacheRead)) / 1_000_000;
+        considered++;
+        // Attribute to model switch first (it's the harder flush), else idle.
+        if (switched) {
+          switchUsd += waste;
+          switchCount++;
+        } else {
+          idleUsd += waste;
+          idleCount++;
+        }
+      }
+    }
+    if (considered < 3) {
+      return null;
+    }
+    return { wastedUsd: switchUsd + idleUsd, switchUsd, idleUsd, switchCount, idleCount };
+  }
+
+  /** Per-MODEL cache stats over a window. Primary metric is `ttlMin` — how long
+   * that model's cache stays warm (the idle gap at which reads stop and rewrites
+   * begin), measured the same way as estimateCacheTtl but grouped by model. This
+   * is the durable, cross-user-comparable signal: how long each model/provider's
+   * cache actually lives (and it drifts over time, so it's worth tracking). We
+   * also carry `hitRate` (read ÷ input-side) and `tokens` (volume) as secondary.
+   * The serving provider isn't logged, so `provider` is the family's nominal
+   * vendor; a true cross-provider verdict needs pooled data — see
+   * dataContribution.ts. `ttlMin` is null when a model lacks enough idle-gap
+   * samples to claim a boundary. Sorted by token volume, top 8. */
+  static cacheStatsByModel(
+    records: ClaudeUsageRecord[],
+    windowDays = 30
+  ): { model: string; provider: string; ttlMin: number | null; hitRate: number; tokens: number; turns: number }[] {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const edges = [0, 1, 2, 5, 10, 15, 30, 60, 120, 240, Infinity]; // minutes
+    type Stat = {
+      read: number; inputSide: number; total: number; turns: number;
+      warm: number[]; cold: number[];
+    };
+    const agg: Record<string, Stat> = {};
+    const ensure = (m: string): Stat =>
+      agg[m] ?? (agg[m] = {
+        read: 0, inputSide: 0, total: 0, turns: 0,
+        warm: new Array(edges.length - 1).fill(0),
+        cold: new Array(edges.length - 1).fill(0),
+      });
+
+    // Volume + hit-rate aggregate, and collect per-session series for TTL.
+    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    for (const r of records) {
+      const u = r.message.usage;
+      const m = r.message.model;
+      if (!u || !m || m === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      if (new Date(r.timestamp).getTime() < cutoff) {
+        continue;
+      }
+      const read = u.cache_read_input_tokens || 0;
+      const write = u.cache_creation_input_tokens || 0;
+      const inputSide = u.input_tokens + write + read;
+      const total = inputSide + u.output_tokens;
+      if (total <= 0) {
+        continue;
+      }
+      const a = ensure(m);
+      a.read += read;
+      a.inputSide += inputSide;
+      a.total += total;
+      a.turns += 1;
+      const sid = r._sessionId || 'unknown';
+      (bySession[sid] ?? (bySession[sid] = [])).push(r);
+    }
+
+    // TTL buckets: same-model consecutive turns, bucketed by idle gap; warm if
+    // the next turn read the cache, cold if it had to rewrite it.
+    for (const sid of Object.keys(bySession)) {
+      const recs = bySession[sid].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+      for (let i = 1; i < recs.length; i++) {
+        const prev = recs[i - 1];
+        const cur = recs[i];
+        if (prev.message.model !== cur.message.model) {
+          continue; // model switch flushes the cache — not an idle-TTL sample
+        }
+        const pu = prev.message.usage;
+        if ((pu.cache_creation_input_tokens || 0) + (pu.cache_read_input_tokens || 0) < 1000) {
+          continue;
+        }
+        const gapMin = (Date.parse(cur.timestamp) - Date.parse(prev.timestamp)) / 60000;
+        if (!(gapMin >= 0)) {
+          continue;
+        }
+        let bi = edges.findIndex((_, idx) => idx < edges.length - 1 && gapMin >= edges[idx] && gapMin < edges[idx + 1]);
+        if (bi < 0) {
+          bi = edges.length - 2;
+        }
+        const cu = cur.message.usage;
+        const a = ensure(cur.message.model as string);
+        if ((cu.cache_read_input_tokens || 0) > 0) {
+          a.warm[bi]++;
+        } else if ((cu.cache_creation_input_tokens || 0) > 0) {
+          a.cold[bi]++;
+        }
+      }
+    }
+
+    const ttlOf = (warm: number[], cold: number[]): number | null => {
+      let warmUpTo = 0;
+      let total = 0;
+      for (let i = 0; i < edges.length - 1; i++) {
+        const n = warm[i] + cold[i];
+        total += n;
+        if (n < 5) {
+          continue;
+        }
+        if (warm[i] / n >= 0.85) {
+          warmUpTo = edges[i + 1] === Infinity ? edges[i] : edges[i + 1];
+        }
+      }
+      return total >= 20 && warmUpTo > 0 ? warmUpTo : null;
+    };
+
+    return Object.entries(agg)
+      .filter(([, a]) => a.turns >= 3 && a.inputSide > 0)
+      .map(([model, a]) => ({
+        model,
+        provider: ClaudeDataLoader.providerOf(model),
+        ttlMin: ttlOf(a.warm, a.cold),
+        hitRate: a.read / a.inputSide,
+        tokens: a.total,
+        turns: a.turns,
+      }))
+      .sort((x, y) => y.tokens - x.tokens)
+      .slice(0, 8);
+  }
+
+  /** Estimated hands-on ("active") time per session, in ms. Sums the gaps
+   * between consecutive turns of a session, but caps each gap at `idleCapMin`
+   * (default 90) so a long break doesn't count as work. The cap is generous on
+   * purpose: much real work — reading the answer, reviewing a diff, thinking —
+   * never writes to the log, so a small cap badly under-counts. This is closer
+   * to time actually spent than the first→last wall-clock span (which the
+   * Duration column shows). Keyed by sessionId. */
+  static activeDurationBySession(
+    records: ClaudeUsageRecord[],
+    idleCapMin = 90
+  ): Record<string, number> {
+    const capMs = idleCapMin * 60000;
+    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    for (const r of records) {
+      const sid = r._sessionId || 'unknown';
+      (bySession[sid] ?? (bySession[sid] = [])).push(r);
+    }
+    const out: Record<string, number> = {};
+    for (const sid of Object.keys(bySession)) {
+      const ts = bySession[sid]
+        .map((r) => Date.parse(r.timestamp))
+        .filter((n) => !isNaN(n))
+        .sort((a, b) => a - b);
+      let active = 0;
+      for (let i = 1; i < ts.length; i++) {
+        const gap = ts[i] - ts[i - 1];
+        if (gap > 0) {
+          active += Math.min(gap, capMs);
+        }
+      }
+      out[sid] = active;
+    }
+    return out;
+  }
+
+  /** "Model right-sizing" (C5): the compute premium spent running a PREMIUM model
+   * (output ≥ $20/M — Opus / Fable tier) on LIGHTWEIGHT turns (small output, the
+   * signature of a simple task: a translation, a format, a quick edit / answer).
+   * For each such turn we compare its input+output cost at its own rates vs. a
+   * cheap reference model (Haiku 4.5), and sum the difference — that's roughly
+   * what routing simple tasks to a cheaper model would reclaim. We deliberately
+   * compare COMPUTE cost only (input+output), not cache: cache read is cheap on
+   * both, and rewriting it is the SWITCH cost, which we surface separately
+   * (`switchCostPer`) so the caller can warn that per-turn flip-flopping between
+   * models flushes the cache — you realise the saving by BATCHING simple tasks
+   * on the cheap model, not by switching back and forth. Returns null when
+   * there isn't enough signal. */
+  static modelRightsizing(
+    records: ClaudeUsageRecord[],
+    windowDays = 30
+  ): { grossUsd: number; count: number; topModel: string; topUsd: number; switchCostPer: number } | null {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const cheap =
+      getModelRatesPerMillion('claude-haiku-4-5') || { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 };
+    let grossUsd = 0;
+    let count = 0;
+    let cacheReadSum = 0;
+    const perModel: Record<string, number> = {};
+    for (const r of records) {
+      const u = r.message.usage;
+      const m = r.message.model;
+      if (!u || !m || m === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      if (new Date(r.timestamp).getTime() < cutoff) {
+        continue;
+      }
+      const rates = getModelRatesPerMillion(m);
+      if (!rates || rates.output < 20) {
+        continue; // only premium (Opus / Fable tier) models
+      }
+      const out = u.output_tokens || 0;
+      if (out < 20 || out > 800) {
+        continue; // lightweight turns only: small output = simple task
+      }
+      const inp = u.input_tokens || 0;
+      const curCost = (inp * rates.input + out * rates.output) / 1_000_000;
+      const cheapCost = (inp * cheap.input + out * cheap.output) / 1_000_000;
+      const saving = curCost - cheapCost;
+      if (saving <= 0) {
+        continue;
+      }
+      grossUsd += saving;
+      perModel[m] = (perModel[m] || 0) + saving;
+      cacheReadSum += u.cache_read_input_tokens || 0;
+      count++;
+    }
+    if (count < 5 || grossUsd < 0.5) {
+      return null;
+    }
+    const [topModel, topUsd] = Object.entries(perModel).sort((a, b) => b[1] - a[1])[0];
+    // Per-switch churn ballpark: rewriting an average cached context on the cheap
+    // model. This is the cost to WEIGH the saving against (don't flip per turn).
+    const avgCache = cacheReadSum / count;
+    const switchCostPer = (avgCache * cheap.cacheWrite) / 1_000_000;
+    return { grossUsd, count, topModel, topUsd, switchCostPer };
+  }
+
+  /** "Big one-shot turns" (session-health / checkpoint signal): how much of your
+   * output came from a few very large single responses. A turn that emits
+   * `jumboOut`+ output tokens (default 4000) is a big one-shot generation with no
+   * human checkpoint in the middle — harder and costlier to review, and a wrong
+   * direction is caught late. This surfaces the habit so the user can decide to
+   * checkpoint more. Not a verdict — a big generation is sometimes exactly right.
+   * Returns null when there isn't enough signal to bother. */
+  static sessionHealth(
+    records: ClaudeUsageRecord[],
+    windowDays = 30,
+    jumboOut = 4000
+  ): { jumboSharePct: number; jumboCount: number; jumboTokens: number; biggestOut: number; totalOutput: number } | null {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    let totalOutput = 0;
+    let jumboTokens = 0;
+    let jumboCount = 0;
+    let biggestOut = 0;
+    for (const r of records) {
+      const u = r.message.usage;
+      const m = r.message.model;
+      if (!u || !m || m === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      if (new Date(r.timestamp).getTime() < cutoff) {
+        continue;
+      }
+      const out = u.output_tokens || 0;
+      if (out <= 0) {
+        continue;
+      }
+      totalOutput += out;
+      if (out > biggestOut) {
+        biggestOut = out;
+      }
+      if (out >= jumboOut) {
+        jumboTokens += out;
+        jumboCount++;
+      }
+    }
+    if (totalOutput <= 0 || jumboCount < 5) {
+      return null;
+    }
+    const jumboSharePct = (jumboTokens / totalOutput) * 100;
+    if (jumboSharePct < 15) {
+      return null; // not concentrated enough to be worth a nudge
+    }
+    return { jumboSharePct, jumboCount, jumboTokens, biggestOut, totalOutput };
+  }
+
+  /** Activity by hour-of-day over a window, in the given timezone. Weight is the
+   * non-cache work of each turn (input + output tokens), so it reflects when you
+   * actually drive work, not idle cache reads. Returns the 24-hour profile plus
+   * the busiest contiguous 4-hour window (wraps past midnight) and its share, so
+   * the card can say "you do X% of your work between 21:00–01:00". Null when
+   * there's too little to bother. */
+  static activeHours(
+    records: ClaudeUsageRecord[],
+    windowDays = 30,
+    timeZone?: string
+  ): { hours: number[]; peakStart: number; peakShare: number; total: number } | null {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const hours = new Array(24).fill(0);
+    let total = 0;
+    const fmt = timeZone
+      ? new Intl.DateTimeFormat('en-US', { hour: '2-digit', hour12: false, timeZone })
+      : null;
+    for (const r of records) {
+      const u = r.message.usage;
+      const m = r.message.model;
+      if (!u || !m || m === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      const d = new Date(r.timestamp);
+      if (isNaN(d.getTime()) || d.getTime() < cutoff) {
+        continue;
+      }
+      let h: number;
+      if (fmt) {
+        const part = fmt.formatToParts(d).find((p) => p.type === 'hour');
+        h = (part ? parseInt(part.value, 10) : d.getHours()) % 24;
+      } else {
+        h = d.getHours();
+      }
+      const w = (u.output_tokens || 0) + (u.input_tokens || 0);
+      hours[h] += w;
+      total += w;
+    }
+    if (total <= 0) {
+      return null;
+    }
+    // Busiest contiguous 4-hour window (wrapping around midnight).
+    let peakStart = 0;
+    let peakSum = -1;
+    for (let s = 0; s < 24; s++) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) {
+        sum += hours[(s + k) % 24];
+      }
+      if (sum > peakSum) {
+        peakSum = sum;
+        peakStart = s;
+      }
+    }
+    return { hours, peakStart, peakShare: (peakSum / total) * 100, total };
+  }
+
+  /** "Skill ROI": per skill / plugin, the cost you spend while it's active and
+   * the output it produces, over a window. Uses the authoritative attribution
+   * Claude Code ≥2.1 stamps on usage lines (`_skill` / `_plugin`) — not the
+   * heuristic — so it only covers turns where a skill was actually tagged. The
+   * ROI angle is `outPerUsd` (output tokens per $): a lean skill returns lots of
+   * output per dollar; an expensive one burns context for little. Cost is
+   * attributed to the active skill, and output tokens aren't "value", so it's a
+   * proxy, not a verdict. Sorted by cost, top 8. Null when too little is tagged. */
+  static skillRoi(
+    records: ClaudeUsageRecord[],
+    windowDays = 30
+  ): { name: string; kind: 'skill' | 'plugin'; costUsd: number; outputTokens: number; turns: number; outPerUsd: number }[] | null {
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const agg: Record<string, { kind: 'skill' | 'plugin'; costUsd: number; outputTokens: number; turns: number }> = {};
+    let tagged = 0;
+    for (const r of records) {
+      const u = r.message.usage;
+      const m = r.message.model;
+      if (!u || !m || m === '<synthetic>' || r.isApiErrorMessage) {
+        continue;
+      }
+      if (new Date(r.timestamp).getTime() < cutoff) {
+        continue;
+      }
+      const name = r._skill || r._plugin;
+      if (!name) {
+        continue;
+      }
+      const kind: 'skill' | 'plugin' = r._skill ? 'skill' : 'plugin';
+      const cb = calculateCostBreakdown(u, m);
+      const cost = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
+      const a = agg[name] ?? (agg[name] = { kind, costUsd: 0, outputTokens: 0, turns: 0 });
+      a.costUsd += cost;
+      a.outputTokens += u.output_tokens || 0;
+      a.turns += 1;
+      tagged++;
+    }
+    if (tagged < 10) {
+      return null;
+    }
+    return Object.entries(agg)
+      .filter(([, a]) => a.turns >= 3 && a.costUsd > 0.05)
+      .map(([name, a]) => ({
+        name,
+        kind: a.kind,
+        costUsd: a.costUsd,
+        outputTokens: a.outputTokens,
+        turns: a.turns,
+        outPerUsd: a.outputTokens / a.costUsd,
+      }))
+      .sort((x, y) => y.costUsd - x.costUsd)
+      .slice(0, 8);
+  }
+
+  /** Nominal vendor of a model id (the logs don't record the serving endpoint). */
+  private static providerOf(model: string): string {
+    const s = model.toLowerCase();
+    if (/opus|sonnet|haiku|fable|mythos|claude/.test(s)) return 'Anthropic';
+    if (/deepseek/.test(s)) return 'DeepSeek';
+    if (/gpt|openai|o1|o3|o4/.test(s)) return 'OpenAI';
+    if (/gemini/.test(s)) return 'Google';
+    if (/glm|zhipu/.test(s)) return 'Zhipu';
+    if (/qwen/.test(s)) return 'Qwen';
+    if (/kimi|moonshot/.test(s)) return 'Moonshot';
+    return 'Other';
+  }
+
+  /** Assemble the aggregate inputs for a share card. `range` is a preset
+   * (today / week / month / year) or `month:YYYY-MM` for a specific calendar
+   * month. `scope` narrows to one project (`project:<path>`) or session
+   * (`session:<id>`); default all. Everything is bucketed in the configured
+   * timezone so it matches the dashboard. Aggregate numbers only — no records. */
+  static buildShareInput(
+    records: ClaudeUsageRecord[],
+    range: ShareRange,
+    scope: string = 'all'
+  ): ShareInput {
+    const tz = I18n.getTimezone();
+
+    // Scope filter first (project path or session id).
+    let scoped = records;
+    let projectName: string | undefined;
+    if (scope.startsWith('project:')) {
+      const path = scope.slice('project:'.length);
+      scoped = records.filter((r) => r._projectPath === path || r._projectDirEncoded === path);
+      projectName = scoped.find((r) => r._projectName)?._projectName;
+    } else if (scope.startsWith('session:')) {
+      const sid = scope.slice('session:'.length);
+      scoped = records.filter((r) => r._sessionId === sid);
+    }
+
+    // Range filter.
+    let inRange: ClaudeUsageRecord[];
+    if (range === 'today') {
+      const todayKey = dayKeyInZone(new Date(), tz);
+      inRange = scoped.filter((r) => dayKeyInZone(new Date(r.timestamp), tz) === todayKey);
+    } else if (range === 'week') {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      inRange = scoped.filter((r) => new Date(r.timestamp).getTime() >= cutoff);
+    } else if (range === 'last30') {
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      inRange = scoped.filter((r) => new Date(r.timestamp).getTime() >= cutoff);
+    } else if (range === 'year') {
+      const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
+      inRange = scoped.filter((r) => new Date(r.timestamp).getTime() >= cutoff);
+    } else if (range.startsWith('month:')) {
+      const monthKey = range.slice('month:'.length); // 'YYYY-MM'
+      inRange = scoped.filter((r) => monthKeyInZone(new Date(r.timestamp), tz) === monthKey);
+    } else {
+      const monthKey = monthKeyInZone(new Date(), tz);
+      inRange = scoped.filter((r) => monthKeyInZone(new Date(r.timestamp), tz) === monthKey);
+    }
+
+    const rangeData = this.calculateUsageData(inRange);
+
+    // Rhythm: hourly for a single day (so "today" isn't one lonely bar), else
+    // per-day token totals, oldest → newest (+ parallel date/hour labels).
+    let daily: number[];
+    let dailyDates: string[];
+    if (range === 'today') {
+      const hourFmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz || undefined,
+        hour: '2-digit',
+        hour12: false,
+      });
+      const hours = new Array(24).fill(0);
+      for (const r of inRange) {
+        const u = r.message.usage;
+        const model = r.message.model;
+        if (!u || !model || model === '<synthetic>' || r.isApiErrorMessage) {
+          continue;
+        }
+        const tokens =
+          u.input_tokens + u.output_tokens + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+        if (tokens <= 0) {
+          continue;
+        }
+        const h = parseInt(hourFmt.format(new Date(r.timestamp)), 10) % 24;
+        hours[h] += tokens;
+      }
+      daily = hours;
+      dailyDates = hours.map((_, h) => String(h).padStart(2, '0') + ':00');
+    } else {
+      const dayMap = this.getDailyUsageMap(inRange, tz);
+      dailyDates = Object.keys(dayMap).sort();
+      daily = dailyDates.map((k) => dayMap[k].tokens);
+    }
+
+    // Distinct billable sessions in range (mirrors the getDailyUsageMap filter).
+    const sessions = new Set<string>();
+    for (const r of inRange) {
+      const u = r.message.usage;
+      const model = r.message.model;
+      if (!u || !model || model === '<synthetic>' || r.isApiErrorMessage || !r._sessionId) {
+        continue;
+      }
+      sessions.add(r._sessionId);
+    }
+
+    // Top model by total tokens (reduced to a family/name at export time).
+    let topModel: string | undefined;
+    let best = -1;
+    for (const [m, mb] of Object.entries(rangeData.modelBreakdown)) {
+      const t = mb.inputTokens + mb.outputTokens + mb.cacheCreationTokens + mb.cacheReadTokens;
+      if (t > best) {
+        best = t;
+        topModel = m;
+      }
+    }
+
+    return {
+      range,
+      rangeData,
+      daily,
+      dailyDates,
+      sessionCount: sessions.size,
+      topModel,
+      projectName,
+      rangeLabel: shareRangeLabel(range),
+    };
+  }
+
   /**
    * Group records by their source session (.jsonl file) and aggregate usage per session.
    * Returns sessions with billable usage, sorted by most recent activity first.
    * @param records All loaded usage records
-   * @param limit Maximum number of sessions to return (default 50)
+   * @param limit Maximum number of sessions to return. Default 1000 — a DOM-safety
+   *   cap, not a "recent" window: the Sessions tab shows all of a normal user's
+   *   sessions and narrows them with client-side time / project / model filters.
    */
-  static getSessionBreakdown(records: ClaudeUsageRecord[], limit: number = 50): SessionUsage[] {
+  static getSessionBreakdown(records: ClaudeUsageRecord[], limit: number = 1000): SessionUsage[] {
     const recordsBySession: Record<string, ClaudeUsageRecord[]> = {};
 
     for (const record of records) {
@@ -2037,24 +2805,11 @@ export class ClaudeDataLoader {
    */
   static async getLatestModifiedTime(dataDirectory?: string): Promise<number> {
     try {
-      const claudePaths = dataDirectory ? [dataDirectory] : this.getClaudePaths();
+      const roots = dataDirectory ? [dataDirectory] : this.getClaudePaths();
+      const manifest = await scanUsageManifest(roots);
       let latest = 0;
-      for (const claudePath of claudePaths) {
-        const claudeDir = path.join(claudePath, CLAUDE_PROJECTS_DIR_NAME);
-        if (!fs.existsSync(claudeDir)) {
-          continue;
-        }
-        const files = await findJsonlFiles(claudeDir);
-        for (const file of files) {
-          try {
-            const stat = await fs.promises.stat(file);
-            if (stat.mtimeMs > latest) {
-              latest = stat.mtimeMs;
-            }
-          } catch {
-            // Ignore unreadable files.
-          }
-        }
+      for (const entry of manifest.entries.values()) {
+        latest = Math.max(latest, entry.mtimeMs);
       }
       return latest;
     } catch {
@@ -2063,23 +2818,20 @@ export class ClaudeDataLoader {
   }
 
   static getDailyDataForSpecificMonth(records: ClaudeUsageRecord[], monthDateString: string): { date: string; data: UsageData }[] {
-    // monthDateString format: YYYY-MM-01 (first day of the month)
-    const monthDate = new Date(monthDateString);
-    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0); // Last day of the month
-
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart && recordDate <= monthEnd;
-    });
+    // monthDateString is a "YYYY-MM-..." key already produced in the configured
+    // zone (see getDailyDataForAllTime), so take its month directly and bucket
+    // by day in the same zone — no local/UTC boundary mismatch.
+    const tz = I18n.getTimezone();
+    const targetMonth = monthDateString.slice(0, 7);
 
     // Group records by date
     const recordsByDate: Record<string, ClaudeUsageRecord[]> = {};
 
-    monthRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const dateKey = recordDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
+    records.forEach((record) => {
+      const dateKey = dayKeyInZone(new Date(record.timestamp), tz);
+      if (!dateKey || dateKey.slice(0, 7) !== targetMonth) {
+        return;
+      }
       if (!recordsByDate[dateKey]) {
         recordsByDate[dateKey] = [];
       }
@@ -2096,13 +2848,15 @@ export class ClaudeDataLoader {
   }
 
   static getDailyDataForAllTime(records: ClaudeUsageRecord[]): { date: string; data: UsageData }[] {
-    // Group all records by month for all-time view
+    // Group all records by month (in the configured timezone) for all-time view
+    const tz = I18n.getTimezone();
     const recordsByMonth: Record<string, ClaudeUsageRecord[]> = {};
 
     records.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const monthKey = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, '0')}`; // YYYY-MM
-
+      const monthKey = monthKeyInZone(new Date(record.timestamp), tz); // YYYY-MM
+      if (!monthKey) {
+        return;
+      }
       if (!recordsByMonth[monthKey]) {
         recordsByMonth[monthKey] = [];
       }

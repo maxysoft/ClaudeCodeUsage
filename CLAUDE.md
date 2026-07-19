@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Communication style
 
 **This rule is mandatory and applies from the very first message of every session, including new sessions, compacted sessions, and resumed sessions.**
@@ -15,82 +16,48 @@ At the start of every session, invoke `/caveman wenyan` automatically — do not
 
 **Enforcement**: if the session hook activates a different caveman level, the project CLAUDE.md takes precedence.
 
-## Project Overview
+## Project policy
 
-This is a VSCode extension called "Claude Code Usage" that monitors Claude Code usage and costs in the VSCode status bar. The extension reads Claude Code usage logs and displays real-time statistics including token consumption, costs, and message counts.
+Compatibility entry point for Claude Code. `AGENTS.md` is the canonical repository policy;
+read and follow it before changing this repository. The
+faithful maintainer review copy is `AGENTS.zh-CN.md`.
 
-## Architecture
+Claude-specific compatibility notes:
 
-- **Main Entry Point**: `src/extension.ts` - Contains the main extension class and activation logic
-- **Data Processing**: `src/dataLoader.ts` - Handles loading and parsing Claude usage records from JSONL files
-- **UI Components**: 
-  - `src/statusBar.ts` - Manages the status bar display
-  - `src/webview.ts` - Provides detailed usage breakdown in a webview panel
-- **Internationalization**: `src/i18n.ts` - Multi-language support (English, Deutsch, 繁體中文, 简体中文, Japanese, Korean)
-- **Type Definitions**: `src/types.ts` - Core interfaces for usage data, session data, and configuration
+- The product remains Claude-only in v2.2.1; Codex is a development tool.
+- Claude conversation JSONL is read-only. OAuth credential refresh is a
+  separate, existing security-sensitive behavior; do not broaden it casually.
+- JSONL activity may tune the quota-cache TTL, but polling always follows
+  `refreshInterval`; do not restore a hidden active polling override.
+- Do not create a second policy source here. Update `AGENTS.md` and its Chinese
+  review copy when repository rules change.
 
-## Development Commands
+## Fork-exclusive features
 
-```bash
-# Compile TypeScript to JavaScript
-npm run compile
+This fork (`maxysoft/ClaudeCodeUsage`) retains features on top of upstream
+(`jack21/ClaudeCodeUsage`) that are not part of the canonical `AGENTS.md`
+policy. When merging upstream changes, these must survive:
 
-# Watch mode for development (automatically recompiles on changes)
-npm run watch
+- `src/webview.ts` — "This Week" tab (`tab-week`, `renderWeekData()`,
+  `week-reset-banner` CSS, `weekData`/`weekResetsAt` data plumbing).
+- `src/statusBar.ts` — three cost segments shown together in the status bar:
+  today's total (`$(pulse)`), this workspace's cost today (`$(folder)`), and
+  the current session's cost (`$(history)`), each with its own tooltip column
+  in `createTooltip()`.
+- `src/webview.ts` — "Get AI Advice" button and its Content-tab shortcut use an
+  inline SVG lightbulb icon, never the `✨` emoji.
+- `package.json` — `"publisher": "maxysoft"` and fork-specific
+  `description`/`author`/`contributors`/`repository` fields.
+- `CHANGELOG.md` — this fork keeps its own changelog framed as changes to this
+  fork compared to upstream; do not replace it with upstream's raw
+  `CHANGELOG.md` content.
 
-# Prepare for publishing (runs compile)
-npm run vscode:prepublish
-
-# Package extension for distribution
-vsce package
-
-# Install extension locally for testing
-code --install-extension claude-code-usage-<version>.vsix
-```
-
-## Testing and Debugging
-
-- **F5 Key**: Launch Extension Development Host in VSCode to test the extension
-- **Extension Host**: The extension runs in a separate VSCode window for debugging
-- **Console Logs**: Use VSCode Developer Tools Console to view extension logs
-
-## Key Technical Details
-
-- **Data Source**: Reads from Claude Code's JSONL usage logs located in `~/.config/claude/projects` or `~/.claude/projects`
-- **Caching Strategy**: Implements 1-minute cache to avoid excessive file I/O
-- **Auto-refresh**: Configurable refresh intervals (minimum 30 seconds)
-- **Token Types**: Tracks input, output, cache creation, and cache read tokens
-- **Cost Calculation**: Supports different model pricing with tier-based rates
-- **File Processing**: Native file search without external dependencies (removed tinyglobby and zod)
-- **Data Aggregation**: Processes JSONL files to calculate daily, weekly, monthly, and all-time usage statistics
-
-## Extension Configuration
-
-The extension contributes several VSCode settings under `claudeCodeUsage.*`:
-- `refreshInterval`: How often to update data (default: 60 seconds)
-- `dataDirectory`: Custom path to Claude data directory
-- `language`: Display language preference
-- `decimalPlaces`: Precision for cost display
-
-## Build Output
-
-Compiled JavaScript files are output to the `out/` directory, which serves as the extension's entry point via `package.json`'s `main` field.
-
-## Extension Commands
-
-The extension provides three commands accessible via Command Palette:
-- `Claude Code Usage: Refresh Usage Data` - Manually refresh the usage statistics
-- `Claude Code Usage: Show Usage Details` - Open detailed usage dashboard in webview
-- `Claude Code Usage: Open Settings` - Quick access to extension configuration
+See `CHANGELOG.md` for the version this fork is currently aligned with upstream.
 
 ## Documentation Maintenance
 
-**IMPORTANT**: When updating README.md, you MUST simultaneously update all language versions:
-- `README.md` (main, multi-language index)
-- `README-en.md` (English)
-- `README-zh-TW.md` (繁體中文)
-- `README-zh-CN.md` (简体中文)
-- `README-ja.md` (日本語)
-- `README-ko.md` (한국어)
-
-This ensures consistency across all documentation and maintains the multi-language support that users expect.
+**IMPORTANT**: When updating README.md, you MUST simultaneously update all language versions
+(see `AGENTS.md` for the authoritative list, currently `README.md`, `README-en.md`,
+`README-zh-TW.md`, `README-zh-CN.md`, `README-ja.md`, `README-ko.md`, and `README-id.md`).
+This ensures consistency across all documentation and maintains the multi-language support
+that users expect.

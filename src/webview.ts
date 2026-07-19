@@ -4,9 +4,19 @@ import { I18n } from './i18n';
 import { getModelRatesPerMillion } from './pricing';
 import { SETTINGS, SettingsStore, SettingView } from './settings';
 import { buildResumeCommand, isUsableCwd, isValidSessionId, isUnderDir } from './sessionResume';
+import { renderHeatmapSvg } from './heatmapSvg';
+import { DEFAULT_SECTIONS, ShareSections, buildShareCardData, shareCardFilename } from './shareCard';
+import { renderShareCardSvg, ShareCardTheme } from './shareCardSvg';
+import { parseConversation } from './conversationLog';
+import { renderConversationViewer } from './conversationViewerHtml';
+import { formatUsageDate, shortUsageDate } from './usageDateLabels';
+import * as os from 'os';
+import * as path from 'path';
+import * as https from 'https';
 import {
   AttributionScope,
   BranchUsage,
+  CostlyMessage,
   ClaudeApiUsageResponse,
   ContentAnalysis,
   ProjectGroup,
@@ -40,6 +50,36 @@ export class UsageWebviewProvider {
   private contentAnalysis: ContentAnalysis | null = null;
   private branchBreakdown: BranchUsage[] = [];
   private workflowBreakdown: WorkflowUsage[] = [];
+  private costliestMessages: CostlyMessage[] = [];
+  private githubIdentity?: { avatar?: string; name?: string }; // fetched on demand
+  // Cache the (slow-moving) cache analyses so they recompute at most weekly, not
+  // every render — Carl: a weekly refresh is plenty for these estimates.
+  private analysisCache?: {
+    at: number;
+    ttl: ReturnType<typeof ClaudeDataLoader.estimateCacheTtl>;
+    churn: ReturnType<typeof ClaudeDataLoader.estimateCacheChurnCost>;
+    byModel: ReturnType<typeof ClaudeDataLoader.cacheStatsByModel>;
+    rightsizing: ReturnType<typeof ClaudeDataLoader.modelRightsizing>;
+    health: ReturnType<typeof ClaudeDataLoader.sessionHealth>;
+    hours: ReturnType<typeof ClaudeDataLoader.activeHours>;
+    skillRoi: ReturnType<typeof ClaudeDataLoader.skillRoi>;
+  };
+  // One reusable conversation-viewer panel: each "view" click re-reads the file
+  // and refreshes this panel rather than piling up new tabs.
+  private conversationPanel?: vscode.WebviewPanel;
+  // Last generated share card + its config, kept so an auto-refresh re-render
+  // doesn't wipe the user's picks or preview (share card / heatmap / optimizer
+  // output should survive data refreshes — only usage numbers update).
+  private lastShareCardSvg?: string;
+  private lastShareCardConfig?: {
+    range: string;
+    scope: string;
+    sections: Record<string, boolean>;
+    avatar: boolean;
+    username: boolean;
+    fullNumbers: boolean;
+    theme: string;
+  };
   // Real quota utilisation (pushed asynchronously) for the workflow quota
   // guard banner; dismissal lasts for the lifetime of this window.
   private usageLimits: ClaudeApiUsageResponse | null = null;
@@ -112,10 +152,85 @@ export class UsageWebviewProvider {
         case 'getAdvice':
           vscode.commands.executeCommand('claudeCodeUsage.getAdvice');
           break;
-        case 'setPauseDashboardRefresh':
+        case 'exportHeatmap':
+          vscode.commands.executeCommand('claudeCodeUsage.exportHeatmap');
+          break;
+        case 'publishHeatmap':
+          vscode.commands.executeCommand('claudeCodeUsage.publishHeatmapToGitHub');
+          break;
+        case 'buildShareCard': {
+          // On-demand preview: build the SVG from the panel's config and send
+          // it back for injection (no full re-render).
+          if (this.panel && this.allRecords && this.allRecords.length > 0) {
+            try {
+              const id = message.avatar || message.username ? await this.getGithubIdentity() : {};
+              const range = String(message.range || 'last30');
+              const scope = String(message.scope || 'all');
+              const sections = (message.sections || {}) as Record<string, boolean>;
+              const theme = (message.theme as ShareCardTheme) || 'claudeClassic';
+              const svg = this.buildShareCardSvgFor(range, scope, sections as Partial<ShareSections>, {
+                avatarDataUri: message.avatar ? id.avatar : undefined,
+                username: message.username ? id.name : undefined,
+                fullNumbers: !!message.fullNumbers,
+                theme,
+              });
+              // Remember it so a re-render restores the preview + picks.
+              this.lastShareCardSvg = svg;
+              this.lastShareCardConfig = {
+                range,
+                scope,
+                sections,
+                avatar: !!message.avatar,
+                username: !!message.username,
+                fullNumbers: !!message.fullNumbers,
+                theme,
+              };
+              this.panel.webview.postMessage({ command: 'shareCardResult', svg });
+            } catch (e) {
+              this.panel.webview.postMessage({ command: 'shareCardResult', error: (e as Error).message });
+            }
+          }
+          break;
+        }
+        case 'exportShareCard': {
+          // Export using the panel's config (range / scope / sections).
+          if (!this.allRecords || this.allRecords.length === 0) {
+            vscode.window.showWarningMessage(I18n.t.popup.noDataMessage);
+            break;
+          }
+          const range = String(message.range || 'last30');
+          const id = message.avatar || message.username ? await this.getGithubIdentity() : {};
+          const svg = this.buildShareCardSvgFor(range, String(message.scope || 'all'), (message.sections || {}) as Partial<ShareSections>, {
+            avatarDataUri: message.avatar ? id.avatar : undefined,
+            username: message.username ? id.name : undefined,
+            fullNumbers: !!message.fullNumbers,
+            theme: (message.theme as ShareCardTheme) || 'claudeClassic',
+          });
+          const defaultName = shareCardFilename(range).replace(/\.png$/, '.svg');
+          const uri = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(path.join(os.homedir(), defaultName)),
+            filters: { 'SVG image': ['svg'] },
+            saveLabel: 'Export share card',
+          });
+          if (!uri) {
+            break;
+          }
+          try {
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(svg, 'utf8'));
+            const open = 'Open';
+            const pick = await vscode.window.showInformationMessage('Usage share card exported.', open);
+            if (pick === open) {
+              await vscode.commands.executeCommand('vscode.open', uri);
+            }
+          } catch (e) {
+            vscode.window.showErrorMessage(`Share card export failed: ${(e as Error).message}`);
+          }
+          break;
+        }
+        case 'setDashboardAutoRefresh':
           // Persist the in-dashboard toggle so it survives reload. Lives in the
           // dashboard-managed store now (no longer in VS Code Settings).
-          await this.settings?.set('pauseDashboardRefresh', !!message.value);
+          await this.settings?.set('dashboardAutoRefresh', !!message.value);
           break;
         case 'tabChanged':
           this.currentTab = message.tab;
@@ -183,6 +298,16 @@ export class UsageWebviewProvider {
           } else {
             vscode.window.showWarningMessage(I18n.t.popup.deleteSessionNotFound);
           }
+          break;
+        }
+        case 'viewConversation': {
+          // Read-only: read the session .jsonl, parse it, open a viewer panel.
+          const sessionId = message.sessionId;
+          if (!isValidSessionId(sessionId)) {
+            vscode.window.showWarningMessage(I18n.t.popup.resumeInvalid);
+            break;
+          }
+          await this.openConversationViewer(sessionId, String(message.title || sessionId));
           break;
         }
         case 'updateSetting':
@@ -308,6 +433,7 @@ export class UsageWebviewProvider {
     contentAnalysis: ContentAnalysis | null = null,
     branchBreakdown: BranchUsage[] = [],
     workflowBreakdown: WorkflowUsage[] = [],
+    costliestMessages: CostlyMessage[] = [],
     weekResetsAt: string | null = null
   ): void {
     this.currentSessionData = sessionData;
@@ -330,6 +456,7 @@ export class UsageWebviewProvider {
     this.contentAnalysis = contentAnalysis;
     this.branchBreakdown = branchBreakdown;
     this.workflowBreakdown = workflowBreakdown;
+    this.costliestMessages = costliestMessages;
 
     if (this.panel) {
       this.updateWebview();
@@ -426,7 +553,7 @@ export class UsageWebviewProvider {
       <html>
       <head>
         <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
         <title>${I18n.t.popup.title}</title>
         <style>${this.getStyles()}</style>
       </head>
@@ -448,7 +575,7 @@ export class UsageWebviewProvider {
       <html>
       <head>
         <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
         <title>${I18n.t.popup.title}</title>
         <style>${this.getStyles()}</style>
       </head>
@@ -472,7 +599,7 @@ export class UsageWebviewProvider {
       <html>
       <head>
         <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
         <title>${I18n.t.popup.title}</title>
         <style>${this.getStyles()}</style>
       </head>
@@ -528,7 +655,7 @@ export class UsageWebviewProvider {
         '" onclick="showTab(\'content\')">' + contentTab + '</button>'
       : '';
     const contentTabContent = contentEnabled
-      ? '<div id="content" class="tab-content ' + contentActive + '">' + this.renderContentData() + '</div>'
+      ? '<div id="content" class="tab-content ' + contentActive + '">' + this.renderContentData() + this.renderCacheWarmth() + this.renderInsights() + this.renderCostliestMessages() + '</div>'
       : '';
 
     return (
@@ -537,7 +664,7 @@ export class UsageWebviewProvider {
       <html>
       <head>
         <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
         <title>` +
       title +
       `</title>
@@ -545,7 +672,7 @@ export class UsageWebviewProvider {
       this.getStyles() +
       `</style>
       </head>
-      <body class="${this.setting<boolean>('pauseDashboardRefresh', false) ? 'auto-off' : ''}">
+      <body class="${this.setting<boolean>('dashboardAutoRefresh', true) ? '' : 'auto-off'}">
         <div class="container">
           <header>
             <h1>` +
@@ -714,6 +841,7 @@ export class UsageWebviewProvider {
     const snap: SettingView[] = this.settings ? this.settings.snapshot() : [];
     const groups: { key: string; label: string }[] = [
       { key: 'general', label: t.settingsGroupGeneral },
+      { key: 'features', label: t.settingsGroupFeatures },
       { key: 'statusBar', label: t.settingsGroupStatusBar },
       { key: 'data', label: t.settingsGroupData },
       { key: 'advice', label: t.settingsGroupAdvice },
@@ -763,13 +891,30 @@ export class UsageWebviewProvider {
         onCh('boolean') +
         '><span class="set-slider"></span></label>';
     } else if (it.type === 'enum') {
-      const opts = (it.enumValues || [])
-        .map((v, i) => {
-          const label = (it.enumLabels && it.enumLabels[i]) || (v === '' ? '(default)' : v);
-          const sel = String(it.value) === v ? ' selected' : '';
-          return '<option value="' + esc(v) + '"' + sel + '>' + esc(label) + '</option>';
-        })
-        .join('');
+      const cur = String(it.value);
+      const option = (v: string, lbl: string): string =>
+        '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(lbl) + '</option>';
+      let opts = '';
+      // Keep a previously-stored value selectable even if it's not in the list.
+      const known = new Set(it.enumValues || []);
+      if (cur && !known.has(cur)) {
+        opts += option(cur, cur + ' (current)');
+      }
+      if (it.enumGroups && it.enumGroups.length > 0) {
+        // Grouped <optgroup> rendering (e.g. timezone: Common / All zones).
+        opts += it.enumGroups
+          .map(
+            (g) =>
+              '<optgroup label="' + esc(g.label) + '">' +
+              g.values.map((v, i) => option(v, g.labels[i] || (v === '' ? '(default)' : v))).join('') +
+              '</optgroup>'
+          )
+          .join('');
+      } else {
+        const values = it.enumValues || [];
+        const labels = it.enumLabels || [];
+        opts += values.map((v, i) => option(v, labels[i] || (v === '' ? '(default)' : v))).join('');
+      }
       control = '<select id="' + id + '"' + onCh('string') + '>' + opts + '</select>';
     } else if (it.type === 'number') {
       control =
@@ -922,6 +1067,38 @@ export class UsageWebviewProvider {
     }
 
     return todaySummary + hourlyBreakdown;
+  }
+
+  /** Opt-in (showEfficiency) efficiency chips appended to a usage summary:
+   * cost per message (exact: cost ÷ messages) and realised cache savings
+   * (cacheRead tokens × the input−cacheRead price gap, per model). Off by
+   * default — not everyone wants cost-efficiency framing. */
+  private renderEfficiencyChips(data: UsageData): string {
+    if (!this.setting<boolean>('showEfficiency', false) || !data || data.messageCount <= 0) {
+      return '';
+    }
+    const costPerMsg = data.totalCost / data.messageCount;
+    const totalTokens =
+      data.totalInputTokens + data.totalOutputTokens + data.totalCacheCreationTokens + data.totalCacheReadTokens;
+    const tokensPerMsg = totalTokens / data.messageCount;
+    let savings = 0;
+    for (const [model, mb] of Object.entries(data.modelBreakdown)) {
+      if (mb.cacheReadTokens > 0) {
+        const r = getModelRatesPerMillion(model);
+        if (r) {
+          savings += (mb.cacheReadTokens * Math.max(0, r.input - r.cacheRead)) / 1_000_000;
+        }
+      }
+    }
+    const chip = (label: string, value: string, title: string): string =>
+      '<span class="eff-chip" title="' + this.escapeHtml(title) + '"><span class="eff-label">' + label +
+      '</span><span class="eff-value">' + value + '</span></span>';
+    let chips = chip('Cost / message', I18n.formatCurrency(costPerMsg), 'Total cost ÷ messages you sent');
+    chips += chip('Tokens / message', I18n.formatNumber(Math.round(tokensPerMsg)), 'All tokens (in + out + cache) ÷ messages you sent');
+    if (savings > 0) {
+      chips += chip('Cache savings', I18n.formatCurrency(savings), 'What cache reads saved vs. paying full input price');
+    }
+    return '<div class="eff-chips">' + chips + '</div>';
   }
 
   private renderUsageData(data: UsageData | null): string {
@@ -1122,6 +1299,7 @@ export class UsageWebviewProvider {
       html += '</div></div>';
     }
 
+    html += this.renderEfficiencyChips(data);
     return html;
   }
 
@@ -1206,6 +1384,7 @@ export class UsageWebviewProvider {
                 <th>${I18n.t.popup.outputTokens}</th>
                 <th>${I18n.t.popup.cacheCreation}</th>
                 <th>${I18n.t.popup.cacheRead}</th>
+                <th>${I18n.t.popup.cacheHitRate}</th>
                 <th>${I18n.t.popup.messages}</th>
                 <th></th>
               </tr>
@@ -1221,6 +1400,7 @@ export class UsageWebviewProvider {
                   <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
+                  <td class="number-cell">${this.formatPercent(this.cacheHitRate(data))}</td>
                   <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
                   <td class="detail-cell">
                     <button class="detail-button" onclick="toggleHourlyDetail('${date}')" title="${I18n.t.popup.hourlyBreakdown}">
@@ -1231,7 +1411,7 @@ export class UsageWebviewProvider {
                   </td>
                 </tr>
                 <tr class="hourly-detail-row" data-date="${date}" style="display: none;">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="hourly-detail-container" id="hourly-detail-${date}">
                       <div class="loading-indicator">載入中...</div>
                     </div>
@@ -1257,6 +1437,20 @@ export class UsageWebviewProvider {
 
     const allTimeSummary = this.renderUsageData(this.allTimeData);
 
+    // Optional GitHub-style token heatmap (off by default; mainly a shareable
+    // view). Inline SVG renders with working hover tooltips inside the webview.
+    let heatmapPanel = '';
+    if (this.setting<boolean>('showHeatmap', false) && this.allRecords && this.allRecords.length > 0) {
+      const daily = ClaudeDataLoader.getDailyUsageMap(this.allRecords, I18n.getTimezone());
+      heatmapPanel =
+        '<div class="heatmap-panel"><h3>Token heatmap</h3>' +
+        '<div class="heatmap-svg">' + renderHeatmapSvg(daily) + '</div>' +
+        '<div class="share-actions">' +
+        '<button class="btn-secondary btn-small" onclick="exportHeatmap()">Export as SVG…</button>' +
+        '<button class="btn-secondary btn-small" onclick="publishHeatmap()">Publish to GitHub…</button>' +
+        '</div></div>';
+    }
+
     const dailyBreakdown =
       this.dailyDataForAllTime.length > 0
         ? `
@@ -1281,7 +1475,7 @@ export class UsageWebviewProvider {
         ${this.renderCompositionChart(
           [...this.dailyDataForAllTime]
             .sort((a, b) => a.date.localeCompare(b.date))
-            .map((d) => ({ label: this.getShortDate(d.date), data: d.data }))
+            .map((d) => ({ label: this.getShortDate(d.date, true), data: d.data, key: d.date }))
         )}
 
         <div class="daily-table-container">
@@ -1294,6 +1488,7 @@ export class UsageWebviewProvider {
                 <th>${I18n.t.popup.outputTokens}</th>
                 <th>${I18n.t.popup.cacheCreation}</th>
                 <th>${I18n.t.popup.cacheRead}</th>
+                <th>${I18n.t.popup.cacheHitRate}</th>
                 <th>${I18n.t.popup.messages}</th>
                 <th></th>
               </tr>
@@ -1303,12 +1498,13 @@ export class UsageWebviewProvider {
                 .map(
                   ({ date, data }) => `
                 <tr class="daily-row" data-date="${date}">
-                  <td class="date-cell">${this.formatDate(date)}</td>
+                  <td class="date-cell">${this.formatDate(date, true)}</td>
                   <td class="cost-cell">${I18n.formatCurrency(data.totalCost)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalInputTokens)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
                   <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
+                  <td class="number-cell">${this.formatPercent(this.cacheHitRate(data))}</td>
                   <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
                   <td class="detail-cell">
                     <button class="detail-button" onclick="toggleMonthlyDetail('${date}')" title="顯示每日詳細資料">
@@ -1319,7 +1515,7 @@ export class UsageWebviewProvider {
                   </td>
                 </tr>
                 <tr class="monthly-detail-row" data-date="${date}" style="display: none;">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="monthly-detail-container" id="monthly-detail-${date}">
                       <div class="loading-indicator">載入中...</div>
                     </div>
@@ -1335,7 +1531,216 @@ export class UsageWebviewProvider {
     `
         : '';
 
-    return allTimeSummary + dailyBreakdown;
+    // Heatmap sits right above the "monthly usage" breakdown, below the totals.
+    return allTimeSummary + this.renderShareCardPanel() + heatmapPanel + dailyBreakdown;
+  }
+
+  /** The "Share card" panel (All tab). Off by default (`enableShareCard`); when
+   * on, a config form — range / scope / which metrics — with a Generate button.
+   * The preview is built on demand (no per-keystroke re-render), and export uses
+   * the same config. Privacy-safe: built from buildShareCardData, aggregate only. */
+  private renderShareCardPanel(): string {
+    const esc = (s: string): string => this.escapeHtml(s);
+    if (!this.setting<boolean>('enableShareCard', false)) {
+      // Off by default, but leave a discoverable pointer.
+      return (
+        '<div class="share-panel"><h3>Share card</h3>' +
+        '<p class="table-hint">Turn on <b>Enable usage share card</b> in <a href="#" onclick="openSettings();return false;">⚙ Settings</a> to build a one-page, shareable summary of your usage.</p>' +
+        '</div>'
+      );
+    }
+    if (!this.allRecords || this.allRecords.length === 0) {
+      return '';
+    }
+
+    // Range: grouped like the scope dropdown — rolling presets vs. a specific
+    // calendar month (last 12), so the two kinds are visually distinct.
+    const now = new Date();
+    const monthOpts: string[] = [];
+    for (let i = 1; i <= 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      monthOpts.push(`<option value="month:${key}">${esc(label)}${i === 1 ? ' (last month)' : ''}</option>`);
+    }
+    // Rehydrate the last config so an auto-refresh re-render doesn't wipe the
+    // user's picks or their generated preview (Carl: refresh shouldn't blow away
+    // human-operated output). Default range is the last 30 days.
+    const cfg = this.lastShareCardConfig;
+    const curRange = cfg?.range || 'last30';
+    const curScope = cfg?.scope || 'all';
+    const secOn = (key: string, dflt: boolean): boolean => (cfg?.sections?.[key] ?? dflt);
+    const sel = (v: string, cur: string): string => (v === cur ? ' selected' : '');
+
+    const rangeSelect =
+      '<select id="scRange">' +
+      '<optgroup label="Rolling">' +
+      '<option value="last30"' + sel('last30', curRange) + '>Last 30 days</option>' +
+      '<option value="week"' + sel('week', curRange) + '>Last 7 days</option>' +
+      '<option value="month"' + sel('month', curRange) + '>This month</option>' +
+      '<option value="year"' + sel('year', curRange) + '>Last 12 months</option>' +
+      '<option value="today"' + sel('today', curRange) + '>Today (hourly)</option>' +
+      '</optgroup>' +
+      '<optgroup label="Specific month">' +
+      monthOpts.map((o) => o.replace('>', sel(o.match(/value="([^"]+)"/)?.[1] || '', curRange) + '>')).join('') +
+      '</optgroup>' +
+      '</select>';
+
+    // Scope: overall / by project / by session (top few by cost).
+    const projectOpts = (this.projectBreakdown || [])
+      .map((g) => `<option value="project:${esc(g.groupPath)}"${sel('project:' + g.groupPath, curScope)}>${esc(g.groupName)}</option>`)
+      .join('');
+    const sessionOpts = (this.sessionBreakdown || [])
+      .slice()
+      .sort((a, b) => b.data.totalCost - a.data.totalCost)
+      .slice(0, 20)
+      .map((s) => `<option value="session:${esc(s.sessionId)}"${sel('session:' + s.sessionId, curScope)}>${esc((s.title || s.sessionId).slice(0, 48))}</option>`)
+      .join('');
+    const scopeSelect =
+      '<select id="scScope">' +
+      '<optgroup label="All"><option value="all"' + sel('all', curScope) + '>Overall</option></optgroup>' +
+      (projectOpts ? '<optgroup label="By project">' + projectOpts + '</optgroup>' : '') +
+      (sessionOpts ? '<optgroup label="By session">' + sessionOpts + '</optgroup>' : '') +
+      '</select>';
+
+    // Section toggles. Default ON: cost, cache-hit, model (+ the token hero,
+    // rhythm, badge). Optional: sessions, messages, composition, project.
+    const check = (key: string, label: string, dflt: boolean): string =>
+      '<label class="sc-check"><input type="checkbox" class="sc-sec" data-sec="' + key + '"' +
+      (secOn(key, dflt) ? ' checked' : '') + '> ' + esc(label) + '</label>';
+    const toggles =
+      check('totalTokens', 'Total tokens', true) +
+      check('estimatedCost', 'Est. cost', true) +
+      check('cacheEfficiency', 'Cache-hit rate', true) +
+      check('topModel', 'Top model', true) +
+      check('sessions', 'Session count', true) +
+      check('tokenComposition', 'Token mix', true) +
+      check('rhythm', 'Daily pulse', true) +
+      check('badge', 'Badge', true) +
+      check('messages', 'Message count', false) +
+      check('projectName', 'Project name', false);
+    const avatarChecked = cfg?.avatar ? ' checked' : '';
+    const nameChecked = cfg?.username ? ' checked' : '';
+    const fullChecked = cfg?.fullNumbers ? ' checked' : '';
+    const curTheme = cfg?.theme || 'claudeClassic';
+    const themeSelect =
+      '<select id="scTheme">' +
+      '<option value="claudeClassic"' + sel('claudeClassic', curTheme) + '>Claude Classic (orange)</option>' +
+      '<option value="claudeCream"' + sel('claudeCream', curTheme) + '>Claude Cream</option>' +
+      '<option value="auroraDark"' + sel('auroraDark', curTheme) + '>Aurora Dark</option>' +
+      '<option value="auto"' + sel('auto', curTheme) + '>Auto (follow VS Code)</option>' +
+      '</select>';
+
+    const preview = this.lastShareCardSvg
+      ? this.lastShareCardSvg
+      : '<p class="table-hint">Preview appears here after you click Generate.</p>';
+
+    return (
+      '<div class="share-panel"><h3>Share card</h3>' +
+      '<p class="table-hint">Pick a range, scope and metrics, then Generate. Only aggregate numbers are drawn — no prompts, paths, or session ids.</p>' +
+      '<div class="sc-config">' +
+      '<div class="sc-grid">' +
+      '<label class="sc-field"><span>Range</span>' + rangeSelect + '</label>' +
+      '<label class="sc-field"><span>Scope</span>' + scopeSelect + '</label>' +
+      '<label class="sc-field"><span>Theme</span>' + themeSelect + '</label>' +
+      '</div>' +
+      '<div class="sc-checks">' + toggles +
+      '<label class="sc-check" title="Show the exact token count instead of 1.2M"><input type="checkbox" id="scFull"' + fullChecked + '> Full numbers</label>' +
+      '<label class="sc-check" title="Fetches your GitHub avatar (asks to sign in once)"><input type="checkbox" id="scAvatar"' + avatarChecked + '> GitHub avatar</label>' +
+      '<label class="sc-check" title="Shows your GitHub name next to the badge"><input type="checkbox" id="scName"' + nameChecked + '> GitHub name</label>' +
+      '</div>' +
+      '<div class="share-actions">' +
+      '<button class="btn-secondary btn-small" onclick="generateShareCard()">Generate preview</button>' +
+      '<button class="btn-secondary btn-small" onclick="exportShareCardConfigured()">Export as SVG…</button>' +
+      '</div></div>' +
+      '<div class="share-preview" id="scPreview">' + preview + '</div>' +
+      '</div>'
+    );
+  }
+
+  /** Build the share-card SVG for a webview request ({range, scope, sections,
+   * size, avatar}). Shared by the preview (postMessage back) and export paths. */
+  private buildShareCardSvgFor(
+    range: string,
+    scope: string,
+    sections: Partial<ShareSections>,
+    opts: { avatarDataUri?: string; username?: string; fullNumbers?: boolean; theme?: ShareCardTheme } = {}
+  ): string {
+    const input = ClaudeDataLoader.buildShareInput(this.allRecords, range, scope);
+    const merged: ShareSections = { ...DEFAULT_SECTIONS, ...sections };
+    const kind = vscode.window.activeColorTheme?.kind;
+    const isDark = kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast;
+    // Landscape only for now (other sizes need per-size tuning — a later patch).
+    return renderShareCardSvg(buildShareCardData(input, merged), { ...opts, isDark, lang: I18n.getLocale() });
+  }
+
+  /** Fetch the signed-in GitHub user's avatar (data: URI) and display name,
+   * cached. Only called when the user ticks "GitHub avatar" / "GitHub name", so
+   * auth is on demand (just `read:user`). Missing parts come back undefined. */
+  private async getGithubIdentity(): Promise<{ avatar?: string; name?: string }> {
+    if (this.githubIdentity) {
+      return this.githubIdentity;
+    }
+    let session: vscode.AuthenticationSession | undefined;
+    try {
+      session = await vscode.authentication.getSession('github', ['read:user'], { createIfNone: true });
+    } catch {
+      return {};
+    }
+    if (!session) {
+      return {};
+    }
+    const out: { avatar?: string; name?: string } = {};
+    try {
+      const user = await this.httpsGet('https://api.github.com/user', session.accessToken);
+      const parsed = JSON.parse(user.body.toString('utf8')) as { avatar_url?: string; name?: string; login?: string };
+      out.name = (parsed.name && parsed.name.trim()) || parsed.login;
+      if (parsed.avatar_url) {
+        const url = parsed.avatar_url + (parsed.avatar_url.includes('?') ? '&' : '?') + 's=160';
+        const img = await this.httpsGet(url);
+        out.avatar = `data:${img.contentType || 'image/png'};base64,${img.body.toString('base64')}`;
+      }
+    } catch {
+      /* keep whatever we got */
+    }
+    this.githubIdentity = out;
+    return out;
+  }
+
+  /** Minimal GET over https returning the raw body + content-type. Follows
+   * redirects (GitHub avatar URLs 302 to avatars.githubusercontent.com — not
+   * following them was why the avatar came back empty / broken). */
+  private httpsGet(url: string, token?: string, hops = 0): Promise<{ body: Buffer; contentType: string }> {
+    return new Promise((resolve, reject) => {
+      const req = https.get(
+        url,
+        {
+          headers: {
+            'User-Agent': 'ClaudeCodeUsage-VSCode',
+            ...(token ? { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } : {}),
+          },
+          timeout: 15000,
+        },
+        (res) => {
+          const status = res.statusCode || 0;
+          const loc = res.headers.location;
+          if (status >= 300 && status < 400 && loc && hops < 4) {
+            res.resume(); // drain
+            // Don't forward the auth token to a redirected (CDN) host.
+            const next = new URL(loc, url).toString();
+            this.httpsGet(next, undefined, hops + 1).then(resolve, reject);
+            return;
+          }
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(c as Buffer));
+          res.on('end', () =>
+            resolve({ body: Buffer.concat(chunks), contentType: String(res.headers['content-type'] || '') })
+          );
+        }
+      );
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+    });
   }
 
   private renderSessionData(): string {
@@ -1353,7 +1758,18 @@ export class UsageWebviewProvider {
     const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     let currentCount = 0;
 
+    // The delete action touches local Claude Code history files, so it's
+    // Resume + delete both ACT on the user's Claude Code (reopen / trash a log),
+    // so they share one opt-in that's off by default — at odds with read-only.
+    const showActions = this.setting<boolean>('enableSessionActions', false);
+    // Read-only conversation viewer — on by default (it only reads local logs).
+    const showViewer = this.setting<boolean>('showConversationViewer', true);
+    // Active (hands-on) time per session — idle-capped, so it's not the raw
+    // first→last span. Computed once for the whole table.
+    const activeMap = ClaudeDataLoader.activeDurationBySession(this.allRecords);
     let rows = '';
+    // Distinct short model names across all sessions → the model filter dropdown.
+    const modelSet = new Set<string>();
     this.sessionBreakdown.forEach((s) => {
       const d = s.data;
       const foreign = workspacePath
@@ -1366,23 +1782,43 @@ export class UsageWebviewProvider {
       const displayName = fullName.length > 40 ? fullName.slice(0, 40) + '…' : fullName;
       const ts = thinkingMap ? thinkingMap[s.sessionId] : undefined;
       const thinkingShare = ts && ts.assistantTotal > 0 ? ts.thinking / ts.assistantTotal : null;
+      // Models that omit their raw reasoning (Fable 5 / Opus 4.8) log empty
+      // thinking text, so the estimate reads ~0 even though thinking was on.
+      const thinkingHidden = !!(ts && ts.hiddenThinking);
       // Calibrated absolute (Phase 8): thinking share × the session's EXACT
       // output tokens = a billing-anchored "real thinking tokens" figure.
       const realThinkingTokens =
         thinkingShare !== null ? Math.round(thinkingShare * d.totalOutputTokens) : null;
-      // Tooltip: calibrated token figure + (for heavy sessions) the effort hint.
+      // Tooltip: calibrated token figure + (for heavy sessions) the effort hint
+      // + a note when part/all of the thinking is hidden by the model.
       const thinkingTitle = [
-        realThinkingTokens !== null ? '~' + I18n.formatNumber(realThinkingTokens) + ' ' + t.thinkingTokensCalibrated : '',
+        realThinkingTokens !== null && realThinkingTokens > 0
+          ? '~' + I18n.formatNumber(realThinkingTokens) + ' ' + t.thinkingTokensCalibrated
+          : '',
         thinkingShare !== null && thinkingShare > 0.6 ? t.effortHint : '',
+        thinkingHidden ? t.thinkingHidden : '',
       ].filter((x) => x).join(' · ');
+      // Cell text: a measurable share wins; else "hidden" when the model hid it;
+      // else "-". A "*" marks a partial measurement when some turns were hidden.
+      const thinkingCell =
+        thinkingShare !== null && thinkingShare > 0
+          ? this.formatPercent(thinkingShare) + (thinkingHidden ? '*' : '') + (thinkingShare > 0.6 ? ' ⚠' : '')
+          : thinkingHidden
+            ? t.thinkingHiddenShort
+            : '-';
+      // Distinct short model names for this session → the model filter matches on these.
+      const rowModels = [...new Set(Object.keys(d.modelBreakdown || {}).map((m) => this.shortModelName(m)))];
+      rowModels.forEach((m) => modelSet.add(m));
       rows +=
         '<tr class="sort-row' + (foreign ? ' session-foreign' : '') + '"' +
         ' data-sort-time="' + s.startTime.getTime() + '"' +
+        ' data-models="' + this.escapeHtml(rowModels.join('|').toLowerCase()) + '"' +
         ' data-sort-session="' + this.escapeHtml(fullName.toLowerCase()) + '"' +
         ' data-sort-project="' + this.escapeHtml((s.projectName || '').toLowerCase()) + '"' +
         ' data-sort-context="' + s.peakContextTokens + '"' +
         ' data-sort-thinking="' + (thinkingShare ?? -1) + '"' +
         ' data-sort-duration="' + (s.endTime.getTime() - s.startTime.getTime()) + '"' +
+        ' data-sort-active="' + (activeMap[s.sessionId] || 0) + '"' +
         this.usageSortAttrs(d) +
         '>' +
         '<td class="date-cell" title="' + this.escapeHtml(s.sessionId) + '">' +
@@ -1399,20 +1835,32 @@ export class UsageWebviewProvider {
         '<td class="number-cell">' + I18n.formatNumber(d.totalCacheReadTokens) + '</td>' +
         '<td class="number-cell">' + I18n.formatNumber(s.peakContextTokens) + '</td>' +
         '<td class="number-cell"' + (thinkingTitle ? ' title="' + this.escapeHtml(thinkingTitle) + '"' : '') + '>' +
-        (thinkingShare !== null ? this.formatPercent(thinkingShare) + (thinkingShare > 0.6 ? ' ⚠' : '') : '-') +
+        this.escapeHtml(thinkingCell) +
         '</td>' +
         '<td class="number-cell">' + I18n.formatNumber(d.messageCount) + '</td>' +
+        '<td class="number-cell" title="' + this.escapeHtml(t.activeDurationHelp) + '">' +
+        this.escapeHtml(this.formatDurationMs(activeMap[s.sessionId] || 0)) +
+        '</td>' +
         '<td class="number-cell">' + this.escapeHtml(this.formatDuration(s.startTime, s.endTime)) + '</td>' +
         // Copy id / resume / delete actions; id re-validated host-side.
         '<td class="actions-cell">' +
         '<button class="session-action" title="' + this.escapeHtml(t.copySessionId) +
         '" data-session-id="' + this.escapeHtml(s.sessionId) + '" onclick="copySession(this)">⧉</button>' +
-        '<button class="session-action" title="' + this.escapeHtml(t.resumeSession) +
-        '" data-session-id="' + this.escapeHtml(s.sessionId) +
-        '" data-cwd="' + this.escapeHtml(s.projectPath || '') + '" onclick="resumeSession(this)">▶</button>' +
-        '<button class="session-action session-delete" title="' + this.escapeHtml(t.deleteSession) +
-        '" data-session-id="' + this.escapeHtml(s.sessionId) +
-        '" data-title="' + this.escapeHtml(fullName) + '" onclick="deleteSession(this)">🗑</button>' +
+        (showViewer
+          ? '<button class="session-action" title="' + this.escapeHtml(t.viewConversation) +
+            '" data-session-id="' + this.escapeHtml(s.sessionId) +
+            '" data-title="' + this.escapeHtml(fullName) + '" onclick="viewConversation(this)">👁</button>'
+          : '') +
+        (showActions
+          ? '<button class="session-action" title="' + this.escapeHtml(t.resumeSession) +
+            '" data-session-id="' + this.escapeHtml(s.sessionId) +
+            '" data-cwd="' + this.escapeHtml(s.projectPath || '') + '" onclick="resumeSession(this)">▶</button>'
+          : '') +
+        (showActions
+          ? '<button class="session-action session-delete" title="' + this.escapeHtml(t.deleteSession) +
+            '" data-session-id="' + this.escapeHtml(s.sessionId) +
+            '" data-title="' + this.escapeHtml(fullName) + '" onclick="deleteSession(this)">🗑</button>'
+          : '') +
         '</td>' +
         '</tr>';
     });
@@ -1420,25 +1868,43 @@ export class UsageWebviewProvider {
     const th = (key: string, label: string): string =>
       '<th class="sortable" data-sortkey="' + key + '">' + label + '</th>';
 
-    // Filter the list to the current project (default) or all.
+    // Filter bar above the table: time range · project · model. All three narrow the
+    // list client-side; the list now defaults to ALL sessions and ALL projects.
     const total = this.sessionBreakdown.length;
     const foreignCount = total - currentCount;
     const showToggle = !!workspacePath && currentCount > 0 && foreignCount > 0;
-    const filterBar = showToggle
-      ? '<div class="sess-filter">' +
-        '<button class="sess-filter-btn active" data-mode="current" onclick="sessionFilter(this)">' +
-          this.escapeHtml(t.sessionFilterCurrent) + ' (' + currentCount + ')</button>' +
-        '<button class="sess-filter-btn" data-mode="all" onclick="sessionFilter(this)">' +
-          this.escapeHtml(t.sessionFilterAll) + ' (' + total + ')</button>' +
-        '</div>'
-      : '';
+    const modelOptions = [...modelSet]
+      .sort()
+      .map((m) => '<option value="' + this.escapeHtml(m.toLowerCase()) + '">' + this.escapeHtml(m) + '</option>')
+      .join('');
+    const filterBar =
+      '<div class="sess-filters">' +
+      '<div class="sess-filter" data-group="range">' +
+        '<button class="sess-filter-btn active" data-range="all" onclick="sessionRange(this)">' + this.escapeHtml(t.sessionFilterAll) + '</button>' +
+        '<button class="sess-filter-btn" data-range="today" onclick="sessionRange(this)">' + this.escapeHtml(t.sessionRangeToday) + '</button>' +
+        '<button class="sess-filter-btn" data-range="7" onclick="sessionRange(this)">' + this.escapeHtml(t.sessionRange7d) + '</button>' +
+        '<button class="sess-filter-btn" data-range="30" onclick="sessionRange(this)">' + this.escapeHtml(t.sessionRange30d) + '</button>' +
+      '</div>' +
+      (showToggle
+        ? '<div class="sess-filter" data-group="project">' +
+          '<button class="sess-filter-btn" data-mode="current" onclick="sessionFilter(this)">' + this.escapeHtml(t.sessionFilterCurrent) + ' (' + currentCount + ')</button>' +
+          '<button class="sess-filter-btn active" data-mode="all" onclick="sessionFilter(this)">' + this.escapeHtml(t.sessionFilterAll) + ' (' + total + ')</button>' +
+          '</div>'
+        : '') +
+      (modelOptions
+        ? '<select class="sess-model-select" title="' + this.escapeHtml(t.sessionModelAll) + '" onchange="sessionModel(this)">' +
+          '<option value="all">' + this.escapeHtml(t.sessionModelAll) + '</option>' +
+          modelOptions +
+          '</select>'
+        : '') +
+      '</div>';
 
     return (
       '<div class="daily-breakdown">' +
       '<h3>' + t.sessionBreakdown + '</h3>' +
       '<p class="table-hint">' + t.sortHint + '</p>' +
       filterBar +
-      '<div class="session-list' + (showToggle ? ' show-current' : '') + '" id="sessionList">' +
+      '<div class="session-list" id="sessionList">' +
       '<div class="daily-table-container">' +
       '<table class="daily-table sortable-table">' +
       '<thead><tr>' +
@@ -1453,6 +1919,7 @@ export class UsageWebviewProvider {
       th('context', t.peakContext) +
       th('thinking', t.thinkingShare) +
       th('messages', t.messages) +
+      '<th class="sortable" data-sortkey="active" title="' + this.escapeHtml(t.activeDurationHelp) + '">' + t.activeDuration + '</th>' +
       th('duration', t.duration) +
       '<th>' + t.sessionActions + '</th>' +
       '</tr></thead>' +
@@ -1507,6 +1974,55 @@ export class UsageWebviewProvider {
     );
   }
 
+  /** Open a read-only viewer for a past conversation. Reads the session's
+   * .jsonl fresh, parses it, and (re)uses a single viewer panel — nothing is
+   * loaded back into any model context (that's the whole point vs. resume).
+   * Reads on every click, so an ongoing session shows its latest turns. */
+  private async openConversationViewer(sessionId: string, title: string): Promise<void> {
+    const files = await ClaudeDataLoader.findSessionFiles(sessionId, this.dataDirectory);
+    // Prefer the main session file (basename === sessionId.jsonl); else the
+    // largest match. Sub-agent side files can share the id but aren't the chat.
+    const main =
+      files.find((f) => path.basename(f).toLowerCase() === sessionId.toLowerCase() + '.jsonl') || files[0];
+    if (!main) {
+      vscode.window.showWarningMessage(I18n.t.popup.deleteSessionNotFound);
+      return;
+    }
+    let text = '';
+    try {
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(main));
+      text = Buffer.from(bytes).toString('utf8');
+    } catch {
+      vscode.window.showWarningMessage(I18n.t.popup.deleteSessionNotFound);
+      return;
+    }
+    // Cap by ROUNDS (prompts), not raw turns — a single prompt can be followed
+    // by dozens of tool turns, so a raw-turn cap starves the prompt list. Keep
+    // the last 10 rounds (all rendered flat + all in the nav), with a raw-turn
+    // safety ceiling so a pathological round can't bloat the DOM.
+    const parsed = parseConversation(text, { maxRounds: 10, maxTurns: 2500, maxCharsPerTurn: 4000 });
+    const panelTitle = (parsed.title || title || sessionId).slice(0, 60);
+    const html = renderConversationViewer(parsed, { sessionId, timezone: I18n.getTimezone() });
+    // Reuse the single viewer panel (refresh it) if it's still open; else make one.
+    if (this.conversationPanel) {
+      this.conversationPanel.title = panelTitle;
+      this.conversationPanel.webview.html = html;
+      this.conversationPanel.reveal(vscode.ViewColumn.Active, false);
+    } else {
+      const panel = vscode.window.createWebviewPanel(
+        'ccuConversation',
+        panelTitle,
+        { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+        { enableScripts: false, retainContextWhenHidden: false }
+      );
+      panel.onDidDispose(() => {
+        this.conversationPanel = undefined;
+      });
+      panel.webview.html = html;
+      this.conversationPanel = panel;
+    }
+  }
+
   private formatDuration(start: Date, end: Date): string {
     if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
       return '-';
@@ -1525,6 +2041,14 @@ export class UsageWebviewProvider {
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     return minutes > 0 ? hours + 'h ' + minutes + 'm' : hours + 'h';
+  }
+
+  /** Same formatting as formatDuration but from a raw millisecond span. */
+  private formatDurationMs(ms: number): string {
+    if (!(ms > 0)) {
+      return '<1m';
+    }
+    return this.formatDuration(new Date(0), new Date(ms));
   }
 
   /** A table cell showing the project's friendly name with its full path beneath. */
@@ -1551,6 +2075,14 @@ export class UsageWebviewProvider {
     }
 
     const t = I18n.t.popup;
+    // Opt-in efficiency column (cost per message), gated like the Today chips.
+    const showEff = this.setting<boolean>('showEfficiency', false);
+    const effCell = (d: UsageData): string =>
+      showEff
+        ? '<td class="number-cell">' +
+          (d.messageCount > 0 ? I18n.formatCurrency(d.totalCost / d.messageCount) : '—') +
+          '</td>'
+        : '';
 
     const usageCells = (d: UsageData): string =>
       '<td class="cost-cell">' + I18n.formatCurrency(d.totalCost) + '</td>' +
@@ -1558,7 +2090,8 @@ export class UsageWebviewProvider {
       '<td class="number-cell">' + I18n.formatNumber(d.totalOutputTokens) + '</td>' +
       '<td class="number-cell">' + I18n.formatNumber(d.totalCacheCreationTokens) + '</td>' +
       '<td class="number-cell">' + I18n.formatNumber(d.totalCacheReadTokens) + '</td>' +
-      '<td class="number-cell">' + I18n.formatNumber(d.messageCount) + '</td>';
+      '<td class="number-cell">' + I18n.formatNumber(d.messageCount) + '</td>' +
+      effCell(d);
 
     let rows = '';
     this.projectBreakdown.forEach((group, idx) => {
@@ -1631,6 +2164,7 @@ export class UsageWebviewProvider {
       th('cachecreate', t.cacheCreation) +
       th('cacheread', t.cacheRead) +
       th('messages', t.messages) +
+      (showEff ? '<th title="Total cost ÷ messages">Cost/msg</th>' : '') +
       th('lastactive', t.lastActive) +
       '</tr></thead>' +
       '<tbody>' + rows + '</tbody>' +
@@ -2241,6 +2775,318 @@ export class UsageWebviewProvider {
    * tokens (your prompts vs. tool results vs. assistant output), to help spot
    * habits worth optimising. Token figures are estimated from text length.
    */
+  /** Opt-in (showEfficiency) "top 10 costliest messages" panel for the Content
+   * tab. Ranks single assistant turns by cost; each row expands (native
+   * <details>) to the prompt that triggered it, its token breakdown, model and
+   * skill — so an expensive turn can be understood, in the same spirit as the
+   * AI advice and optimizer cards that live alongside it. */
+  /** Opt-in (showInsights) "Experimental insights" section on the Content tab.
+   * Our own heuristic estimates from the local logs — labelled as estimates,
+   * off by default, no prompts. First card: the cache-churn bill. Styled to the
+   * plugin's existing card language (theme vars), with a small "estimate" tag
+   * as the honest signature. */
+  /** The cache analyses, recomputed at most once a week (they move slowly). */
+  private getAnalysis(): NonNullable<UsageWebviewProvider['analysisCache']> {
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+    if (!this.analysisCache || Date.now() - this.analysisCache.at > WEEK) {
+      this.analysisCache = {
+        at: Date.now(),
+        ttl: ClaudeDataLoader.estimateCacheTtl(this.allRecords),
+        churn: ClaudeDataLoader.estimateCacheChurnCost(this.allRecords, 30),
+        byModel: ClaudeDataLoader.cacheStatsByModel(this.allRecords, 30),
+        rightsizing: ClaudeDataLoader.modelRightsizing(this.allRecords, 30),
+        health: ClaudeDataLoader.sessionHealth(this.allRecords, 30),
+        hours: ClaudeDataLoader.activeHours(this.allRecords, 30, I18n.getTimezone()),
+        skillRoi: ClaudeDataLoader.skillRoi(this.allRecords, 30),
+      };
+    }
+    return this.analysisCache;
+  }
+
+  private renderInsights(): string {
+    if (!this.setting<boolean>('showInsights', false) || !this.allRecords || this.allRecords.length === 0) {
+      return '';
+    }
+    const cards: string[] = [];
+    const analysis = this.getAnalysis();
+    const money = (n: number): string => I18n.formatCurrency(n);
+
+    // Cache-churn bill (缓存损耗账单).
+    const churn = analysis.churn;
+    if (churn && churn.wastedUsd >= 0.5) {
+      cards.push(
+        '<div class="insight-card">' +
+          '<div class="insight-head"><span class="insight-title">Cache-churn bill</span>' +
+          '<span class="insight-tag">estimate · last 30 days</span></div>' +
+          '<div class="insight-hero">' + money(churn.wastedUsd) + '</div>' +
+          '<div class="insight-sub">wasted re-writing cache a warm cache would have served cheaply</div>' +
+          '<div class="insight-split">' +
+          '<span class="insight-pill"><b>' + money(churn.idleUsd) + '</b> · idle gaps · ' + churn.idleCount + '×</span>' +
+          '<span class="insight-pill"><b>' + money(churn.switchUsd) + '</b> · model switches · ' + churn.switchCount + '×</span>' +
+          '</div>' +
+          '<div class="insight-tip">💡 Most is recoverable — keep momentum inside the ~60-min warm window and batch same-model work.</div>' +
+          '<div class="insight-note">A switch can still be worth it if the other model is cheaper per token; this counts only the churn cost.</div>' +
+          '</div>'
+      );
+    }
+
+    // Cache TTL by model / provider — how long each model's cache stays warm
+    // (the durable, cross-user-comparable signal; it drifts over time). Bar and
+    // number are the SAME metric (TTL) so there's no ambiguity; hit rate and
+    // volume ride along as secondary. (Provider is the family's nominal vendor;
+    // the serving endpoint isn't logged — a true cross-provider comparison needs
+    // pooled cross-user data, reserved via dataContribution.ts.)
+    const byModel = analysis.byModel;
+    const withTtl = byModel.filter((s) => s.ttlMin != null);
+    if (byModel.length >= 2 && withTtl.length >= 1) {
+      const maxTtl = Math.max(...withTtl.map((s) => s.ttlMin as number), 60);
+      const rows = byModel
+        .map((s) => {
+          const ttl = s.ttlMin;
+          const w = ttl != null ? Math.max(4, Math.round((ttl / maxTtl) * 100)) : 0;
+          const ttlLabel = ttl != null ? '~' + ttl + ' min' : '—';
+          const sub = Math.round(s.hitRate * 100) + '% hit · ' + I18n.formatNumber(s.tokens) + ' tok';
+          return (
+            '<div class="cbm-row" title="' + this.escapeHtml(s.provider + ' · warm ' + ttlLabel + ' · ' + Math.round(s.hitRate * 100) + '% cache hit · ' + I18n.formatNumber(s.tokens) + ' tokens · ' + s.turns + ' turns') + '">' +
+            '<div class="cbm-label">' + this.escapeHtml(this.shortModelName(s.model)) +
+            '<span class="cbm-provider">' + this.escapeHtml(s.provider) + '</span></div>' +
+            '<div class="cbm-mid"><div class="cbm-track"><div class="cbm-fill" style="width:' + w + '%"></div></div>' +
+            '<div class="cbm-sub">' + this.escapeHtml(sub) + '</div></div>' +
+            '<div class="cbm-pct">' + this.escapeHtml(ttlLabel) + '</div>' +
+            '</div>'
+          );
+        })
+        .join('');
+      cards.push(
+        '<div class="insight-card">' +
+          '<div class="insight-head"><span class="insight-title">Cache warmth by model</span>' +
+          '<span class="insight-tag">last 30 days</span></div>' +
+          '<div class="insight-sub">how long each model keeps your cache warm (bar &amp; number = estimated warm window; hit rate + volume below)</div>' +
+          '<div class="cbm-list">' + rows + '</div>' +
+          '<div class="insight-tip">💡 A shorter warm window means that model re-writes cache sooner after an idle gap — keep momentum tighter on it, or lean on the longer-lived model for stop-start work.</div>' +
+          '<div class="insight-note">Warm window is inferred from idle-gap hit rates; “—” means too few gaps to estimate yet. The serving provider isn\'t logged, so provider is nominal.</div>' +
+          '</div>'
+      );
+    }
+
+    // Model right-sizing (C5) is DEFERRED, not rendered. Carl's call: output size
+    // is a weak proxy for task difficulty, and "use a cheaper model for simple
+    // tasks" isn't an insight users lack — in practice they habitually stay on
+    // the top model and just tack a simple task onto a long one. A worthwhile
+    // version needs a real judgement of each task's "difficulty", which means
+    // sampling prompt text through the (opt-in, user-key) AI-advice API — and
+    // that upload must be clearly labelled. `modelRightsizing` stays in
+    // dataLoader as dormant scaffolding for that v2. (analysis.rightsizing is
+    // still computed weekly but intentionally not shown.)
+    void analysis.rightsizing;
+
+    // Session health: big one-shot turns → a nudge toward more checkpoints.
+    const health = analysis.health;
+    if (health) {
+      const bigK = Math.round(health.biggestOut / 1000);
+      cards.push(
+        '<div class="insight-card">' +
+          '<div class="insight-head"><span class="insight-title">Big one-shot turns</span>' +
+          '<span class="insight-tag">last 30 days</span></div>' +
+          '<div class="insight-hero">' + Math.round(health.jumboSharePct) + '%</div>' +
+          '<div class="insight-sub">of your output came from ' + health.jumboCount + ' single turns over 4k tokens each (largest ≈ ' + bigK + 'k)</div>' +
+          '<div class="insight-tip">💡 Big one-shot generations are costlier and slower to review, and a wrong direction is caught late. More, smaller checkpoints keep review cheap and catch mistakes early — reserve the big one-shots for when you genuinely can\'t monitor the run.</div>' +
+          '<div class="insight-note">A large single turn is sometimes exactly right (a whole file, a long doc); this is a habit signal, not a verdict.</div>' +
+          '</div>'
+      );
+    }
+
+    // Active hours: when in the day you actually drive work (24h sparkline).
+    const hrs = analysis.hours;
+    if (hrs) {
+      const max = Math.max(...hrs.hours, 1);
+      const pk = hrs.peakStart;
+      const hh = (h: number): string => String(((h % 24) + 24) % 24).padStart(2, '0') + ':00';
+      const bars = hrs.hours
+        .map((v, h) => {
+          const inPeak = (((h - pk) % 24) + 24) % 24 < 4;
+          const height = Math.max(2, Math.round((v / max) * 100));
+          return (
+            '<div class="hr-col" title="' + hh(h) + ' · ' + I18n.formatNumber(v) + ' tokens">' +
+            '<div class="hr-bar' + (inPeak ? ' pk' : '') + '" style="height:' + height + '%"></div>' +
+            (h % 6 === 0 ? '<div class="hr-lab">' + String(h).padStart(2, '0') + '</div>' : '<div class="hr-lab"></div>') +
+            '</div>'
+          );
+        })
+        .join('');
+      cards.push(
+        '<div class="insight-card">' +
+          '<div class="insight-head"><span class="insight-title">Your active hours</span>' +
+          '<span class="insight-tag">last 30 days</span></div>' +
+          '<div class="insight-hero">' + hh(pk) + '–' + hh(pk + 4) + '</div>' +
+          '<div class="insight-sub">your busiest 4-hour window — ' + Math.round(hrs.peakShare) + '% of your work happens then (bars = tokens per hour of day, your timezone)</div>' +
+          '<div class="hr-spark">' + bars + '</div>' +
+          '<div class="insight-tip">💡 Protect that window for the heavy work, and try to keep a task inside one warm session there — momentum in your peak hours is where the cache stays hot and review is sharpest.</div>' +
+          '</div>'
+      );
+    }
+
+    // Skill ROI: output returned per $ spent, per skill/plugin. Bar AND the
+    // right-hand number are the SAME metric (out tokens per $) so they line up;
+    // cost + turns ride along as secondary. Sorted by ROI so the bars rank.
+    const roi = (analysis.skillRoi || []).slice().sort((a, b) => b.outPerUsd - a.outPerUsd);
+    if (roi.length >= 2) {
+      const maxRoi = Math.max(...roi.map((s) => s.outPerUsd), 1);
+      const rows = roi
+        .map((s) => {
+          const short = s.name.includes(':') ? s.name.slice(s.name.indexOf(':') + 1) : s.name;
+          const roiLabel = I18n.formatNumber(Math.round(s.outPerUsd)); // output tokens per $
+          const w = Math.max(4, Math.round((s.outPerUsd / maxRoi) * 100));
+          return (
+            '<div class="cbm-row" title="' + this.escapeHtml(s.name + ' · ' + s.kind + ' · ' + roiLabel + ' output tokens per $ · ' + money(s.costUsd) + ' · ' + s.turns + ' turns') + '">' +
+            '<div class="cbm-label">' + this.escapeHtml(short) +
+            '<span class="cbm-provider">' + s.kind + '</span></div>' +
+            '<div class="cbm-mid"><div class="cbm-track"><div class="cbm-fill" style="width:' + w + '%"></div></div>' +
+            '<div class="cbm-sub">' + this.escapeHtml(money(s.costUsd) + ' · ' + s.turns + ' turns') + '</div></div>' +
+            '<div class="cbm-pct" title="output tokens per $">' + roiLabel + '<span class="cbm-unit">/$</span></div>' +
+            '</div>'
+          );
+        })
+        .join('');
+      cards.push(
+        '<div class="insight-card">' +
+          '<div class="insight-head"><span class="insight-title">Skill ROI</span>' +
+          '<span class="insight-tag">last 30 days</span></div>' +
+          '<div class="insight-sub">output tokens returned per $ spent while each skill / plugin was active (bar &amp; number = out tokens per $; cost + turns below)</div>' +
+          '<div class="cbm-list">' + rows + '</div>' +
+          '<div class="insight-tip">💡 A low out-tokens/$ skill is burning context for little output — worth invoking deliberately, or trimming what it loads. A high one is a lean win you can lean on.</div>' +
+          '<div class="insight-note">Only turns Claude Code tagged with a skill/plugin (≥2.1) are counted; cost is attributed to the active skill and output isn\'t "value", so treat it as a proxy.</div>' +
+          '</div>'
+      );
+    }
+
+    if (cards.length === 0) {
+      return '';
+    }
+    return (
+      '<div class="insights-panel"><h3>Experimental insights</h3>' +
+      '<p class="table-hint">Our own estimates from your local logs — heuristics, not standardized metrics (hence opt-in + labelled). No prompts leave your machine.</p>' +
+      cards.join('') +
+      '</div>'
+    );
+  }
+
+  /** Opt-in (showEfficiency) "cache warmth" insight: an estimate of how long the
+   * prompt cache stays warm while idle, measured from the user's own turns.
+   * Aggregate only (no prompts) — so it rides on the efficiency toggle. */
+  private renderCacheWarmth(): string {
+    if (!this.setting<boolean>('showEfficiency', false) || !this.allRecords || this.allRecords.length === 0) {
+      return '';
+    }
+    const est = this.getAnalysis().ttl; // recomputed at most weekly
+    if (!est) {
+      return '';
+    }
+    return (
+      '<div class="costly-panel"><h3>Cache warmth</h3>' +
+      '<p class="table-hint">Estimated from ' + I18n.formatNumber(est.sampleN) +
+      ' of your same-model turns — the cache TTL is platform-side and can vary, so this is a measurement, not a guarantee.</p>' +
+      '<div class="cache-warmth">Your prompt cache appears to stay warm for about <strong>' + est.estimateMin +
+      ' min</strong> of idle; the hit rate drops off after ~' + est.coldFromMin +
+      ' min. Keep a complex task moving within that window to avoid re-paying for cold-cache rewrites.</div>' +
+      '</div>'
+    );
+  }
+
+  private renderCostliestMessages(): string {
+    // Own opt-in (separate from showEfficiency) because it displays your prompt
+    // text — a privacy step above the aggregate efficiency chips.
+    if (!this.setting<boolean>('showCostliestMessages', false)) {
+      return '';
+    }
+    const top = this.costliestMessages || [];
+    if (top.length === 0) {
+      return '';
+    }
+    const t = I18n.t.popup;
+    const detailRow = (label: string, value: string): string =>
+      '<div class="costly-kv"><span>' + label + '</span><span>' + value + '</span></div>';
+    // Bold row for the two signals that explain a costly turn.
+    const detailRowBold = (label: string, value: string): string =>
+      '<div class="costly-kv costly-kv-strong"><span>' + label + '</span><span>' + value + '</span></div>';
+    // Human gap since the previous turn; "New conversation" for a session's first.
+    const fmtGap = (ms: number | undefined): string => {
+      if (ms === undefined) {
+        return 'New conversation';
+      }
+      const m = Math.round(ms / 60000);
+      if (m < 60) {
+        return m + 'm';
+      }
+      const h = Math.floor(m / 60);
+      return h < 24 ? h + 'h ' + (m % 60) + 'm' : (h / 24).toFixed(1) + 'd';
+    };
+    // Which token type drove the cost? Names the reason a turn was expensive so
+    // the prompt alone isn't the only signal Carl has to go on.
+    const driverOf = (m: CostlyMessage): string => {
+      const parts: { key: string; v: number }[] = [
+        { key: 'cache writes (miss)', v: m.costCacheWrite },
+        { key: 'output', v: m.costOutput },
+        { key: 'uncached input', v: m.costInput },
+        { key: 'cache reads', v: m.costCacheRead },
+      ];
+      parts.sort((a, b) => b.v - a.v);
+      const share = m.cost > 0 ? Math.round((parts[0].v / m.cost) * 100) : 0;
+      return `${parts[0].key} (${share}% of cost)`;
+    };
+    let rows = '';
+    top.forEach((m, i) => {
+      const tokens = m.inputTokens + m.outputTokens + m.cacheCreationTokens + m.cacheReadTokens;
+      const inputSide = m.inputTokens + m.cacheCreationTokens + m.cacheReadTokens;
+      const hitRate = inputSide > 0 ? m.cacheReadTokens / inputSide : 0;
+      const promptText = m.prompt && m.prompt.trim() ? m.prompt.trim() : '(no prompt captured)';
+      const promptShort = promptText.length > 80 ? promptText.slice(0, 80) + '…' : promptText;
+      const truncated = !!(m.prompt && m.prompt.length >= 4000);
+      const skillLabel = m.skill ? (m.plugin ? m.skill + ' · ' + m.plugin : m.skill) : '—';
+      // Cost split — the key to telling a cache miss from a long answer.
+      const costSplit =
+        'write ' + I18n.formatCurrency(m.costCacheWrite) +
+        ' · read ' + I18n.formatCurrency(m.costCacheRead) +
+        ' · out ' + I18n.formatCurrency(m.costOutput) +
+        ' · in ' + I18n.formatCurrency(m.costInput);
+      rows +=
+        '<details class="costly-row" data-persist="costly-' + i + '"><summary>' +
+        '<span class="costly-rank">' + (i + 1) + '</span>' +
+        '<span class="costly-name" title="' + this.escapeHtml(promptText) + '">' + this.escapeHtml(promptShort) + '</span>' +
+        '<span class="costly-cost">' + I18n.formatCurrency(m.cost) + '</span>' +
+        '</summary><div class="costly-detail">' +
+        (m.prompt
+          ? '<div class="costly-prompt">' + this.escapeHtml(promptText) + (truncated ? '\n… (truncated)' : '') + '</div>'
+          : '') +
+        detailRow('Main cost driver', this.escapeHtml(driverOf(m))) +
+        detailRowBold('Cache-hit rate', this.formatPercent(hitRate)) +
+        detailRowBold('Time since last turn', this.escapeHtml(fmtGap(m.gapMs)) +
+          (m.gapMs !== undefined && m.gapMs > 5 * 60000 ? ' ⚠ past cache TTL' : '')) +
+        // Name the likely cache-miss cause when the hit rate is low.
+        (hitRate < 0.2 && m.prevModel && m.prevModel !== m.model
+          ? detailRowBold('Likely cause', 'model switch (' + this.escapeHtml(this.shortModelName(m.prevModel)) + ' → ' + this.escapeHtml(this.shortModelName(m.model)) + ') flushed the cache')
+          : hitRate < 0.2 && m.gapMs !== undefined && m.gapMs > 5 * 60000
+            ? detailRowBold('Likely cause', 'idle ' + this.escapeHtml(fmtGap(m.gapMs)) + ' — cache went cold')
+            : '') +
+        detailRow('Cost split', this.escapeHtml(costSplit)) +
+        detailRow(t.model, this.escapeHtml(m.model)) +
+        detailRow('Skill', this.escapeHtml(skillLabel)) +
+        detailRow(t.totalTokens, I18n.formatNumber(tokens)) +
+        detailRow(t.inputTokens, I18n.formatNumber(m.inputTokens)) +
+        detailRow(t.outputTokens, I18n.formatNumber(m.outputTokens)) +
+        detailRow(t.cacheCreation, I18n.formatNumber(m.cacheCreationTokens)) +
+        detailRow(t.cacheRead, I18n.formatNumber(m.cacheReadTokens)) +
+        detailRow(t.project, this.escapeHtml(m.projectName || '—')) +
+        '</div></details>';
+    });
+    return (
+      '<div class="costly-panel"><h3>Top 10 costliest messages</h3>' +
+      '<p class="table-hint">Single responses ranked by cost. Expand for the prompt and a cost split — a high "cache writes (miss)" share means the context was re-sent uncached, not that the answer was long.</p>' +
+      rows +
+      '</div>'
+    );
+  }
+
   private renderContentData(): string {
     const t = I18n.t.popup;
     const topCards = this.renderAdviceCard() + this.renderOptimizerCard();
@@ -2365,7 +3211,7 @@ export class UsageWebviewProvider {
    * Static stacked-bar chart breaking each period into input / cache-read /
    * cache-write / output tokens — a finer view than the single-metric chart.
    */
-  private renderCompositionChart(items: { label: string; data: UsageData }[]): string {
+  private renderCompositionChart(items: { label: string; data: UsageData; key?: string }[]): string {
     if (!items || items.length === 0) {
       return '';
     }
@@ -2397,8 +3243,15 @@ export class UsageWebviewProvider {
           '"></div>'
         );
       };
+      // In the all-time view each bar is a month (it.key = its date); make it
+      // click-to-expand that month's per-day composition (reuses the table's
+      // month-detail round-trip).
+      const colOpen = it.key
+        ? '<div class="hc-col hc-col-clickable" onclick="toggleMonthlyDetail(\'' + it.key + '\')" title="' +
+          this.escapeHtml(it.label) + ' — ' + I18n.formatNumber(total) + '">'
+        : '<div class="hc-col">';
       bars +=
-        '<div class="hc-col">' +
+        colOpen +
         '<div class="stack-bar" title="' +
         this.escapeHtml(it.label) +
         ': ' +
@@ -2458,7 +3311,7 @@ export class UsageWebviewProvider {
 
   private renderAllTimeChart(): string {
     const sortedData = [...this.dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
-    return this.renderMainCostChart(sortedData);
+    return this.renderMainCostChart(sortedData, true);
   }
 
   /**
@@ -2496,7 +3349,7 @@ export class UsageWebviewProvider {
     );
   }
 
-  private renderMainCostChart(sortedData: { date: string; data: UsageData }[]): string {
+  private renderMainCostChart(sortedData: { date: string; data: UsageData }[], monthly = false): string {
     if (sortedData.length === 0) {
       return '<div class="no-chart-data">No data available</div>';
     }
@@ -2523,7 +3376,7 @@ export class UsageWebviewProvider {
           'data-cost-output="' + cb.output + '" ' +
           'data-cost-cachewrite="' + cb.cacheWrite + '" ' +
           'data-cost-cacheread="' + cb.cacheRead + '" ' +
-          'title="' + this.escapeHtml(this.formatDate(date)) + ': ' + I18n.formatCurrency(data.totalCost) + '">' +
+          'title="' + this.escapeHtml(this.formatDate(date, monthly)) + ': ' + I18n.formatCurrency(data.totalCost) + '">' +
           costStack(data, barHeight) +
           '</div>' +
           '</div>'
@@ -2532,7 +3385,7 @@ export class UsageWebviewProvider {
       .join('');
 
     const xlabels = sortedData
-      .map(({ date }) => '<div class="hc-xlabel">' + this.getShortDate(date) + '</div>')
+      .map(({ date }) => '<div class="hc-xlabel">' + this.getShortDate(date, monthly) + '</div>')
       .join('');
 
     return (
@@ -2617,25 +3470,12 @@ export class UsageWebviewProvider {
     );
   }
 
-  private getShortDate(dateString: string): string {
-    // Parse 'YYYY-MM-DD' textually — new Date('YYYY-MM-DD') is UTC midnight,
-    // which shifts the displayed day back by one in negative-UTC timezones.
-    const [y, m, d] = dateString.split('-').map(Number);
-    // Month-only dates (first of month) label as YYYY/MM for monthly charts.
-    if (dateString.endsWith('-01')) {
-      return `${y}/${String(m).padStart(2, '0')}`;
-    }
-    return `${m}/${d}`;
+  private getShortDate(dateString: string, monthly = false): string {
+    return shortUsageDate(dateString, monthly);
   }
 
-  private formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    // Check if this is a month-only date (ends with -01)
-    if (dateString.endsWith('-01')) {
-      return date.toLocaleDateString(I18n.getLocale(), I18n.dateFormatOptions({ year: 'numeric', month: 'long' }));
-    }
-    // Standard date formatting for daily data, locale + timezone aware.
-    return date.toLocaleDateString(I18n.getLocale(), I18n.dateFormatOptions());
+  private formatDate(dateString: string, monthly = false): string {
+    return formatUsageDate(dateString, I18n.getLocale(), I18n.dateFormatOptions(), monthly);
   }
 
   private getStyles(): string {
@@ -3024,11 +3864,17 @@ export class UsageWebviewProvider {
         border-color: var(--vscode-errorForeground, #f44336);
       }
 
-      /* Sessions "current project / all" filter. */
+      /* Sessions filter bar: time range · project · model. */
+      .sess-filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 10px;
+      }
       .sess-filter {
         display: flex;
         gap: 6px;
-        margin: 0 0 10px;
       }
       .sess-filter-btn {
         background: none;
@@ -3044,8 +3890,13 @@ export class UsageWebviewProvider {
         color: var(--vscode-button-foreground);
         border-color: var(--vscode-button-background);
       }
-      .session-list.show-current .session-foreign {
-        display: none;
+      .sess-model-select {
+        background: var(--vscode-dropdown-background);
+        color: var(--vscode-dropdown-foreground);
+        border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 12px;
       }
 
       /* iOS-style auto-refresh toggle. The label/switch sit next to the other
@@ -3366,7 +4217,9 @@ export class UsageWebviewProvider {
       }
 
       .cache-creation-bar {
-        background: linear-gradient(to top, var(--vscode-charts-purple), var(--vscode-charts-pink));
+        /* NB: VS Code has no --vscode-charts-pink; without a fallback the whole
+           gradient is invalid and the bar renders transparent (invisible). */
+        background: linear-gradient(to top, var(--vscode-charts-purple), var(--vscode-charts-pink, #d16ba5));
       }
 
       .cache-read-bar {
@@ -3444,6 +4297,10 @@ export class UsageWebviewProvider {
       .number-cell {
         text-align: right;
         font-family: var(--vscode-editor-font-family);
+        /* Keep figures on one line: compact (k/M) numbers fit the panel with no
+         * horizontal scroll; full integer numbers overflow so the table (only)
+         * scrolls, while the chart above keeps its own independent scroll. */
+        white-space: nowrap;
       }
 
       .loading, .error, .no-data {
@@ -3571,6 +4428,304 @@ export class UsageWebviewProvider {
 
       .composition-chart {
         margin: 12px 0 20px;
+      }
+
+      /* Efficiency chips (opt-in), appended under a usage summary. */
+      .eff-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 10px 0 2px;
+      }
+      .eff-chip {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 4px 10px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 999px;
+        font-size: 12px;
+      }
+      .eff-chip .eff-label { color: var(--vscode-descriptionForeground); }
+      .eff-chip .eff-value { font-weight: bold; }
+
+      /* Top-10 costliest conversations (opt-in, Content tab). */
+      .costly-panel { margin: 18px 0 8px; }
+      .costly-row {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        margin: 6px 0;
+        background: var(--vscode-editorWidget-background, transparent);
+      }
+      .costly-row > summary {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+        list-style: none;
+      }
+      .costly-row > summary::-webkit-details-marker { display: none; }
+      .costly-rank {
+        flex: 0 0 auto;
+        min-width: 20px;
+        text-align: center;
+        font-weight: bold;
+        color: var(--vscode-descriptionForeground);
+      }
+      .costly-name {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .costly-cost {
+        flex: 0 0 auto;
+        font-weight: bold;
+        color: var(--vscode-charts-green);
+      }
+      .costly-detail {
+        padding: 6px 12px 10px 42px;
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .costly-kv {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        padding: 2px 0;
+        color: var(--vscode-descriptionForeground);
+      }
+      .costly-kv-strong {
+        font-weight: 700;
+        color: var(--vscode-foreground);
+      }
+      .cache-warmth {
+        font-size: 13px;
+        line-height: 1.5;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--vscode-textBlockQuote-background);
+        border-left: 3px solid var(--vscode-textBlockQuote-border);
+        color: var(--vscode-foreground);
+      }
+      /* Experimental insights section — cards in the plugin's existing language. */
+      .insights-panel { margin: 18px 0 8px; }
+      .insight-card {
+        margin: 10px 0;
+        padding: 14px 16px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 10px;
+        background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      }
+      .insight-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .insight-title { font-size: 14px; font-weight: 700; color: var(--vscode-foreground); }
+      .insight-tag {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 999px;
+        color: var(--vscode-descriptionForeground);
+        border: 1px solid var(--vscode-panel-border);
+        white-space: nowrap;
+      }
+      .insight-hero {
+        font-size: 34px;
+        font-weight: 800;
+        line-height: 1.1;
+        margin: 8px 0 2px;
+        color: var(--vscode-charts-orange, var(--vscode-foreground));
+      }
+      .insight-sub { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 10px; }
+      .insight-split { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+      .insight-pill {
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 8px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+      }
+      .insight-pill b { font-weight: 700; }
+      .insight-tip {
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--vscode-foreground);
+        margin-bottom: 8px;
+      }
+      .insight-note {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--vscode-descriptionForeground);
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .hr-spark { display: flex; align-items: flex-end; gap: 2px; height: 64px; margin: 10px 0 2px; }
+      .hr-col { flex: 1 1 0; display: flex; flex-direction: column; align-items: stretch; height: 100%; justify-content: flex-end; }
+      .hr-bar { width: 100%; border-radius: 2px 2px 0 0; background: var(--vscode-panel-border); min-height: 2px; }
+      .hr-bar.pk { background: var(--vscode-charts-orange, var(--vscode-badge-background)); }
+      .hr-lab { font-size: 8px; line-height: 10px; text-align: center; color: var(--vscode-descriptionForeground); height: 10px; }
+      .cbm-list { margin: 6px 0 4px; }
+      .cbm-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+      .cbm-label {
+        flex: 0 0 190px;
+        font-size: 12px;
+        color: var(--vscode-foreground);
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+        overflow: hidden;
+      }
+      .cbm-provider { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
+      .cbm-mid { flex: 1 1 auto; min-width: 0; }
+      .cbm-track {
+        height: 8px;
+        border-radius: 4px;
+        background: var(--vscode-panel-border);
+        overflow: hidden;
+      }
+      .cbm-fill { height: 100%; background: var(--vscode-charts-orange, var(--vscode-badge-background)); }
+      .cbm-sub { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px; }
+      .cbm-pct { flex: 0 0 72px; text-align: right; font-size: 12px; font-weight: 700; color: var(--vscode-foreground); }
+      .cbm-unit { font-size: 10px; font-weight: 400; color: var(--vscode-descriptionForeground); margin-left: 1px; }
+      .costly-prompt {
+        font-size: 12px;
+        line-height: 1.4;
+        margin: 0 0 8px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        /* Show the whole prompt, but cap the height and scroll long ones. */
+        max-height: 220px;
+        overflow-y: auto;
+        background: var(--vscode-textBlockQuote-background);
+        border-left: 3px solid var(--vscode-textBlockQuote-border);
+        color: var(--vscode-foreground);
+      }
+
+      /* Share card panel (All tab): config card + responsive preview. Styled to
+       * sit inside the plugin's existing card language (theme vars, soft border,
+       * the shared .btn-secondary buttons). */
+      .share-panel {
+        margin: 8px 0 22px;
+      }
+      .sc-config {
+        margin: 12px 0;
+        padding: 16px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 10px;
+        background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      }
+      .sc-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px 16px;
+        margin-bottom: 14px;
+      }
+      .sc-field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--vscode-descriptionForeground);
+      }
+      .sc-field select {
+        width: 100%;
+        padding: 5px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+        background: var(--vscode-dropdown-background);
+        color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+        font-size: 13px;
+        text-transform: none;
+        letter-spacing: normal;
+      }
+      .sc-checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 10px;
+        margin-bottom: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .sc-check {
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px 4px 8px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 999px;
+        color: var(--vscode-foreground);
+        cursor: pointer;
+        user-select: none;
+      }
+      .sc-check:hover {
+        border-color: var(--vscode-focusBorder);
+      }
+      .share-preview {
+        margin: 12px 0 0;
+        padding: 10px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 10px;
+        overflow: auto;
+        max-height: 640px;
+        background:
+          linear-gradient(45deg, #f3f3f3 25%, transparent 25%, transparent 75%, #f3f3f3 75%),
+          linear-gradient(45deg, #f3f3f3 25%, #fff 25%, #fff 75%, #f3f3f3 75%);
+        background-size: 20px 20px;
+        background-position: 0 0, 10px 10px;
+      }
+      .share-preview svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        max-width: 560px;
+        margin: 0 auto;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+        border-radius: 8px;
+      }
+      .share-preview p {
+        text-align: center;
+      }
+      .share-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+
+      /* Optional token heatmap panel (All tab). The SVG has a fixed size; let it
+       * scroll horizontally on narrow panels rather than squash. */
+      .heatmap-panel {
+        margin: 4px 0 22px;
+      }
+      .heatmap-svg {
+        overflow-x: auto;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 6px;
+        background: #ffffff;
+      }
+      .heatmap-svg svg {
+        display: block;
+      }
+
+      /* Clickable month bars in the all-time composition chart (drill to daily). */
+      .hc-col-clickable {
+        cursor: pointer;
+      }
+      .hc-col-clickable:hover .stack-bar {
+        outline: 1px solid var(--vscode-focusBorder);
+        outline-offset: 1px;
       }
 
       .cost-composition {
@@ -4053,6 +5208,38 @@ console.log("[DEBUG] === JAVASCRIPT INITIALIZATION START ===");
 const vscode = acquireVsCodeApi();
 console.log("[DEBUG] VSCode API acquired");
 
+// Keep expanded <details data-persist> open across auto-refresh re-renders — a
+// data refresh shouldn't collapse something you're reading. Only a tab switch
+// resets to the default (see clearPersistedDetails in showTab).
+function savePersistedDetails() {
+  try {
+    var open = [];
+    document.querySelectorAll('details[data-persist]').forEach(function(d){
+      if (d.open) { open.push(d.getAttribute('data-persist')); }
+    });
+    var st = vscode.getState() || {};
+    st.openDetails = open;
+    vscode.setState(st);
+  } catch (e) {}
+}
+function restorePersistedDetails() {
+  try {
+    var st = vscode.getState() || {};
+    var open = st.openDetails || [];
+    if (!open.length) { return; }
+    document.querySelectorAll('details[data-persist]').forEach(function(d){
+      if (open.indexOf(d.getAttribute('data-persist')) !== -1) { d.open = true; }
+    });
+  } catch (e) {}
+}
+function clearPersistedDetails() {
+  try { var st = vscode.getState() || {}; st.openDetails = []; vscode.setState(st); } catch (e) {}
+}
+// 'toggle' doesn't bubble — listen in the capture phase.
+document.addEventListener('toggle', function(e){
+  if (e.target && e.target.matches && e.target.matches('details[data-persist]')) { savePersistedDetails(); }
+}, true);
+
 // Restore the active tab from localStorage before first paint, so a reload can't change it.
 function restoreActiveTab() {
   try {
@@ -4062,7 +5249,7 @@ function restoreActiveTab() {
     }
   } catch (e) {}
 }
-function restoreUi() { restoreActiveTab(); restoreSessionFilter(); }
+function restoreUi() { restoreActiveTab(); restoreSessionFilter(); restorePersistedDetails(); }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', restoreUi);
 } else {
@@ -4081,6 +5268,44 @@ const __dateOpts = (extra) => {
 };
 
 // Define basic functions
+function scReadConfig() {
+  var rangeEl = document.getElementById('scRange');
+  var scopeEl = document.getElementById('scScope');
+  var sections = {};
+  var boxes = document.querySelectorAll('.sc-sec');
+  for (var i = 0; i < boxes.length; i++) {
+    sections[boxes[i].getAttribute('data-sec')] = boxes[i].checked;
+  }
+  var avatarEl = document.getElementById('scAvatar');
+  var nameEl = document.getElementById('scName');
+  var fullEl = document.getElementById('scFull');
+  var themeEl = document.getElementById('scTheme');
+  return {
+    range: rangeEl ? rangeEl.value : 'last30',
+    scope: scopeEl ? scopeEl.value : 'all',
+    theme: themeEl ? themeEl.value : 'claudeCream',
+    avatar: avatarEl ? avatarEl.checked : false,
+    username: nameEl ? nameEl.checked : false,
+    fullNumbers: fullEl ? fullEl.checked : false,
+    sections: sections
+  };
+}
+function generateShareCard() {
+  var cfg = scReadConfig();
+  var prev = document.getElementById('scPreview');
+  if (prev) { prev.innerHTML = '<p class="table-hint">Generating…</p>'; }
+  vscode.postMessage({ command: 'buildShareCard', range: cfg.range, scope: cfg.scope, theme: cfg.theme, avatar: cfg.avatar, username: cfg.username, fullNumbers: cfg.fullNumbers, sections: cfg.sections });
+}
+function exportShareCardConfigured() {
+  var cfg = scReadConfig();
+  vscode.postMessage({ command: 'exportShareCard', range: cfg.range, scope: cfg.scope, theme: cfg.theme, avatar: cfg.avatar, username: cfg.username, fullNumbers: cfg.fullNumbers, sections: cfg.sections });
+}
+function exportHeatmap() {
+  vscode.postMessage({ command: 'exportHeatmap' });
+}
+function publishHeatmap() {
+  vscode.postMessage({ command: 'publishHeatmap' });
+}
 function refresh() {
   console.log("[DEBUG] refresh called");
   vscode.postMessage({ command: 'refresh' });
@@ -4249,28 +5474,93 @@ function deleteSession(btn) {
   });
 }
 
-function applySessionFilter(mode) {
+function viewConversation(btn) {
+  if (!btn) { return; }
+  var id = btn.getAttribute('data-session-id') || '';
+  if (!id) { return; }
+  // Host reads the .jsonl, parses it, and opens a read-only viewer panel.
+  vscode.postMessage({
+    command: 'viewConversation',
+    sessionId: id,
+    title: btn.getAttribute('data-title') || ''
+  });
+}
+
+function ccuSessState() {
+  var pb = document.querySelector('.sess-filter[data-group="project"] .sess-filter-btn.active');
+  var rb = document.querySelector('.sess-filter[data-group="range"] .sess-filter-btn.active');
+  var ms = document.querySelector('.sess-model-select');
+  return {
+    project: pb ? pb.getAttribute('data-mode') : 'all',
+    range: rb ? rb.getAttribute('data-range') : 'all',
+    model: ms ? ms.value : 'all'
+  };
+}
+function applySessionFilters() {
   var list = document.getElementById('sessionList');
   if (!list) { return; }
-  list.classList.toggle('show-current', mode === 'current');
-  document.querySelectorAll('.sess-filter-btn').forEach(function(b) {
-    b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+  var st = ccuSessState();
+  var now = Date.now();
+  var threshold = st.range === 'today' ? new Date().setHours(0, 0, 0, 0)
+    : st.range === '7' ? now - 7 * 86400000
+    : st.range === '30' ? now - 30 * 86400000
+    : 0;
+  list.querySelectorAll('tr.sort-row').forEach(function(tr) {
+    var okProject = st.project === 'all' || !tr.classList.contains('session-foreign');
+    var okTime = st.range === 'all' || Number(tr.getAttribute('data-sort-time')) >= threshold;
+    var okModel = st.model === 'all' || (tr.getAttribute('data-models') || '').split('|').indexOf(st.model) !== -1;
+    tr.style.display = (okProject && okTime && okModel) ? '' : 'none';
   });
+}
+// One handler per filter group; all persist and re-apply the combined filter.
+function ccuSetActive(btn) {
+  var group = btn.parentNode;
+  if (!group) { return; }
+  group.querySelectorAll('.sess-filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
 }
 function sessionFilter(btn) {
   if (!btn) { return; }
-  var mode = btn.getAttribute('data-mode');
-  applySessionFilter(mode);
-  // Persist so the full-document reload (e.g. after a delete) keeps the filter.
-  try { localStorage.setItem('ccu.sessionFilter', mode); } catch (e) {}
+  ccuSetActive(btn);
+  try { localStorage.setItem('ccu.sessionFilter', btn.getAttribute('data-mode')); } catch (e) {}
+  applySessionFilters();
+}
+function sessionRange(btn) {
+  if (!btn) { return; }
+  ccuSetActive(btn);
+  try { localStorage.setItem('ccu.sessionRange', btn.getAttribute('data-range')); } catch (e) {}
+  applySessionFilters();
+}
+function sessionModel(sel) {
+  if (!sel) { return; }
+  try { localStorage.setItem('ccu.sessionModel', sel.value); } catch (e) {}
+  applySessionFilters();
 }
 function restoreSessionFilter() {
+  // Restore each dimension from localStorage (survives the post-delete reload),
+  // then apply once. Defaults (nothing stored) = All range, All projects, All models.
   try {
     var mode = localStorage.getItem('ccu.sessionFilter');
-    if (mode && document.querySelector('.sess-filter-btn[data-mode="' + mode + '"]')) {
-      applySessionFilter(mode);
+    if (mode) {
+      var pb = document.querySelector('.sess-filter[data-group="project"] .sess-filter-btn[data-mode="' + mode + '"]');
+      if (pb) { ccuSetActive(pb); }
+    }
+    var range = localStorage.getItem('ccu.sessionRange');
+    if (range) {
+      var rb = document.querySelector('.sess-filter[data-group="range"] .sess-filter-btn[data-range="' + range + '"]');
+      if (rb) { ccuSetActive(rb); }
+    }
+    var model = localStorage.getItem('ccu.sessionModel');
+    if (model) {
+      var ms = document.querySelector('.sess-model-select');
+      if (ms) {
+        for (var i = 0; i < ms.options.length; i++) {
+          if (ms.options[i].value === model) { ms.value = model; break; }
+        }
+      }
     }
   } catch (e) {}
+  applySessionFilters();
 }
 
 function copyPath(btn, e) {
@@ -4398,6 +5688,8 @@ function showTab(tabName) {
       console.log("[DEBUG] Tab switched successfully to:", tabName);
 
       vscode.postMessage({ command: 'tabChanged', tab: tabName });
+      // Switching tabs resets expanded rows to their default (Carl's rule).
+      clearPersistedDetails();
       // Persist in localStorage too — survives the reload, restored before paint.
       try { localStorage.setItem('ccu.activeTab', tabName); } catch (e) {}
     } else {
@@ -4647,6 +5939,15 @@ window.closeAllMonthlyDetails = closeAllMonthlyDetails;
 // Handle messages from extension
 window.addEventListener('message', function(event) {
   const message = event.data;
+
+  if (message.command === 'shareCardResult') {
+    const prev = document.getElementById('scPreview');
+    if (prev) {
+      prev.innerHTML = message.error
+        ? '<p class="table-hint">Could not build the card: ' + message.error + '</p>'
+        : (message.svg || '');
+    }
+  }
 
   if (message.command === 'hourlyDataResponse') {
     const container = document.getElementById('hourly-detail-' + message.date);
@@ -4951,6 +6252,52 @@ function formatValue(value, metric) {
   }
 }
 
+// Cache hit rate for a drill-down row: cacheRead / (input + cacheWrite + cacheRead).
+function cacheHitPct(d) {
+  var den = d.totalInputTokens + d.totalCacheCreationTokens + d.totalCacheReadTokens;
+  return den > 0 ? (d.totalCacheReadTokens / den * 100).toFixed(0) + '%' : '-';
+}
+
+// Client-side stacked token-composition chart (mirrors the server-rendered
+// renderCompositionChart, same CSS classes). Used when a month is expanded to
+// show its per-day composition. items: [{ label, data }].
+function compositionHtml(items) {
+  if (!items || !items.length) { return ''; }
+  var maxH = 120;
+  var totals = items.map(function(it) {
+    var d = it.data;
+    return d.totalInputTokens + d.totalOutputTokens + d.totalCacheCreationTokens + d.totalCacheReadTokens;
+  });
+  var maxTotal = Math.max.apply(null, totals.concat([1]));
+  var fmt = function(n) { return n.toLocaleString(__locale); };
+  var bars = items.map(function(it, idx) {
+    var d = it.data, total = totals[idx], barH = (total / maxTotal) * maxH;
+    var seg = function(v, cls, label) {
+      var h = total > 0 ? (v / total) * barH : 0;
+      return '<div class="stack-seg ' + cls + '" style="height:' + h + 'px;" title="' + label + ': ' + fmt(v) + '"></div>';
+    };
+    return '<div class="hc-col"><div class="stack-bar" title="' + it.label + ': ' + fmt(total) + '">'
+      + seg(d.totalInputTokens, 'seg-input', '${I18n.t.popup.inputTokens}')
+      + seg(d.totalCacheReadTokens, 'seg-cache-read', '${I18n.t.popup.cacheRead}')
+      + seg(d.totalCacheCreationTokens, 'seg-cache-creation', '${I18n.t.popup.cacheCreation}')
+      + seg(d.totalOutputTokens, 'seg-output', '${I18n.t.popup.outputTokens}')
+      + '</div></div>';
+  }).join('');
+  var xlabels = items.map(function(it) { return '<div class="hc-xlabel">' + it.label + '</div>'; }).join('');
+  var dot = function(cls, label) { return '<span class="legend-item"><span class="legend-dot ' + cls + '"></span>' + label + '</span>'; };
+  return '<div class="composition-chart"><h4>${I18n.t.popup.tokenComposition}</h4>'
+    + '<div class="stack-legend">'
+    + dot('seg-input', '${I18n.t.popup.inputTokens}') + dot('seg-cache-read', '${I18n.t.popup.cacheRead}')
+    + dot('seg-cache-creation', '${I18n.t.popup.cacheCreation}') + dot('seg-output', '${I18n.t.popup.outputTokens}')
+    + '</div>'
+    + '<div class="hc-wrap"><div class="hc-yaxis">'
+    + '<span class="hc-yval">' + fmt(maxTotal) + '</span><span class="hc-yval">' + fmt(Math.round(maxTotal / 2)) + '</span><span class="hc-yval">0</span>'
+    + '</div><div class="hc-main"><div class="hc-scroll"><div class="hc-plot">'
+    + '<div class="hc-grid hc-grid-top"></div><div class="hc-grid hc-grid-mid"></div>'
+    + '<div class="hc-bars">' + bars + '</div></div>'
+    + '<div class="hc-xlabels">' + xlabels + '</div></div></div></div></div>';
+}
+
 function renderHourlyData(hourlyData, date) {
   if (!hourlyData || hourlyData.length === 0) {
     return '<div class="no-data">${I18n.t.popup.noDataMessage}</div>';
@@ -4981,6 +6328,7 @@ function renderHourlyData(hourlyData, date) {
   html += '<th>${I18n.t.popup.outputTokens}</th>';
   html += '<th>${I18n.t.popup.cacheCreation}</th>';
   html += '<th>${I18n.t.popup.cacheRead}</th>';
+  html += '<th>${I18n.t.popup.cacheHitRate}</th>';
   html += '<th>${I18n.t.popup.messages}</th>';
   html += '</tr></thead><tbody>';
 
@@ -4992,6 +6340,7 @@ function renderHourlyData(hourlyData, date) {
     html += '<td class="number-cell">' + item.data.totalOutputTokens.toLocaleString(__locale) + '</td>';
     html += '<td class="number-cell">' + item.data.totalCacheCreationTokens.toLocaleString(__locale) + '</td>';
     html += '<td class="number-cell">' + item.data.totalCacheReadTokens.toLocaleString(__locale) + '</td>';
+    html += '<td class="number-cell">' + cacheHitPct(item.data) + '</td>';
     html += '<td class="number-cell">' + item.data.messageCount.toLocaleString(__locale) + '</td>';
     html += '</tr>';
   });
@@ -5024,6 +6373,15 @@ function renderDailyData(dailyData, monthDate) {
   html += renderDailyChart(dailyData, 'cost');
   html += '</div>';
 
+  // Per-day token composition for this month (the drill-down of the all-time
+  // monthly composition the user clicked).
+  html += compositionHtml(dailyData.map(function(item) {
+    return {
+      label: new Date(item.date).toLocaleDateString(__locale, __dateOpts({ month: 'numeric', day: 'numeric' })),
+      data: item.data
+    };
+  }));
+
   html += '<div class="daily-table-container"><table class="daily-table"><thead><tr>';
   html += '<th>${I18n.t.popup.date}</th>';
   html += '<th>${I18n.t.popup.cost}</th>';
@@ -5031,6 +6389,7 @@ function renderDailyData(dailyData, monthDate) {
   html += '<th>${I18n.t.popup.outputTokens}</th>';
   html += '<th>${I18n.t.popup.cacheCreation}</th>';
   html += '<th>${I18n.t.popup.cacheRead}</th>';
+  html += '<th>${I18n.t.popup.cacheHitRate}</th>';
   html += '<th>${I18n.t.popup.messages}</th>';
   html += '</tr></thead><tbody>';
 
@@ -5045,6 +6404,7 @@ function renderDailyData(dailyData, monthDate) {
     html += '<td class="number-cell">' + item.data.totalOutputTokens.toLocaleString(__locale) + '</td>';
     html += '<td class="number-cell">' + item.data.totalCacheCreationTokens.toLocaleString(__locale) + '</td>';
     html += '<td class="number-cell">' + item.data.totalCacheReadTokens.toLocaleString(__locale) + '</td>';
+    html += '<td class="number-cell">' + cacheHitPct(item.data) + '</td>';
     html += '<td class="number-cell">' + item.data.messageCount.toLocaleString(__locale) + '</td>';
     html += '</tr>';
   });

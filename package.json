@@ -2,7 +2,7 @@
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
   "description": "Monitor Claude Code usage and costs in VSCode status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",
@@ -70,7 +70,9 @@
             "zh-TW",
             "zh-CN",
             "ja",
-            "ko"
+            "ko",
+            "pt-BR",
+            "id"
           ],
           "default": "auto",
           "description": "Display language (auto-detection or manual selection)"
@@ -179,6 +181,26 @@
         "command": "claudeCodeUsage.showLogs",
         "title": "Show Diagnostic Logs",
         "category": "Claude Code Usage"
+      },
+      {
+        "command": "claudeCodeUsage.exportHeatmap",
+        "title": "Export Token Heatmap (GitHub style SVG)",
+        "category": "Claude Code Usage"
+      },
+      {
+        "command": "claudeCodeUsage.exportShareCard",
+        "title": "Export Usage Share Card (SVG)",
+        "category": "Claude Code Usage"
+      },
+      {
+        "command": "claudeCodeUsage.publishHeatmapToGitHub",
+        "title": "Publish Token Heatmap to GitHub",
+        "category": "Claude Code Usage"
+      },
+      {
+        "command": "claudeCodeUsage.previewWhatsNew",
+        "title": "Preview What's New",
+        "category": "Claude Code Usage"
       }
     ]
   },
@@ -186,10 +208,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/test/*.test.js"
+    "test": "npm run compile && node --test out/test/*.test.js .github/scripts/*.test.mjs"
   },
   "devDependencies": {
-    "@types/glob": "^9.0.0",
     "@types/node": "24.0.15",
     "@types/vscode": "^1.74.0",
     "typescript": "^5.8.3"

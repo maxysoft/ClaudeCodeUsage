@@ -1,6 +1,6 @@
 # Claude Code Usage
 
-🌐 **Language**: [🏠 Main](README.md) | **English** | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md)
+🌐 **Language**: [🏠 Main](README.md) | **English** | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md) | [Bahasa Indonesia](README-id.md)
 
 ---
 
@@ -50,7 +50,7 @@ Also on the [Open VSX Registry](https://open-vsx.org/extension/GrowthJack/claude
 
 Open Settings (`Ctrl+,`) and search for **`Claude Code Usage`**. All settings are optional. The most useful:
 
-- `language` — UI language (`auto` / `en` / `zh-TW` / `zh-CN` / `ja` / `ko`).
+- `language` — UI language (`auto` / `en` / `de-DE` / `zh-TW` / `zh-CN` / `ja` / `ko` / `pt-BR` / `id`).
 - `timezone` — IANA timezone for date display (e.g. `Asia/Hong_Kong`).
 - `usageLimitTracking` — show the real 5h / weekly quota indicator.
 - `showCost` / `showContext` — toggle the cost item and the context-window fill indicator (like `/context`) in the status bar.
@@ -70,9 +70,21 @@ See the [full settings table in the main README](README.md#configuration).
 
 **Token counts lower than your provider's dashboard** — some proxies / dynamic workflows write per-agent records to sub-directories that may be incomplete. Your actual spend is on your provider's billing page. Native workflow attribution is planned.
 
+**High CPU or sluggish refresh on a large history (Linux included)**
+- V2.2.1 removes the hidden 8-second active polling override and bounds the
+  first-timestamp scan. Until you install it, set **Live refresh delay** to
+  **Off**, set **Refresh interval** to **300–900 seconds**, and optionally turn
+  **Content analysis** off. Turning Dashboard auto-refresh off by itself does
+  not stop status-bar parsing.
+- If V2.2.1 still runs hot, open **Show Diagnostic Logs** and attach only the
+  anonymous `refresh:` lines to issue #70; they contain counts and timings, not
+  prompts, paths, session IDs, credentials, or raw log lines.
+
 ## Credits
 
 Forked from [`ClaudeCodeUsage/ClaudeCodeUsage`](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage). MIT-licensed. Community contributions credited in [CHANGELOG.md](CHANGELOG.md). Many code changes drafted with [Claude Code](https://claude.com/claude-code).
+
+Development-tool credit: repository maintenance uses both [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex/). This credits tools separately from human contributors; Codex is not added to Release Drafter's contributor list and receives no fabricated `Co-Authored-By` identity.
 
 **Issues, PRs and ideas are warmly welcomed** — that's how the project grows.
 

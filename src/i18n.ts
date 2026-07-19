@@ -6,6 +6,7 @@ export interface Translations {
     noData: string;
     notRunning: string;
     error: string;
+    refreshFailed: string;
     currentSession: string;
   };
   popup: {
@@ -23,6 +24,7 @@ export interface Translations {
     settingsIntro: string;
     settingsResetAll: string;
     settingsGroupGeneral: string;
+    settingsGroupFeatures: string;
     settingsGroupStatusBar: string;
     settingsGroupData: string;
     settingsGroupAdvice: string;
@@ -42,6 +44,8 @@ export interface Translations {
     project: string;
     startTime: string;
     duration: string;
+    activeDuration: string;
+    activeDurationHelp: string;
     hour: string;
     projects: string;
     projectBreakdown: string;
@@ -100,6 +104,8 @@ export interface Translations {
     commonTaskPrefix: string;
     thinkingShare: string;
     effortHint: string;
+    thinkingHidden: string;
+    thinkingHiddenShort: string;
     quotaWarnBanner: string;
     dismiss: string;
     attribution: string;
@@ -136,9 +142,14 @@ export interface Translations {
     copySessionId: string;
     copyPath: string;
     resumeSession: string;
+    viewConversation: string;
     resumeInvalid: string;
     sessionFilterCurrent: string;
     sessionFilterAll: string;
+    sessionRangeToday: string;
+    sessionRange7d: string;
+    sessionRange30d: string;
+    sessionModelAll: string;
     deleteSession: string;
     deleteSessionConfirm: string;
     deleteSessionDetail: string;
@@ -197,6 +208,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: 'No Claude Code Data',
       notRunning: 'Claude Code Not Running',
       error: 'Error',
+      refreshFailed: 'Usage refresh failed. Retry or check diagnostic logs.',
       currentSession: 'Session',
     },
     popup: {
@@ -215,6 +227,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         'Settings live here now. Only language, data directory and API key remain in VS Code Settings (so they sync). Changes apply immediately.',
       settingsResetAll: 'Reset all to defaults',
       settingsGroupGeneral: 'General',
+      settingsGroupFeatures: 'Optional features',
       settingsGroupStatusBar: 'Status bar',
       settingsGroupData: 'Data & refresh',
       settingsGroupAdvice: 'AI advice & Optimizer',
@@ -234,6 +247,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: 'Project',
       startTime: 'Start Time',
       duration: 'Duration',
+      activeDuration: 'Active',
+      activeDurationHelp: 'Estimated hands-on time — the gaps between turns summed, with each idle gap capped at 1.5 h so long breaks don\'t inflate it, while reading / reviewing time still counts. (Duration is the full first-to-last span.)',
       hour: 'Hour',
       projects: 'Projects',
       projectBreakdown: 'Project Usage',
@@ -295,6 +310,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: 'Shared task text',
       thinkingShare: 'Thinking %',
       effortHint: 'High thinking share — consider /effort high instead of xhigh for tasks like this.',
+      thinkingHidden: 'Thinking was on, but this model (e.g. Fable 5 / Opus 4.8) does not expose its reasoning text, so the share can’t be measured — the real value is higher than shown.',
+      thinkingHiddenShort: 'hidden',
       quotaWarnBanner:
         'Only {remaining}% of your 5-hour window is left. A workflow run can consume a large share of it — consider waiting for the reset: interrupted runs lose their prompt cache and re-run ~40% more expensive.',
       dismiss: 'Dismiss',
@@ -334,11 +351,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: 'Session',
       sessionActions: 'Actions',
       copySessionId: 'Copy session ID',
+      viewConversation: 'View this conversation (read-only) — re-read your prompts and the model\'s answers without loading them back into context.',
       copyPath: 'Copy path',
-      resumeSession: 'Resume session',
+      resumeSession: 'Resume this conversation — reopens it in Claude Code (same project) or a terminal via "claude --resume", so you can continue where you left off.',
       resumeInvalid: 'Invalid session id — cannot resume.',
       sessionFilterCurrent: 'Current project',
       sessionFilterAll: 'All',
+      sessionRangeToday: 'Today',
+      sessionRange7d: '7 days',
+      sessionRange30d: '30 days',
+      sessionModelAll: 'All models',
       deleteSession: 'Delete session',
       deleteSessionConfirm: 'Delete session "{name}"?',
       deleteSessionDetail: 'Its conversation log moves to the trash (recoverable). The extension is otherwise read-only.',
@@ -412,12 +434,13 @@ const translations: Record<SupportedLanguage, Translations> = {
       loading: "Lädt...",
       noData: "Keine Claude Code Daten",
       notRunning: "Claude Code nicht erreichbar",
-      error: "Error",
+      error: "Fehler",
+      refreshFailed: "Aktualisierung fehlgeschlagen. Erneut versuchen oder Diagnoselogs prüfen.",
       currentSession: "Session",
     },
     popup: {
       title: "Claude Code Nutzung",
-      currentSession: "Current Session",
+      currentSession: "Aktuelle Sitzung",
       today: "Heute",
       thisWeek: "Diese Woche",
       thisMonth: "Diesen Monat",
@@ -431,6 +454,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         "Die Einstellungen sind jetzt hier. Nur Sprache, Datenverzeichnis und API-Schlüssel bleiben in den VS-Code-Einstellungen (damit sie synchronisiert werden). Änderungen wirken sofort.",
       settingsResetAll: "Alle zurücksetzen",
       settingsGroupGeneral: "Allgemein",
+      settingsGroupFeatures: "Optionale Funktionen",
       settingsGroupStatusBar: "Statusleiste",
       settingsGroupData: "Daten & Aktualisierung",
       settingsGroupAdvice: "KI-Beratung & Optimizer",
@@ -450,6 +474,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: "Projekt",
       startTime: "Startzeit",
       duration: "Dauer",
+      activeDuration: 'Aktiv',
+      activeDurationHelp: 'Geschätzte aktive Zeit — die Abstände zwischen den Zügen summiert, jede Leerlauflücke auf 1,5 Std. begrenzt, damit lange Pausen sie nicht aufblähen, Lese-/Prüfzeit aber mitzählt. (Dauer ist die gesamte Spanne.)',
       hour: "Stunde",
       projects: "Projekte",
       projectBreakdown: "Nutzung nach Projekt",
@@ -511,6 +537,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: "Gemeinsamer Aufgabentext",
       thinkingShare: "Denkanteil",
       effortHint: "Hoher Denkanteil — für solche Aufgaben /effort high statt xhigh erwägen.",
+      thinkingHidden: 'Denkmodus war aktiv, aber dieses Modell (z. B. Fable 5 / Opus 4.8) gibt den Denktext nicht preis, daher ist der Anteil nicht messbar — der echte Wert ist höher als angezeigt.',
+      thinkingHiddenShort: 'verborgen',
       quotaWarnBanner:
         "Nur noch {remaining}% des 5-Stunden-Fensters übrig. Ein Workflow-Lauf kann einen großen Teil davon verbrauchen — besser auf den Reset warten: unterbrochene Läufe verlieren ihren Prompt-Cache und kosten beim Neustart ~40% mehr.",
       dismiss: "Ausblenden",
@@ -550,11 +578,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: "Sitzung",
       sessionActions: 'Aktionen',
       copySessionId: 'Sitzungs-ID kopieren',
+      viewConversation: 'Dieses Gespräch ansehen (schreibgeschützt) — lies deine Prompts und die Antworten des Modells erneut, ohne sie zurück in den Kontext zu laden.',
       copyPath: 'Pfad kopieren',
-      resumeSession: 'Sitzung fortsetzen',
+      resumeSession: 'Dieses Gespräch fortsetzen — öffnet es erneut in Claude Code (gleiches Projekt) oder in einem Terminal via "claude --resume", um dort weiterzumachen, wo du aufgehört hast.',
       resumeInvalid: 'Ungültige Sitzungs-ID — Fortsetzen nicht möglich.',
       sessionFilterCurrent: 'Aktuelles Projekt',
       sessionFilterAll: 'Alle',
+      sessionRangeToday: 'Heute',
+      sessionRange7d: '7 Tage',
+      sessionRange30d: '30 Tage',
+      sessionModelAll: 'Alle Modelle',
       deleteSession: 'Sitzung löschen',
       deleteSessionConfirm: 'Sitzung "{name}" löschen?',
       deleteSessionDetail: 'Das Gesprächsprotokoll wandert in den Papierkorb (wiederherstellbar). Die Erweiterung ist ansonsten schreibgeschützt.',
@@ -632,6 +665,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: '無 Claude Code 資料',
       notRunning: 'Claude Code 未執行',
       error: '錯誤',
+      refreshFailed: '使用量重新整理失敗。請重試或查看診斷日誌。',
       currentSession: '當前會話',
     },
     popup: {
@@ -650,6 +684,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         '設定現在都在這裡。只有語言、資料目錄與 API 金鑰仍留在 VS Code 設定中(以便同步)。變更會立即生效。',
       settingsResetAll: '全部還原為預設',
       settingsGroupGeneral: '一般',
+      settingsGroupFeatures: '選用功能',
       settingsGroupStatusBar: '狀態列',
       settingsGroupData: '資料與重新整理',
       settingsGroupAdvice: 'AI 建議與最佳化工具',
@@ -669,6 +704,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: '專案',
       startTime: '開始時間',
       duration: '時長',
+      activeDuration: '活躍時長',
+      activeDurationHelp: '估算的實際操作時間——把各輪之間的間隔加總，每段閒置間隔上限 1.5 小時，避免長時間中斷灌水，同時把閱讀／審閱時間也算進去。（時長是首尾完整跨度。）',
       hour: '小時',
       projects: '專案',
       projectBreakdown: '各專案使用量',
@@ -730,6 +767,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: '共同任務文字',
       thinkingShare: '思考佔比',
       effortHint: '思考佔比偏高——此類任務可考慮用 /effort high 取代 xhigh。',
+      thinkingHidden: '思考已開啟,但此模型(如 Fable 5 / Opus 4.8)不會輸出思考文字,因此無法計算佔比——實際值高於此處顯示。',
+      thinkingHiddenShort: '隱藏',
       quotaWarnBanner:
         '5 小時窗口僅剩 {remaining}%。一次工作流運行可能消耗其中很大一部分——建議等待重置後再啟動：中斷的運行會遺失提示快取，重跑成本約高 40%。',
       dismiss: '關閉',
@@ -765,11 +804,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: '會話',
       sessionActions: '操作',
       copySessionId: '複製會話 ID',
+      viewConversation: '檢視這個對話（唯讀）— 重新閱讀你的提示與模型回覆，而不會重新載入到上下文中。',
       copyPath: '複製路徑',
-      resumeSession: '恢復會話',
+      resumeSession: '恢復此對話 —— 在 Claude Code(同一專案)中重新開啟,或透過終端機 “claude --resume” 繼續先前中斷的會話。',
       resumeInvalid: '無效的會話 ID,無法恢復。',
       sessionFilterCurrent: '目前專案',
       sessionFilterAll: '全部',
+      sessionRangeToday: '今天',
+      sessionRange7d: '7 天',
+      sessionRange30d: '30 天',
+      sessionModelAll: '全部模型',
       deleteSession: '刪除會話',
       deleteSessionConfirm: '刪除會話「{name}」？',
       deleteSessionDetail: '對話記錄會移至垃圾桶（可復原）。此擴充功能其餘部分為唯讀。',
@@ -844,6 +888,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: '无 Claude Code 数据',
       notRunning: 'Claude Code 未运行',
       error: '错误',
+      refreshFailed: '用量刷新失败。请重试或查看诊断日志。',
       currentSession: '当前会话',
     },
     popup: {
@@ -862,6 +907,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         '设置现在都在这里。只有语言、数据目录和 API key 仍留在 VS Code 设置中(便于同步)。更改即时生效。',
       settingsResetAll: '全部恢复默认',
       settingsGroupGeneral: '常规',
+      settingsGroupFeatures: '可选功能',
       settingsGroupStatusBar: '状态栏',
       settingsGroupData: '数据与刷新',
       settingsGroupAdvice: 'AI 建议与优化器',
@@ -881,6 +927,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: '项目',
       startTime: '开始时间',
       duration: '时长',
+      activeDuration: '活跃时长',
+      activeDurationHelp: '估算的实际操作时间——把各轮之间的间隔加总，每段空闲间隔上限 1.5 小时，避免长时间中断灌水，同时把阅读／审阅时间也算进去。（时长是首尾完整跨度。）',
       hour: '小时',
       projects: '项目',
       projectBreakdown: '各项目使用量',
@@ -942,6 +990,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: '共同任务文字',
       thinkingShare: '思考占比',
       effortHint: '思考占比偏高——此类任务可考虑用 /effort high 取代 xhigh。',
+      thinkingHidden: '思考已开启,但此模型(如 Fable 5 / Opus 4.8)不会输出思考文字,因此无法计算占比——实际值高于此处显示。',
+      thinkingHiddenShort: '隐藏',
       quotaWarnBanner:
         '5 小时窗口仅剩 {remaining}%。一次工作流运行可能消耗其中很大一部分——建议等待重置后再启动：中断的运行会丢失提示缓存，重跑成本约高 40%。',
       dismiss: '关闭',
@@ -977,11 +1027,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: '会话',
       sessionActions: '操作',
       copySessionId: '复制会话 ID',
+      viewConversation: '查看这个对话（只读）— 重新阅读你的提示词和模型回复，而不会重新载入到上下文中。',
       copyPath: '复制路径',
-      resumeSession: '恢复会话',
+      resumeSession: '恢复此对话 —— 在 Claude Code(同一项目)中重新打开,或通过终端 “claude --resume” 继续之前中断的会话。',
       resumeInvalid: '无效的会话 ID,无法恢复。',
       sessionFilterCurrent: '当前工程',
       sessionFilterAll: '全部',
+      sessionRangeToday: '今天',
+      sessionRange7d: '7 天',
+      sessionRange30d: '30 天',
+      sessionModelAll: '全部模型',
       deleteSession: '删除会话',
       deleteSessionConfirm: '删除会话「{name}」？',
       deleteSessionDetail: '对话日志将移至回收站（可恢复）。本扩展其余部分为只读。',
@@ -1056,6 +1111,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: 'Claude Code データなし',
       notRunning: 'Claude Code 未実行',
       error: 'エラー',
+      refreshFailed: '使用量の更新に失敗しました。再試行するか診断ログを確認してください。',
       currentSession: '現在のセッション',
     },
     popup: {
@@ -1074,6 +1130,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         '設定はここにまとまりました。言語・データディレクトリ・API キーのみ VS Code 設定に残ります(同期のため)。変更は即時反映されます。',
       settingsResetAll: 'すべて既定値に戻す',
       settingsGroupGeneral: '一般',
+      settingsGroupFeatures: 'オプション機能',
       settingsGroupStatusBar: 'ステータスバー',
       settingsGroupData: 'データと更新',
       settingsGroupAdvice: 'AI アドバイス & オプティマイザー',
@@ -1093,6 +1150,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: 'プロジェクト',
       startTime: '開始時刻',
       duration: '期間',
+      activeDuration: 'アクティブ',
+      activeDurationHelp: '実作業時間の推定——各ターン間の間隔を合計し、アイドルは1回あたり1.5時間で上限を設けて長い中断で膨らまないようにしつつ、読む／レビューの時間も算入します。（期間は最初から最後までの全体です。）',
       hour: '時刻',
       projects: 'プロジェクト',
       projectBreakdown: 'プロジェクト別使用量',
@@ -1154,6 +1213,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: '共通タスクテキスト',
       thinkingShare: '思考割合',
       effortHint: '思考割合が高め — このようなタスクでは xhigh ではなく /effort high の利用を検討してください。',
+      thinkingHidden: '思考は有効でしたが、このモデル(Fable 5 / Opus 4.8 など)は思考テキストを出力しないため割合を測定できません — 実際の値は表示より高くなります。',
+      thinkingHiddenShort: '非表示',
       quotaWarnBanner:
         '5 時間ウィンドウの残りは {remaining}% のみです。ワークフロー実行はその大部分を消費する可能性があります — リセットを待つことを検討してください。中断された実行はプロンプトキャッシュを失い、再実行は約 40% 高くなります。',
       dismiss: '閉じる',
@@ -1193,11 +1254,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: 'セッション',
       sessionActions: '操作',
       copySessionId: 'セッションIDをコピー',
+      viewConversation: 'この会話を表示（読み取り専用）— プロンプトとモデルの回答を、コンテキストに再読み込みせずに読み返せます。',
       copyPath: 'パスをコピー',
-      resumeSession: 'セッションを再開',
+      resumeSession: 'この会話を再開 — Claude Code(同じプロジェクト)で開き直すか、ターミナルで "claude --resume" を実行し、中断したところから続けます。',
       resumeInvalid: '無効なセッションIDのため再開できません。',
       sessionFilterCurrent: '現在のプロジェクト',
       sessionFilterAll: 'すべて',
+      sessionRangeToday: '今日',
+      sessionRange7d: '7日間',
+      sessionRange30d: '30日間',
+      sessionModelAll: 'すべてのモデル',
       deleteSession: 'セッションを削除',
       deleteSessionConfirm: 'セッション「{name}」を削除しますか？',
       deleteSessionDetail: '会話ログはゴミ箱に移動します（復元可能）。この拡張機能は他の部分では読み取り専用です。',
@@ -1273,6 +1339,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: 'Claude Code 데이터 없음',
       notRunning: 'Claude Code 실행되지 않음',
       error: '오류',
+      refreshFailed: '사용량 새로 고침에 실패했습니다. 다시 시도하거나 진단 로그를 확인하세요.',
       currentSession: '현재 세션',
     },
     popup: {
@@ -1291,6 +1358,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         '설정이 이제 여기로 모였습니다. 언어, 데이터 디렉터리, API 키만 VS Code 설정에 남습니다(동기화를 위해). 변경은 즉시 적용됩니다.',
       settingsResetAll: '모두 기본값으로',
       settingsGroupGeneral: '일반',
+      settingsGroupFeatures: '선택 기능',
       settingsGroupStatusBar: '상태 표시줄',
       settingsGroupData: '데이터 및 새로고침',
       settingsGroupAdvice: 'AI 조언 & 옵티마이저',
@@ -1310,6 +1378,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: '프로젝트',
       startTime: '시작 시간',
       duration: '사용 시간',
+      activeDuration: '활성 시간',
+      activeDurationHelp: '실제 작업 시간 추정 — 턴 사이 간격을 합산하되, 유휴 간격은 1.5시간으로 상한을 두어 긴 중단이 부풀리지 않게 하면서 읽기/검토 시간은 포함합니다. (사용 시간은 처음부터 끝까지 전체 구간입니다.)',
       hour: '시각',
       projects: '프로젝트',
       projectBreakdown: '프로젝트별 사용량',
@@ -1371,6 +1441,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: '공통 작업 텍스트',
       thinkingShare: '사고 비율',
       effortHint: '사고 비율이 높습니다 — 이런 작업에는 xhigh 대신 /effort high를 고려하세요.',
+      thinkingHidden: '사고가 켜져 있었지만 이 모델(예: Fable 5 / Opus 4.8)은 사고 텍스트를 노출하지 않아 비율을 측정할 수 없습니다 — 실제 값은 표시된 것보다 높습니다.',
+      thinkingHiddenShort: '숨김',
       quotaWarnBanner:
         '5시간 윈도우가 {remaining}%만 남았습니다. 워크플로 실행은 그중 큰 부분을 소비할 수 있습니다 — 리셋을 기다리는 것을 고려하세요. 중단된 실행은 프롬프트 캐시를 잃어 재실행 비용이 약 40% 더 듭니다.',
       dismiss: '닫기',
@@ -1410,11 +1482,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: '세션',
       sessionActions: '작업',
       copySessionId: '세션 ID 복사',
+      viewConversation: '이 대화 보기(읽기 전용) — 프롬프트와 모델 답변을 컨텍스트에 다시 불러오지 않고 다시 읽어볼 수 있습니다.',
       copyPath: '경로 복사',
-      resumeSession: '세션 재개',
+      resumeSession: '이 대화 재개 — Claude Code(같은 프로젝트)에서 다시 열거나 터미널에서 "claude --resume"으로 중단한 지점부터 이어갑니다.',
       resumeInvalid: '잘못된 세션 ID입니다 — 재개할 수 없습니다.',
       sessionFilterCurrent: '현재 프로젝트',
       sessionFilterAll: '전체',
+      sessionRangeToday: '오늘',
+      sessionRange7d: '7일',
+      sessionRange30d: '30일',
+      sessionModelAll: '전체 모델',
       deleteSession: '세션 삭제',
       deleteSessionConfirm: '세션 "{name}"을(를) 삭제할까요?',
       deleteSessionDetail: '대화 로그가 휴지통으로 이동합니다(복구 가능). 확장 프로그램은 그 외에는 읽기 전용입니다.',
@@ -1490,6 +1567,7 @@ const translations: Record<SupportedLanguage, Translations> = {
       noData: 'Sem dados do Claude Code',
       notRunning: 'Claude Code não está em execução',
       error: 'Erro',
+      refreshFailed: 'Falha ao atualizar o uso. Tente novamente ou verifique os logs de diagnóstico.',
       currentSession: 'Sessão',
     },
     popup: {
@@ -1508,6 +1586,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         'As configurações agora ficam aqui. Apenas idioma, diretório de dados e chave de API permanecem nas Configurações do VS Code (para sincronizar). As alterações são aplicadas imediatamente.',
       settingsResetAll: 'Restaurar tudo para os padrões',
       settingsGroupGeneral: 'Geral',
+      settingsGroupFeatures: 'Recursos opcionais',
       settingsGroupStatusBar: 'Barra de status',
       settingsGroupData: 'Dados e atualização',
       settingsGroupAdvice: 'Conselho de IA e Optimizer',
@@ -1527,6 +1606,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       project: 'Projeto',
       startTime: 'Início',
       duration: 'Duração',
+      activeDuration: 'Ativo',
+      activeDurationHelp: 'Tempo de uso estimado — a soma dos intervalos entre turnos, com cada intervalo ocioso limitado a 1,5 h para que pausas longas não o inflem, mas o tempo de leitura / revisão ainda conta. (Duração é o intervalo completo do início ao fim.)',
       hour: 'Hora',
       projects: 'Projetos',
       projectBreakdown: 'Uso por projeto',
@@ -1588,6 +1669,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       commonTaskPrefix: 'Texto de tarefa compartilhado',
       thinkingShare: '% de raciocínio',
       effortHint: 'Alta proporção de raciocínio — considere /effort high em vez de xhigh para tarefas como esta.',
+      thinkingHidden: 'O raciocínio estava ativo, mas este modelo (por ex. Fable 5 / Opus 4.8) não expõe o texto do raciocínio, então a proporção não pode ser medida — o valor real é maior que o exibido.',
+      thinkingHiddenShort: 'oculto',
       quotaWarnBanner:
         'Resta apenas {remaining}% da sua janela de 5 horas. Uma execução de workflow pode consumir grande parte dela — considere esperar o reset: execuções interrompidas perdem o cache de prompt e refazem ~40% mais caro.',
       dismiss: 'Dispensar',
@@ -1627,11 +1710,16 @@ const translations: Record<SupportedLanguage, Translations> = {
       sessionTitle: 'Sessão',
       sessionActions: 'Ações',
       copySessionId: 'Copiar ID da sessão',
+      viewConversation: 'Ver esta conversa (somente leitura) — releia seus prompts e as respostas do modelo sem recarregá-los no contexto.',
       copyPath: 'Copiar caminho',
-      resumeSession: 'Retomar sessão',
+      resumeSession: 'Retomar esta conversa — reabre no Claude Code (mesmo projeto) ou num terminal via "claude --resume", para continuar de onde parou.',
       resumeInvalid: 'ID de sessão inválido — não é possível retomar.',
       sessionFilterCurrent: 'Projeto atual',
       sessionFilterAll: 'Todos',
+      sessionRangeToday: 'Hoje',
+      sessionRange7d: '7 dias',
+      sessionRange30d: '30 dias',
+      sessionModelAll: 'Todos os modelos',
       deleteSession: 'Excluir sessão',
       deleteSessionConfirm: 'Excluir a sessão "{name}"?',
       deleteSessionDetail: 'O log da conversa vai para a lixeira (recuperável). A extensão é somente leitura no restante.',
@@ -1700,6 +1788,234 @@ const translations: Record<SupportedLanguage, Translations> = {
       decimalPlaces: 'Casas decimais',
     },
   },
+  id: {
+    statusBar: {
+      loading: 'Memuat...',
+      noData: 'Tidak Ada Data Claude Code',
+      notRunning: 'Claude Code Tidak Berjalan',
+      error: 'Error',
+      refreshFailed: 'Gagal menyegarkan penggunaan. Coba lagi atau periksa log diagnostik.',
+      currentSession: 'Sesi',
+    },
+    popup: {
+      title: 'Claude Code Usage',
+      currentSession: 'Sesi Saat Ini',
+      today: 'Hari Ini',
+      thisWeek: 'Minggu Ini',
+      thisMonth: 'Bulan Ini',
+      allTime: 'Sepanjang Waktu',
+      workspaceToday: 'Proyek ini',
+      refresh: 'Segarkan',
+      autoRefresh: 'Segarkan otomatis',
+      settings: 'Pengaturan',
+      settingsTab: 'Pengaturan',
+      settingsIntro:
+        'Pengaturan sekarang ada di sini. Hanya bahasa, direktori data, dan API key yang tetap berada di Pengaturan VS Code (agar dapat disinkronkan). Perubahan langsung diterapkan.',
+      settingsResetAll: 'Kembalikan semua ke default',
+      settingsGroupGeneral: 'Umum',
+      settingsGroupFeatures: 'Fitur opsional',
+      settingsGroupStatusBar: 'Status bar',
+      settingsGroupData: 'Data & penyegaran',
+      settingsGroupAdvice: 'Saran AI & Optimizer',
+      totalTokens: 'Total Token',
+      inputTokens: 'Token Masukan',
+      outputTokens: 'Token Keluaran',
+      cacheCreation: 'Cache Masukan (Miss)',
+      cacheRead: 'Cache Masukan (Hit)',
+      cost: 'Biaya',
+      messages: 'Pesan',
+      modelBreakdown: 'Penggunaan Model',
+      dailyBreakdown: 'Penggunaan Harian',
+      monthlyBreakdown: 'Penggunaan Bulanan',
+      hourlyBreakdown: 'Penggunaan per Jam',
+      sessions: 'Sesi',
+      sessionBreakdown: 'Penggunaan Sesi',
+      project: 'Proyek',
+      startTime: 'Waktu Mulai',
+      duration: 'Durasi',
+      activeDuration: 'Aktif',
+      activeDurationHelp:
+        'Perkiraan waktu penggunaan aktif — jumlah jeda antar-giliran, dengan setiap jeda idle dibatasi maksimal 1,5 jam agar jeda panjang tidak menggelembungkan angkanya, sementara waktu membaca / meninjau tetap terhitung. (Durasi adalah rentang penuh dari awal hingga akhir.)',
+      hour: 'Jam',
+      projects: 'Proyek',
+      projectBreakdown: 'Penggunaan Proyek',
+      fullPath: 'Path Lengkap',
+      peakContext: 'Konteks Puncak',
+      tokenComposition: 'Komposisi Token',
+      lastActive: 'Terakhir Aktif',
+      pricing: 'Harga',
+      refreshPricing: 'Segarkan Harga Token',
+      pricingUpdated: 'Harga diperbarui',
+      pricingUpdateFailed: 'Gagal memperbarui harga',
+      sortHint: 'Klik judul kolom untuk mengurutkan',
+      quota: 'Kuota',
+      quotaWindow: 'Periode',
+      quotaLimit: 'Batas',
+      quota5h: '5 Jam',
+      quotaWeekly: 'Mingguan',
+      quotaHint: 'Data nyata dari /usage Anthropic.',
+      contextWindow: 'Jendela konteks',
+      contextHint: 'Tugas baru → /clear',
+      contextHintCompact: 'Tugas sama → /compact',
+      contextLeft: 'Konteks tersisa',
+      contentAnalysis: 'Konten',
+      estimatedNote: 'Diperkirakan dari panjang teks — proporsi relatif dapat diandalkan, angka absolut bersifat perkiraan.',
+      calibratedNote: 'Terkalibrasi: proporsi per kategori dari panjang teks, diskalakan ke total token yang benar-benar ditagih (sisi keluaran / sisi masukan + cache-write). Aktifkan/nonaktifkan dengan analysis.calibrate.',
+      calibratedTokens: 'Token terkalibrasi',
+      thinkingTokensCalibrated: 'token pemikiran sebenarnya (terkalibrasi)',
+      byTool: 'Hasil Tool per Tool',
+      catUserPrompts: 'Prompt Anda',
+      catAssistantText: 'Respons asisten',
+      catAssistantThinking: 'Pemikiran asisten',
+      catToolCalls: 'Panggilan tool',
+      catToolResults: 'Hasil tool',
+      estTokens: 'Token perkiraan',
+      share: 'Proporsi',
+      resets: 'Reset',
+      cacheHitRate: 'Tingkat Cache Hit',
+      last30days: '30 hari terakhir',
+      branches: 'Branch',
+      branchBreakdown: 'Penggunaan Branch',
+      branch: 'Branch',
+      workflows: 'Workflow',
+      workflowBreakdown: 'Penggunaan Workflow',
+      workflowName: 'Workflow',
+      model: 'Model',
+      agents: 'Agen',
+      agent: 'Agen',
+      workflowsThisMonth: 'Workflow bulan ini',
+      workflowCostShare: 'proporsi dari biaya bulan ini',
+      workflowCacheHint:
+        'Tingkat cache hit = cache read ÷ semua token sisi masukan. Workflow native Claude memakai ulang prompt cache lintas agen (tingkat tinggi); provider tanpa cache lintas-agen menunjukkan ~0% — workflow yang sama jadi jauh lebih mahal di sana.',
+      adhocBadge: 'subagent (ad-hoc)',
+      workflowModeBadge: 'workflow',
+      workflowModeHint:
+        '"workflow" = direktori proses dynamic-workflow di disk; "subagent (ad-hoc)" = pemanggilan Task-tool biasa. Tingkat effort (ultracode/xhigh) tidak tercatat di log, jadi kedua badge ini tidak mengklaim salah satunya.',
+      workflowNativeHint:
+        'Ultracode native Claude sering menyimpan orkestrasinya di sesi utama (tanpa file agen), sehingga muncul di Sesi / Pelacakan Penggunaan, bukan sebagai baris di sini. Proses yang menulis file agen menampilkan biaya Claude-nya di baris orkestrasi. (Direncanakan untuk rilis mendatang.)',
+      orchestration: 'orkestrasi sesi utama',
+      commonTaskPrefix: 'Teks tugas bersama',
+      thinkingShare: 'Pemikiran %',
+      effortHint: 'Proporsi pemikiran tinggi — pertimbangkan /effort high alih-alih xhigh untuk tugas seperti ini.',
+      thinkingHidden: 'Pemikiran aktif, tetapi model ini (mis. Fable 5 / Opus 4.8) tidak menampilkan teks penalarannya, sehingga proporsinya tidak dapat diukur — nilai sebenarnya lebih tinggi dari yang ditampilkan.',
+      thinkingHiddenShort: 'tersembunyi',
+      quotaWarnBanner:
+        'Hanya {remaining}% tersisa untuk periode 5 jam Anda. Sebuah proses workflow bisa memakai porsi besar — pertimbangkan menunggu reset: proses yang terinterupsi kehilangan prompt cache-nya dan diulang dengan biaya ~40% lebih mahal.',
+      dismiss: 'Tutup',
+      attribution: 'Pelacakan Penggunaan',
+      attrDisclaimer:
+        'Perkiraan, berdasarkan sesi lokal di mesin ini — tidak termasuk perangkat lain atau claude.ai. Ini adalah karakteristik independen dari penggunaan Anda, bukan rincian lengkap.',
+      attrLargeContext: '{pct}% penggunaan Anda berada di konteks >150k',
+      attrLargeContextShort: 'konteks >150k',
+      attrLargeContextHint:
+        'Sesi yang lebih panjang lebih mahal meski sudah di-cache. Gunakan /compact di tengah tugas, /clear saat beralih ke tugas baru.',
+      attrLongSessions: '{pct}% penggunaan Anda berasal dari sesi yang aktif 8+ jam',
+      attrLongSessionsShort: 'sesi 8 jam+',
+      attrLongSessionsHint:
+        'Ini sering kali sesi latar belakang/loop. Penggunaan berkelanjutan bisa cepat menumpuk, jadi pastikan itu memang disengaja.',
+      attrSubagentHeavy: '{pct}% penggunaan Anda berasal dari sesi dengan banyak subagent',
+      attrSubagentHeavyShort: 'Sesi dengan banyak subagent',
+      attrSubagentHeavyHint:
+        'Setiap subagent menjalankan requestnya sendiri. Berhati-hatilah saat memunculkannya — dan pertimbangkan model yang lebih murah untuk subagent yang lebih sederhana.',
+      attrWorkflows: '{pct}% penggunaan Anda berasal dari proses workflow',
+      attrWorkflowsShort: 'Proses workflow',
+      attrWorkflowsHint: 'Lihat tab Workflow untuk detail per proses dan tingkat cache hit.',
+      attrSkillChar: '{pct}% penggunaan Anda berasal dari {name}',
+      attrSkillCharHint: 'Skill yang berat bisa dipersempit cakupannya atau dijalankan dengan model yang lebih murah lewat frontmatter skill.',
+      attrPluginChar: '{pct}% penggunaan Anda berasal dari plugin "{name}"',
+      attrPluginCharHint:
+        'Tinjau apa yang disumbang plugin ini — agen, skill, dan tool MCP-nya semuanya turut menghitung ke batas Anda.',
+      attrSkills: 'Skill',
+      attrSubagents: 'Subagent',
+      attrPlugins: 'Plugin',
+      attrModels: 'Model',
+      attrShare: '% penggunaan',
+      count: 'Jumlah',
+      scopeDay: 'Hari',
+      scopeWeek: 'Minggu',
+      scopeMonth: 'Bulan',
+      attrTodayPointer: 'Detail: tab Konten',
+      sessionTitle: 'Sesi',
+      sessionActions: 'Aksi',
+      copySessionId: 'Salin ID sesi',
+      viewConversation: 'Lihat percakapan ini (baca-saja) — baca ulang prompt Anda dan jawaban model tanpa memuatnya kembali ke konteks.',
+      copyPath: 'Salin path',
+      resumeSession: 'Lanjutkan percakapan ini — membuka kembali di Claude Code (proyek yang sama) atau terminal lewat "claude --resume", sehingga Anda bisa melanjutkan dari titik terakhir.',
+      resumeInvalid: 'ID sesi tidak valid — tidak dapat dilanjutkan.',
+      sessionFilterCurrent: 'Proyek saat ini',
+      sessionFilterAll: 'Semua',
+      sessionRangeToday: 'Hari ini',
+      sessionRange7d: '7 hari',
+      sessionRange30d: '30 hari',
+      sessionModelAll: 'Semua model',
+      deleteSession: 'Hapus sesi',
+      deleteSessionConfirm: 'Hapus sesi "{name}"?',
+      deleteSessionDetail: 'Log percakapannya dipindahkan ke sampah (dapat dipulihkan). Selebihnya extension ini bersifat baca-saja.',
+      deleteSessionYes: 'Hapus',
+      deleteSessionNotFound: 'File log sesi tidak ditemukan.',
+      deleteSessionDone: '"{name}" dihapus (dipindahkan ke sampah).',
+      getAdvice: 'Dapatkan Saran AI',
+      adviceCardTitle: 'Saran AI',
+      adviceCardDesc:
+        'Kirim ringkasan penggunaan Anda + sampel prompt Anda sendiri ke model Anda dan dapatkan tips konkret untuk menulis instruksi yang lebih jelas dan mengurangi pemborosan.',
+      optimizerTitle: 'Pengoptimal Penggunaan',
+      optimizerDesc:
+        'Ubah permintaan yang masih kasar dan belum rapi menjadi prompt bersih yang bisa langsung ditempel ke Claude Code — plus saran effort / thinking / model untuk tugas tersebut.',
+      optimizerHowto:
+        'Ketik atau tempel draf Anda di bawah, centang penyesuaian opsional yang diinginkan, lalu klik Optimalkan. Hanya teks yang Anda tempel yang dikirim ke model Anda — tidak pernah ke Claude Code atau terminal Anda.',
+      optimizerConsent:
+        'Usage Optimizer mengirim teks yang Anda tempel ke model API yang telah dikonfigurasi. Tidak ada yang dikirim ke Claude Code dan tidak ada yang diketik ke terminal. Lanjutkan?',
+      optimizerEnableBtn: 'Aktifkan di pengaturan',
+      optimizerPlaceholder: 'Tempel draf prompt untuk dioptimalkan…',
+      optimizerRun: 'Optimalkan',
+      optimizerRunning: 'Mengoptimalkan…',
+      optimizerCopy: 'Salin prompt',
+      optimizerCopied: 'Disalin',
+      optimizerResolve: 'Tandai referensi yang ambigu',
+      optimizerResolveHint:
+        "Minta model menunjukkan referensi yang ambigu (mis. 'ini', 'file itu', 'bug itu') lalu memperjelasnya atau menandai asumsi yang jelas.",
+      optimizerDistil: 'Ringkas teks tempelan yang panjang',
+      optimizerDistilHint:
+        'Jika draf Anda menempel log / kode / dokumen yang panjang, ringkas menjadi hanya yang dibutuhkan Claude.',
+      optimizerAesthetic: 'Sarankan arah gaya',
+      optimizerAestheticHint:
+        'Untuk tugas UI / visual / tulisan, usulkan satu arah gaya yang konkret agar hasilnya tidak generik.',
+      optimizerPromptHeading: 'Prompt teroptimasi',
+      optimizerSettingsHeading: 'Pengaturan proses yang disarankan',
+      experimentalBadge: 'eksperimental',
+      adviceNeedsKey: 'Atur API key di Pengaturan untuk menggunakan saran AI.',
+      adviceGenerating: 'Membuat saran penggunaan…',
+      adviceFailed: 'Gagal mendapatkan saran',
+      adviceScopeOverall: 'Keseluruhan (semua proyek)',
+      adviceScopePrompt: 'Pilih fokus saran yang diinginkan',
+      adviceDemoButton: 'Pratinjau demo',
+      adviceDemoNotice:
+        '# DEMO — Pratinjau Saran Penggunaan AI\n\n' +
+        '> **File ini adalah demo statis, bukan saran sungguhan.**\n' +
+        '> Teks di bawah ini ditulis manual untuk menunjukkan jenis keluaran\n' +
+        '> yang dihasilkan fitur ini. Ini **bukan** berdasarkan data penggunaan\n' +
+        '> Claude Code Anda yang sebenarnya — tidak ada yang dikirim ke API mana pun untuk menghasilkan ini.\n\n' +
+        '### Untuk mendapatkan saran nyata dan personal berdasarkan penggunaan ANDA:\n\n' +
+        '1. Buka Pengaturan (`Ctrl+,` / `Cmd+,`)\n' +
+        '2. Cari **`claudeCodeUsage.advice.apiKey`**\n' +
+        '3. Tempel API key yang kompatibel dengan OpenAI — DeepSeek langsung berfungsi\n' +
+        '   ([deepseek.com](https://platform.deepseek.com))\n' +
+        '4. Jalankan ulang **`Claude Code Usage: Get AI Usage Advice`**',
+      costComposition: 'Komposisi Biaya',
+      date: 'Tanggal',
+      yesterday: 'Kemarin',
+      dataDirectory: 'Direktori Data',
+      noDataMessage: 'Tidak ada data penggunaan yang ditemukan. Pastikan Claude Code sudah berjalan dan dikonfigurasi dengan benar.',
+      errorMessage: 'Gagal memuat data penggunaan. Periksa kembali konfigurasi Anda.',
+    },
+    settings: {
+      title: 'Pengaturan Claude Code Usage',
+      refreshInterval: 'Interval Penyegaran (detik)',
+      dataDirectory: 'Path Direktori Data',
+      language: 'Bahasa',
+      decimalPlaces: 'Angka Desimal',
+    },
+  },
 };
 
 // Per-setting label / help translations for the dashboard ⚙ Settings panel.
@@ -1711,22 +2027,31 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
   'de-DE': {
     'language': { label: 'Anzeigesprache', help: 'UI-Sprache. "auto" folgt VS Code.' },
     'decimalPlaces': { label: 'Kosten-Dezimalstellen', help: '' },
+    'tokenDecimalPlaces': { label: 'Token-Dezimalstellen', help: 'Dezimalstellen für kompakte Token-Anzeige (1.2M / 345.6K). Volle Ganzzahlen bleiben unberührt.' },
     'compactNumbers': { label: 'Kompakte Token-Zahlen', help: 'Zeige 1.2M / 345K statt voller Zahlen.' },
-    'timezone': { label: 'Zeitzone für Daten', help: 'IANA-Zone (z.B. Asia/Hong_Kong). Leer = System.' },
+    'timezone': { label: 'Zeitzone für Daten', help: 'Gängige Zone oder UTC-Offset (jeder Offset abgedeckt) oder Systemstandard. Labels zeigen den aktuellen UTC-Offset.' },
+    'showHeatmap': { label: 'Token-Heatmap zeigen (Tab „Seit Aufzeichnungsbeginn“)', help: 'Standardmäßig aus. GitHub-artige Jahres-Heatmap; als SVG exportieren oder auf dein GitHub-Profil veröffentlichen.' },
+    'showEfficiency': { label: 'Effizienz-Einblicke zeigen', help: 'Standardmäßig aus. Kosten/Nachricht, Token/Nachricht, Cache-Ersparnis und die Cache-Warmzeit-Schätzung.' },
+    'showCostliestMessages': { label: '„Top 10 teuerste Nachrichten“ zeigen', help: 'Standardmäßig aus. Reiht deine teuersten Einzel-Turns; das Aufklappen zeigt den Prompt (dein eigener Text).' },
+    'enableShareCard': { label: 'Nutzungs-Sharecard aktivieren', help: 'Standardmäßig aus. Eine konfigurierbare einseitige SVG-Zusammenfassung zum Erzeugen und Teilen.' },
+    'enableSessionActions': { label: 'Sitzungsaktionen (Fortsetzen & Löschen)', help: 'Standardmäßig aus. Zeigt auf dem Sitzungen-Tab die Schaltflächen „Fortsetzen“ und „Löschen“. Beide WIRKEN auf dein Claude Code (Gespräch erneut öffnen / Log in den Papierkorb), anders als diese schreibgeschützte Erweiterung — daher zusammen optional.' },
     'projectGroupingMode': { label: 'Projektgruppierung', help: 'git = nach Repo · folder = oberste Ebene · flat = jedes cwd.' },
     'showCost': { label: 'Heutige Kosten / Token anzeigen', help: '' },
     'statusBarMetric': { label: 'Statusleisten-Metrik', help: 'Was das erste Statusleistenelement zeigt: heutige Kosten oder die heutige Gesamt-Tokenanzahl (k/M).' },
     'showContext': { label: 'Kontextfenster-Auslastung anzeigen (experimental)', help: 'Standardmäßig aus. Schätzt den aktuellen Sitzungskontext in %, ähnlich /context, anhand des neuesten Logeintrags. Es kann nur die Eingabeseite insgesamt anzeigen, nicht die Kategorieaufteilung von /context (diese sind Claude Code-interne Daten, die nicht auf die Festplatte geschrieben werden), daher ist es nur eine Näherung — ein "~" kennzeichnet eine geschätzte Fenstergröße.' },
     'contextWindowOverride': { label: 'Überschreibung des Kontextfensters (Tokens)', help: '0 = automatisch vom Modell erkennen. Legen Sie Ihr echtes Fenster (z.B. 1000000) für Proxy- oder benutzerdefinierte Modelle fest, die die Autoerkennung nicht erkennt.' },
     'usageLimitTracking': { label: '5-Stunden / Wochenkontingent anzeigen', help: '' },
-    'quotaFiveHourOnly': { label: 'Nur 5-Stunden-Kontingent', help: 'Wochen- (und Opus-)Fenster ausblenden; nur die 5-Stunden-Auslastung zeigen.' },
-    'showResetInStatusBar': { label: 'Reset-Zeit in der Statusleiste', help: 'Reset-Countdown an das Kontingent in der Statusleiste anhängen (z. B. "5h:50%:2.3h").' },
     'showOpusWeekly': { label: 'Wöchentliches Opus-Limit anzeigen', help: 'Hängen Sie die wöchentliche Opus-Obergrenze (opus:NN%) hinter die 5h / Wochenwerte an.' },
+    'quotaFiveHourOnly': { label: 'Kontingent: nur 5-Stunden-Fenster', help: 'Nur das 5-Stunden-Kontingent in der Statusleiste zeigen, den Wochenwert ausblenden (Reset-Details bleiben im Tooltip).' },
+    'showResetInStatusBar': { label: 'Kontingent: Reset-Countdown zeigen', help: 'Kompakten Reset-Countdown in der Statusleiste anhängen (5h 6% ↻4.8h). Aus hält es sauber (5h 6% · wk 1%); der Tooltip zeigt immer volle Reset-Zeiten.' },
+    'resetCountdownFormat': { label: 'Kontingent: Format des Reset-Countdowns', help: 'Gilt nur, wenn „Kontingent: Reset-Countdown zeigen“ aktiv ist. Dezimal (4.8h / 1.6d), ganze Einheiten (4h 48m / 1d 14h) oder die lokale Uhrzeit/Datum deines Rechners (18:20 / 2026-07-22).' },
     'workflowQuotaWarnPercent': { label: 'Warnung bei Workflow-Kontingent %', help: 'Warnt vor einem Lauf, wenn das verbleibende 5h-Kontingent darunter liegt. 0 = aus.' },
     'dataDirectory': { label: 'Benutzerdefiniertes Datenverzeichnis', help: 'Claude-Datenverzeichnis; leer = automatisch erkennen.' },
     'refreshInterval': { label: 'Aktualisierungsintervall (s)', help: '' },
-    'fileWatching': { label: 'Live-Dateiüberwachung', help: 'Aktualisierung ca. 1,5 s nach jeder neuen Nachricht.' },
-    'pauseDashboardRefresh': { label: 'Dashboard-Aktualisierung pausieren', help: 'Statusleiste aktualisiert weiter; Dashboard nur bei manueller Aktualisierung.' },
+    'fileWatchSeconds': { label: 'Verzögerung der Live-Aktualisierung', help: 'Wartezeit nach der letzten lokalen JSONL-Änderung vor der Aktualisierung (Ruhe-Debounce; jedes neue Ereignis startet die Wartezeit neu). Es erfolgt kein API-Aufruf; Kontingent-Abfragen werden separat gedrosselt. „Aus“ deaktiviert die Überwachung, 60–300 s schont große Verläufe am stärksten.' },
+    'showInsights': { label: 'Experimentelle Insights anzeigen', help: 'Standardmäßig aus. Fügt dem Content-Tab einen Abschnitt „Experimentelle Insights“ hinzu (Cache-Churn-Rechnung, Cache-Wärme pro Modell, große Einzelantworten, aktive Stunden, Skill-ROI) — heuristische Schätzungen aus deinen lokalen Logs, als Schätzungen gekennzeichnet.' },
+    'showConversationViewer': { label: 'Gesprächs-Viewer aktivieren', help: 'Standardmäßig an. Fügt dem Sitzungen-Tab eine Ansicht-Schaltfläche hinzu, um ein früheres Gespräch schreibgeschützt erneut zu lesen, ohne es in den Modellkontext zu laden. Liest nur lokale Logs.' },
+    'dashboardAutoRefresh': { label: 'Dashboard-Auto-Aktualisierung', help: 'Aktualisiert das Dashboard automatisch bei neuer Nutzung. Aus = nur manuelle Aktualisierung (die Statusleiste aktualisiert weiter).' },
     'enableContentAnalysis': { label: 'Inhaltsanalyse (Content-Registerkarte)', help: 'Deaktivieren, um die CPU-intensive Textprüfung zu überspringen.' },
     'analysis.calibrate': { label: 'Inhaltszahlen kalibrieren', help: 'Skalieren Sie Schätzungen auf die exakten abgerechneten Token-Gesamtzahlen.' },
     'advice.apiKey': { label: 'API-Schlüssel', help: 'Für das api-Backend. Bleibt in den VS Code-Einstellungen.' },
@@ -1741,22 +2066,31 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
   'zh-TW': {
     'language': { label: '顯示語言', help: 'UI 語言。"auto" 會跟隨 VS Code。' },
     'decimalPlaces': { label: '費用小數位數', help: '' },
+    'tokenDecimalPlaces': { label: 'Token 小數位數', help: '緊湊 token 顯示（1.2M / 345.6K）的小數位數。完整整數值不受影響。' },
     'compactNumbers': { label: '簡潔的 Token 計數', help: '顯示 1.2M / 345K 而非完整數字。' },
-    'timezone': { label: '日期時區', help: 'IANA 時區（例如 Asia/Hong_Kong）。空白 = 系統。' },
+    'timezone': { label: '日期時區', help: '常用時區或 UTC 偏移（涵蓋所有偏移），或系統預設。標籤顯示目前的 UTC 偏移。' },
+    'showHeatmap': { label: '顯示 Token 熱力圖（「所有」分頁）', help: '預設關閉。全部分頁上的 GitHub 風格年度熱力圖；可匯出 SVG 或發佈到你的 GitHub 首頁。' },
+    'showEfficiency': { label: '顯示效率洞察', help: '預設關閉。加入每則成本、每則 token、快取節省與快取保溫估計。' },
+    'showCostliestMessages': { label: '顯示「最貴 10 則訊息」', help: '預設關閉。列出最貴的單則對話；展開會顯示 prompt（隱私：你自己的文字）。' },
+    'enableShareCard': { label: '啟用用量分享卡', help: '預設關閉。可設定的一頁式 SVG 摘要，可產生並匯出分享。' },
+    'enableSessionActions': { label: '會話操作（恢復與刪除）', help: '預設關閉。在「會話」分頁顯示「恢復」和「刪除」按鈕。兩者都會「操作」你的 Claude Code（重開對話／把紀錄檔丟進垃圾桶），與這個唯讀擴充功能的定位相反，所以一起維持選用。' },
     'projectGroupingMode': { label: '專案分組', help: 'git = 依儲存庫 · folder = 最上層 · flat = 每個目前工作目錄。' },
     'showCost': { label: '顯示今日費用 / Token 用量', help: '' },
     'statusBarMetric': { label: '狀態列指標', help: '第一個狀態列項目顯示的是：今日費用或今日總 Token 數量 (k/M)。' },
     'showContext': { label: '顯示上下文視窗填充 (experimental)', help: '預設關閉。從最新的日誌記錄估計當前工作階段上下文百分比，類似 /context。它只能顯示輸入側的總計，而不是 /context 的類別細分（這些是 Claude Code 內部資料，未寫入磁碟），因此是近似值 — "~" 標記一個猜測的視窗大小。' },
     'contextWindowOverride': { label: '上下文視窗覆寫 (tokens)', help: '0 = 從模型自動檢測。為自動檢測無法識別的代理/自訂模型設定實際視窗（例如 1000000）。' },
     'usageLimitTracking': { label: '顯示 5 小時 / 每週配額', help: '' },
-    'quotaFiveHourOnly': { label: '僅顯示 5 小時配額', help: '隱藏每週（及 Opus）視窗，只顯示 5 小時用量。' },
-    'showResetInStatusBar': { label: '在狀態列顯示重置時間', help: '在狀態列的配額後附加重置倒數（例如「5h:50%:2.3h」）。' },
     'showOpusWeekly': { label: '顯示每週 Opus 限制', help: '在 5 小時 / 每週數字後附加每週 Opus 上限 (opus:NN%)。' },
+    'quotaFiveHourOnly': { label: '配額：僅 5 小時視窗', help: '狀態列只顯示 5 小時配額，隱藏每週數字（重置詳情仍在 tooltip）。' },
+    'showResetInStatusBar': { label: '配額：顯示重置倒數', help: '在狀態列附加精簡的重置倒數（5h 6% ↻4.8h）。關閉則保持清爽（5h 6% · wk 1%）；tooltip 一律顯示完整重置時間。' },
+    'resetCountdownFormat': { label: '配額：重置倒數格式', help: '僅在「配額：顯示重置倒數」開啟時生效。小數（4.8h / 1.6d）、整數單位（4h 48m / 1d 14h），或你電腦的本地時間／日期（18:20 / 2026-07-22）。' },
     'workflowQuotaWarnPercent': { label: '工作流程配額警告 %', help: '當剩餘 5 小時配額低於此值時，在執行前發出警告。0 = 關閉。' },
     'dataDirectory': { label: '自訂資料目錄', help: 'Claude 資料目錄；空白 = 自動偵測。' },
     'refreshInterval': { label: '重新整理間隔 (秒)', help: '' },
-    'fileWatching': { label: '即時檔案監控', help: '每條新訊息後約 1.5 秒重新整理。' },
-    'pauseDashboardRefresh': { label: '暫停儀表板自動重新整理', help: '狀態列仍會更新；儀表板僅手動重新整理。' },
+    'fileWatchSeconds': { label: '即時重新整理延遲', help: '在最後一次本機 JSONL 變更後等待多久才重新整理（安靜期去抖；每個新事件都會重新計時）。不會呼叫 API；配額查詢另行節流。「關閉」會停用監控，60–300 秒最適合降低大量歷史資料的 CPU 負載。' },
+    'showInsights': { label: '顯示實驗性洞察', help: '預設關閉。在 Content 分頁加入「實驗性洞察」區塊（快取損耗帳單、各模型快取有效時長、大型單輪、活躍時段、技能 ROI）——皆為本機紀錄的啟發式估算，已標註為估計值。' },
+    'showConversationViewer': { label: '啟用對話檢視器', help: '預設開啟。在「會話」分頁加入「檢視」按鈕，可唯讀地重讀先前的對話，而不會載入模型上下文。只讀取本機紀錄。' },
+    'dashboardAutoRefresh': { label: '儀表板自動重新整理', help: '有新用量時自動重新整理儀表板。關閉 = 僅手動重新整理（狀態列仍會更新）。' },
     'enableContentAnalysis': { label: '內容分析 (Content 分頁)', help: '停用以跳過 CPU 密集的文字掃描。' },
     'analysis.calibrate': { label: '校準內容數據', help: '將估計值縮放至確切的計費 Token 總數。' },
     'advice.apiKey': { label: 'API 金鑰', help: '用於 api 後端。保留在 VS Code 設定中。' },
@@ -1771,22 +2105,31 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
   'zh-CN': {
     'language': { label: '显示语言', help: 'UI 语言。"auto" 会跟随 VS Code。' },
     'decimalPlaces': { label: '费用小数位数', help: '' },
+    'tokenDecimalPlaces': { label: 'Token 小数位数', help: '紧凑 token 显示（1.2M / 345.6K）的小数位数。完整整数值不受影响。' },
     'compactNumbers': { label: '简洁的 token 计数', help: '显示 1.2M / 345K 而非完整数字。' },
-    'timezone': { label: '日期时区', help: 'IANA 时区（例如 Asia/Hong_Kong）。空 = 系统。' },
+    'timezone': { label: '日期时区', help: '常用时区或 UTC 偏移（涵盖所有偏移），或系统默认。标签显示当前的 UTC 偏移。' },
+    'showHeatmap': { label: '显示 Token 热力图（“所有”选项卡）', help: '默认关闭。全部标签上的 GitHub 风格年度热力图；可导出 SVG 或发布到你的 GitHub 主页。' },
+    'showEfficiency': { label: '显示效率洞察', help: '默认关闭。加入每条成本、每条 token、缓存节省与缓存保温估计。' },
+    'showCostliestMessages': { label: '显示“最贵 10 条消息”', help: '默认关闭。列出最贵的单条对话；展开会显示 prompt（隐私：你自己的文字）。' },
+    'enableShareCard': { label: '启用用量分享卡', help: '默认关闭。可配置的一页式 SVG 摘要，可生成并导出分享。' },
+    'enableSessionActions': { label: '会话操作（恢复与删除）', help: '默认关闭。在「会话」标签页显示「恢复」和「删除」按钮。两者都会「操作」你的 Claude Code（重开对话／把日志丢进回收站），与这个只读扩展的定位相反，所以一起保持可选。' },
     'projectGroupingMode': { label: '项目分组', help: 'git = 按仓库 · folder = 顶层 · flat = 每个当前工作目录。' },
     'showCost': { label: '显示今日费用 / token 用量', help: '' },
     'statusBarMetric': { label: '状态栏指标', help: '第一个状态栏项目显示的内容：今日费用或今日总 token 数 (k/M)。' },
     'showContext': { label: '显示上下文窗口填充 (experimental)', help: '默认关闭。从最新的日志记录估计当前会话上下文百分比，类似于 /context。它只能显示输入侧的总计，而不是 /context 的类别细分（这些是 Claude Code 内部信息，未写入磁盘），因此是近似值 — "~" 标记猜测的窗口大小。' },
     'contextWindowOverride': { label: '上下文窗口覆盖 (tokens)', help: '0 = 从模型自动检测。为自动检测无法识别的代理/自定义模型设置实际窗口（例如 1000000）。' },
     'usageLimitTracking': { label: '显示 5 小时 / 每周配额', help: '' },
-    'quotaFiveHourOnly': { label: '仅显示 5 小时配额', help: '隐藏每周（及 Opus）窗口，只显示 5 小时用量。' },
-    'showResetInStatusBar': { label: '在状态栏显示重置时间', help: '在状态栏的配额后附加重置倒计时（例如「5h:50%:2.3h」）。' },
     'showOpusWeekly': { label: '显示每周 Opus 限制', help: '在 5 小时 / 每周数字后附加每周 Opus 上限 (opus:NN%)。' },
+    'quotaFiveHourOnly': { label: '配额：仅 5 小时窗口', help: '状态栏只显示 5 小时配额，隐藏每周数字（重置详情仍在 tooltip）。' },
+    'showResetInStatusBar': { label: '配额：显示重置倒计时', help: '在状态栏附加精简的重置倒计时（5h 6% ↻4.8h）。关闭则保持清爽（5h 6% · wk 1%）；tooltip 一律显示完整重置时间。' },
+    'resetCountdownFormat': { label: '配额：重置倒计时格式', help: '仅在“配额：显示重置倒计时”开启时生效。小数（4.8h / 1.6d）、整数单位（4h 48m / 1d 14h），或你电脑的本地时间／日期（18:20 / 2026-07-22）。' },
     'workflowQuotaWarnPercent': { label: '工作流配额警告 %', help: '当剩余 5 小时配额低于此值时，运行前发出警告。0 = 关闭。' },
     'dataDirectory': { label: '自定义数据目录', help: 'Claude 数据目录；空 = 自动检测。' },
     'refreshInterval': { label: '刷新间隔 (秒)', help: '' },
-    'fileWatching': { label: '实时文件监控', help: '每条新消息后约 1.5 秒刷新。' },
-    'pauseDashboardRefresh': { label: '暂停仪表板自动刷新', help: '状态栏仍会更新；仪表板仅手动刷新。' },
+    'fileWatchSeconds': { label: '实时刷新延迟', help: '在最后一次本地 JSONL 变更后等待多久再刷新（静默期防抖；每个新事件都会重新计时）。不会调用 API；配额查询单独节流。“关闭”会停用监控，60–300 秒最适合降低大历史的 CPU 负载。' },
+    'showInsights': { label: '显示实验性洞察', help: '默认关闭。在 Content 标签页加入「实验性洞察」区块（缓存损耗账单、各模型缓存有效时长、大单轮、活跃时段、技能 ROI）——皆为本地日志的启发式估算，已标注为估计值。' },
+    'showConversationViewer': { label: '启用对话查看器', help: '默认开启。在「会话」标签页加入「查看」按钮，可只读地重读先前的对话，而不会载入模型上下文。只读取本地日志。' },
+    'dashboardAutoRefresh': { label: '仪表板自动刷新', help: '有新用量时自动刷新仪表板。关闭 = 仅手动刷新（状态栏仍会更新）。' },
     'enableContentAnalysis': { label: '内容分析 (Content 选项卡)', help: '禁用以跳过 CPU 密集型文本扫描。' },
     'analysis.calibrate': { label: '校准内容数据', help: '将估计值缩放至确切的计费 token 总数。' },
     'advice.apiKey': { label: 'API 密钥', help: '用于 api 后端。保留在 VS Code 设置中。' },
@@ -1801,22 +2144,31 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
   'ja': {
     'language': { label: '表示言語', help: 'UI 言語。"auto" は VS Code に従います。' },
     'decimalPlaces': { label: 'コストの小数点以下桁数', help: '' },
+    'tokenDecimalPlaces': { label: 'トークンの小数点以下桁数', help: 'トークンの短縮表示（1.2M / 345.6K）の小数桁数。完全な整数値には影響しません。' },
     'compactNumbers': { label: 'トークン数を短縮表記', help: '完全な数値の代わりに 1.2M / 345K と表示します。' },
-    'timezone': { label: '日付のタイムゾーン', help: 'IANA ゾーン (例: Asia/Hong_Kong)。空 = システム。' },
+    'timezone': { label: '日付のタイムゾーン', help: '一般的なゾーンまたは UTC オフセット（全オフセット対応）、あるいはシステム既定。ラベルは現在の UTC オフセットを表示。' },
+    'showHeatmap': { label: 'トークンヒートマップを表示（「すべて」タブ）', help: '既定でオフ。GitHub 風の年間ヒートマップ。SVG 書き出しや GitHub プロフィールへの公開が可能。' },
+    'showEfficiency': { label: '効率インサイトを表示', help: '既定でオフ。メッセージ単価、メッセージ当たりトークン、キャッシュ節約、キャッシュ保温推定を追加。' },
+    'showCostliestMessages': { label: '「最も高価なメッセージ Top 10」を表示', help: '既定でオフ。最も高価な単一ターンを順位付け。展開でプロンプト表示（自分の文章）。' },
+    'enableShareCard': { label: '使用状況シェアカードを有効化', help: '既定でオフ。生成して共有できる、設定可能な 1 ページの SVG サマリー。' },
+    'enableSessionActions': { label: 'セッション操作（再開と削除）', help: '既定はオフ。セッションタブに「再開」と「削除」ボタンを表示します。どちらもあなたの Claude Code を操作します（会話を再度開く／ログをゴミ箱へ）。読み取り専用のこの拡張とは相容れないため、まとめてオプトインです。' },
     'projectGroupingMode': { label: 'プロジェクトのグループ化', help: 'git = リポジトリごと · folder = トップレベル · flat = 各 cwd。' },
     'showCost': { label: '今日のコスト / トークンを表示', help: '' },
     'statusBarMetric': { label: 'ステータスバー指標', help: '最初のステータスバー項目に表示するもの：今日のコスト、または今日の総トークン数 (k/M)。' },
     'showContext': { label: 'コンテキストウィンドウの使用率を表示 (experimental)', help: 'デフォルトはオフ。最新のログレコードから、/context のように現在のセッションのコンテキスト使用率を推定します。入力側の合計のみ表示でき、/context のカテゴリーごとの内訳は表示できません（それらはディスクに書き込まれない Claude Code 内部の情報です）。そのため近似値であり、"~" は推測されるウィンドウサイズを示します。' },
     'contextWindowOverride': { label: 'コンテキストウィンドウの上書き (トークン)', help: '0 = モデルから自動検出。自動検出で認識できないプロキシ/カスタムモデルに対して、実際のウィンドウ（例: 1000000）を設定します。' },
     'usageLimitTracking': { label: '5時間 / 週間クォータを表示', help: '' },
-    'quotaFiveHourOnly': { label: '5時間クォータのみ表示', help: '週間（および Opus）ウィンドウを隠し、5時間の使用率のみ表示します。' },
-    'showResetInStatusBar': { label: 'ステータスバーにリセット時刻を表示', help: 'ステータスバーのクォータにリセットのカウントダウンを追加します（例：「5h:50%:2.3h」）。' },
     'showOpusWeekly': { label: '週間 Opus 制限を表示', help: '5時間 / 週間の数値の後に、週間 Opus 上限 (opus:NN%) を追加します。' },
+    'quotaFiveHourOnly': { label: 'クォータ：5時間ウィンドウのみ', help: 'ステータスバーに 5 時間クォータのみ表示し、週間の数値を隠します（リセット詳細は tooltip に残ります）。' },
+    'showResetInStatusBar': { label: 'クォータ：リセットのカウントダウンを表示', help: 'ステータスバーに簡潔なリセットのカウントダウンを追加（5h 6% ↻4.8h）。オフだとすっきり（5h 6% · wk 1%）。tooltip には常に完全なリセット時刻を表示します。' },
+    'resetCountdownFormat': { label: 'クォータ：リセットのカウントダウン形式', help: '「クォータ：リセットのカウントダウンを表示」がオンのときのみ適用されます。10進数（4.8h / 1.6d）、単位表示（4h 48m / 1d 14h）、またはお使いのコンピュータのローカル時刻／日付（18:20 / 2026-07-22）。' },
     'workflowQuotaWarnPercent': { label: 'ワークフロークォータ警告 %', help: '残りの 5 時間クォータがこれを下回る場合、実行前に警告します。0 = オフ。' },
     'dataDirectory': { label: 'カスタムデータディレクトリ', help: 'Claude データディレクトリ。空 = 自動検出。' },
     'refreshInterval': { label: '更新間隔 (秒)', help: '' },
-    'fileWatching': { label: 'ライブファイル監視', help: '各新メッセージの約 1.5 秒後に更新します。' },
-    'pauseDashboardRefresh': { label: 'ダッシュボードの自動更新を一時停止', help: 'ステータスバーは更新を続行し、ダッシュボードは手動更新のみになります。' },
+    'fileWatchSeconds': { label: 'ライブ更新の遅延', help: '最後のローカル JSONL 変更から更新まで待つ時間です（quiet debounce。新しいイベントごとに待ち時間をリセット）。API は呼び出さず、クォータ取得は別に抑制されます。Off で監視を無効化し、大きな履歴では 60～300 秒が最も CPU 負荷を抑えます。' },
+    'showInsights': { label: '実験的インサイトを表示', help: '既定はオフ。Content タブに「実験的インサイト」セクションを追加します（キャッシュ損耗、モデル別キャッシュ有効時間、大きな単発ターン、活動時間帯、スキル ROI）。いずれもローカルログからのヒューリスティックな推定で、推定値として表示されます。' },
+    'showConversationViewer': { label: '会話ビューアを有効化', help: '既定はオン。セッションタブに「表示」ボタンを追加し、過去の会話をモデルのコンテキストに読み込まずに読み取り専用で読み返せます。ローカルログのみを読み取ります。' },
+    'dashboardAutoRefresh': { label: 'ダッシュボードの自動更新', help: '新しい使用があるとダッシュボードを自動更新します。オフ = 手動更新のみ（ステータスバーは更新を続行）。' },
     'enableContentAnalysis': { label: 'コンテンツ分析 (Content タブ)', help: 'CPU負荷の高いテキストスキャンをスキップするには無効にします。' },
     'analysis.calibrate': { label: 'コンテンツ数値を調整', help: '推定値を正確な課金トークン総数に合わせて拡大縮小します。' },
     'advice.apiKey': { label: 'API キー', help: 'api バックエンド用。VS Code 設定に保存されます。' },
@@ -1831,22 +2183,31 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
   'ko': {
     'language': { label: '표시 언어', help: 'UI 언어. "auto"는 VS Code를 따릅니다.' },
     'decimalPlaces': { label: '비용 소수점 자리수', help: '' },
+    'tokenDecimalPlaces': { label: '토큰 소수점 자리수', help: '간략한 토큰 표시(1.2M / 345.6K)의 소수 자리수. 전체 정수 값에는 영향을 주지 않습니다.' },
     'compactNumbers': { label: '간략한 토큰 수 표시', help: '전체 숫자 대신 1.2M / 345K로 표시합니다.' },
-    'timezone': { label: '날짜 시간대', help: 'IANA 표준 시간대 (예: Asia/Hong_Kong). 비워두면 시스템.' },
+    'timezone': { label: '날짜 시간대', help: '일반 지역 또는 UTC 오프셋(모든 오프셋 지원), 또는 시스템 기본값. 라벨에 현재 UTC 오프셋 표시.' },
+    'showHeatmap': { label: '토큰 히트맵 표시(전체 탭)', help: '기본 꺼짐. GitHub 스타일 연간 히트맵. SVG 내보내기 또는 GitHub 프로필에 게시 가능.' },
+    'showEfficiency': { label: '효율 인사이트 표시', help: '기본 꺼짐. 메시지당 비용/토큰, 캐시 절감, 캐시 보온 추정치를 추가.' },
+    'showCostliestMessages': { label: '“가장 비싼 메시지 Top 10” 표시', help: '기본 꺼짐. 가장 비싼 단일 턴을 순위화. 펼치면 프롬프트 표시(본인 텍스트).' },
+    'enableShareCard': { label: '사용량 공유 카드 사용', help: '기본 꺼짐. 생성·내보내 공유할 수 있는 구성 가능한 1페이지 SVG 요약.' },
+    'enableSessionActions': { label: '세션 작업(재개 및 삭제)', help: '기본값 꺼짐. 세션 탭에 재개·삭제 버튼을 표시합니다. 둘 다 사용자의 Claude Code를 조작하므로(대화 다시 열기/로그를 휴지통으로) 읽기 전용인 이 확장과 맞지 않아 함께 옵트인으로 둡니다.' },
     'projectGroupingMode': { label: '프로젝트 그룹화', help: 'git = 저장소별 · folder = 최상위 · flat = 각 cwd.' },
     'showCost': { label: '오늘의 비용 / 토큰 표시', help: '' },
     'statusBarMetric': { label: '상태 표시줄 지표', help: '첫 번째 상태 표시줄 항목에 표시할 내용: 오늘의 비용 또는 오늘의 총 토큰 수 (k/M).' },
     'showContext': { label: '컨텍스트 창 채우기 표시 (experimental)', help: '기본값은 꺼짐. 최신 로그 레코드를 기반으로 /context와 유사하게 현재 세션의 컨텍스트 비율을 추정합니다. 입력 측 합계만 표시할 수 있으며 /context의 카테고리별 분석은 표시할 수 없습니다 (디스크에 기록되지 않는 Claude Code 내부 정보이므로). 따라서 근사치이며 "~"는 추측된 창 크기를 나타냅니다.' },
     'contextWindowOverride': { label: '컨텍스트 창 재정의 (토큰)', help: '0 = 모델에서 자동 감지. 자동 감지에서 인식할 수 없는 프록시/사용자 지정 모델에 실제 창(예: 1000000)을 설정하세요.' },
     'usageLimitTracking': { label: '5시간 / 주간 할당량 표시', help: '' },
-    'quotaFiveHourOnly': { label: '5시간 할당량만 표시', help: '주간(및 Opus) 창을 숨기고 5시간 사용률만 표시합니다.' },
-    'showResetInStatusBar': { label: '상태 표시줄에 재설정 시간 표시', help: '상태 표시줄 할당량 뒤에 재설정 카운트다운을 추가합니다(예: "5h:50%:2.3h").' },
     'showOpusWeekly': { label: '주간 Opus 제한 표시', help: '5시간 / 주간 수치 뒤에 주간 Opus 한도 (opus:NN%)를 추가합니다.' },
+    'quotaFiveHourOnly': { label: '할당량: 5시간 창만', help: '상태 표시줄에 5시간 할당량만 표시하고 주간 수치는 숨깁니다(초기화 세부정보는 tooltip에 유지).' },
+    'showResetInStatusBar': { label: '할당량: 초기화 카운트다운 표시', help: '상태 표시줄에 간결한 초기화 카운트다운을 추가합니다(5h 6% ↻4.8h). 끄면 깔끔하게 유지(5h 6% · wk 1%); tooltip에는 항상 전체 초기화 시각이 표시됩니다.' },
+    'resetCountdownFormat': { label: '할당량: 초기화 카운트다운 형식', help: '"할당량: 초기화 카운트다운 표시"가 켜져 있을 때만 적용됩니다. 소수(4.8h / 1.6d), 단위(4h 48m / 1d 14h), 또는 사용자 컴퓨터의 현지 시각/날짜(18:20 / 2026-07-22) 중 선택합니다.' },
     'workflowQuotaWarnPercent': { label: '워크플로우 할당량 경고 %', help: '남은 5시간 할당량이 이보다 낮을 때 실행 전에 경고합니다. 0 = 끄기.' },
     'dataDirectory': { label: '사용자 지정 데이터 디렉터리', help: 'Claude 데이터 디렉터리; 비워두면 자동 감지.' },
     'refreshInterval': { label: '새로 고침 간격 (초)', help: '' },
-    'fileWatching': { label: '실시간 파일 감시', help: '각 새 메시지 후 ~1.5초 후 새로 고침.' },
-    'pauseDashboardRefresh': { label: '대시보드 자동 새로 고침 일시 중지', help: '상태 표시줄은 계속 업데이트; 대시보드는 수동으로만 새로 고침.' },
+    'fileWatchSeconds': { label: '실시간 새로고침 지연', help: '마지막 로컬 JSONL 변경 후 새로 고침까지 기다리는 시간입니다(quiet debounce, 새 이벤트마다 대기 시간이 다시 시작됨). API를 호출하지 않으며 할당량 조회는 별도로 제한됩니다. 끄기는 감시를 비활성화하고, 큰 기록에서는 60~300초가 CPU 부담을 가장 줄입니다.' },
+    'showInsights': { label: '실험적 인사이트 표시', help: '기본값 꺼짐. Content 탭에 "실험적 인사이트" 섹션을 추가합니다(캐시 소모 청구, 모델별 캐시 유지 시간, 대형 단일 턴, 활동 시간대, 스킬 ROI). 모두 로컬 로그 기반 추정치이며 추정값으로 표시됩니다.' },
+    'showConversationViewer': { label: '대화 뷰어 사용', help: '기본값 켜짐. 세션 탭에 "보기" 버튼을 추가하여 이전 대화를 모델 컨텍스트에 불러오지 않고 읽기 전용으로 다시 읽을 수 있습니다. 로컬 로그만 읽습니다.' },
+    'dashboardAutoRefresh': { label: '대시보드 자동 새로 고침', help: '새 사용량이 들어오면 대시보드를 자동 새로 고침. 끄면 수동 새로 고침만(상태 표시줄은 계속 업데이트).' },
     'enableContentAnalysis': { label: '콘텐츠 분석 (Content 탭)', help: 'CPU 사용이 많은 텍스트 검사를 건너뛰려면 비활성화하세요.' },
     'analysis.calibrate': { label: '콘텐츠 수치 보정', help: '예상치를 정확한 청구 토큰 총합에 맞게 조정합니다.' },
     'advice.apiKey': { label: 'API 키', help: 'api 백엔드용. VS Code 설정에 보관됩니다.' },
@@ -1862,7 +2223,12 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'language': { label: 'Idioma de exibição', help: 'Idioma da interface. "auto" segue o VS Code.' },
     'decimalPlaces': { label: 'Casas decimais do custo', help: '' },
     'compactNumbers': { label: 'Contagem de tokens compacta', help: 'Mostra 1.2M / 345K em vez dos números completos.' },
-    'timezone': { label: 'Fuso horário das datas', help: 'Zona IANA (ex.: America/Fortaleza). Vazio = sistema.' },
+    'timezone': { label: 'Fuso horário das datas', help: 'Zona comum ou deslocamento UTC (todos cobertos), ou padrão do sistema. Os rótulos mostram o deslocamento UTC atual.' },
+    'showHeatmap': { label: 'Mostrar heatmap de tokens (aba Todo o período)', help: 'Desligado por padrão. Heatmap anual estilo GitHub; exporte SVG ou publique no seu perfil do GitHub.' },
+    'showEfficiency': { label: 'Mostrar insights de eficiência', help: 'Desligado por padrão. Custo/mensagem, tokens/mensagem, economia de cache e a estimativa de aquecimento do cache.' },
+    'showCostliestMessages': { label: 'Mostrar "10 mensagens mais caras"', help: 'Desligado por padrão. Ranqueia seus turnos mais caros; ao expandir mostra o prompt (seu próprio texto).' },
+    'enableShareCard': { label: 'Ativar cartão de compartilhamento de uso', help: 'Desligado por padrão. Um resumo SVG de uma página, configurável, para gerar e compartilhar.' },
+    'enableSessionActions': { label: 'Ações de sessão (retomar e excluir)', help: 'Desligado por padrão. Mostra os botões Retomar e Excluir na aba Sessões. Ambos AGEM sobre o seu Claude Code (reabrir uma conversa / mover o log para a lixeira), ao contrário desta extensão somente leitura, então ficam opcionais juntos.' },
     'projectGroupingMode': { label: 'Agrupamento de projetos', help: 'git = por repositório · folder = nível superior · flat = cada cwd.' },
     'showCost': { label: 'Mostrar custo / tokens de hoje', help: '' },
     'statusBarMetric': { label: 'Métrica da barra de status', help: 'O que o primeiro item da barra de status mostra: o custo de hoje ou o total de tokens de hoje (k/M).' },
@@ -1870,10 +2236,13 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'contextWindowOverride': { label: 'Substituir janela de contexto (tokens)', help: '0 = detectar automaticamente pelo modelo. Defina sua janela real (ex.: 1000000) para modelos de proxy ou personalizados que a detecção automática não reconhece.' },
     'usageLimitTracking': { label: 'Mostrar cota de 5 horas / semanal', help: '' },
     'showOpusWeekly': { label: 'Mostrar limite semanal do Opus', help: 'Acrescenta o teto semanal do Opus (opus:NN%) após os valores de 5h / semanais.' },
+    'resetCountdownFormat': { label: 'Cota: formato da contagem regressiva de reset', help: 'Só se aplica quando "Cota: mostrar contagem regressiva de reset" está ativado. Decimal (4.8h / 1.6d), unidades inteiras (4h 48m / 1d 14h), ou o horário/data local do seu computador (18:20 / 2026-07-22).' },
     'workflowQuotaWarnPercent': { label: 'Aviso de cota de workflow %', help: 'Avisa antes de uma execução quando a cota de 5h restante estiver abaixo disto. 0 = desligado.' },
     'dataDirectory': { label: 'Diretório de dados personalizado', help: 'Diretório de dados do Claude; vazio = detectar automaticamente.' },
     'refreshInterval': { label: 'Intervalo de atualização (s)', help: '' },
-    'fileWatching': { label: 'Monitoramento de arquivos em tempo real', help: 'Atualiza ~1,5s após cada nova mensagem.' },
+    'fileWatchSeconds': { label: 'Atraso da atualização em tempo real', help: 'Tempo de espera após a última alteração JSONL local antes de atualizar (quiet debounce; cada novo evento reinicia a espera). Nenhuma API é chamada; as consultas de cota são limitadas separadamente. “Desligado” desativa o monitoramento, e 60–300 s reduz mais a CPU em históricos grandes.' },
+    'showInsights': { label: 'Mostrar insights experimentais', help: 'Desligado por padrão. Adiciona uma seção "Insights experimentais" na aba Content (conta de desgaste de cache, calor de cache por modelo, turnos únicos grandes, horas ativas, ROI de skills) — estimativas heurísticas dos seus logs locais, rotuladas como estimativas.' },
+    'showConversationViewer': { label: 'Ativar visualizador de conversas', help: 'Ligado por padrão. Adiciona um botão de visualização na aba Sessões para reler uma conversa anterior somente leitura, sem carregá-la no contexto do modelo. Lê apenas logs locais.' },
     'pauseDashboardRefresh': { label: 'Pausar atualização do dashboard', help: 'A barra de status continua atualizando; o dashboard só atualiza manualmente.' },
     'enableContentAnalysis': { label: 'Análise de conteúdo (aba Content)', help: 'Desative para pular a varredura de texto, que usa muita CPU.' },
     'analysis.calibrate': { label: 'Calibrar números de conteúdo', help: 'Ajusta as estimativas aos totais exatos de tokens cobrados.' },
@@ -1886,11 +2255,52 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'advice.userContext': { label: 'Contexto pessoal/do projeto', help: 'Informação de fundo opcional; adiciona uma seção "Personalizado".' },
     'advice.optimizer.enabled': { label: 'Ativar o Otimizador de uso', help: 'Mostra o cartão opt-in do Optimizer na aba Content.' },
   },
+  'id': {
+    'language': { label: 'Bahasa tampilan', help: 'Bahasa UI. "auto" mengikuti VS Code.' },
+    'decimalPlaces': { label: 'Angka desimal biaya', help: '' },
+    'tokenDecimalPlaces': { label: 'Angka desimal token', help: 'Angka desimal untuk tampilan token ringkas (1.2M / 345.6K). Jumlah bilangan bulat penuh tidak terpengaruh.' },
+    'compactNumbers': { label: 'Jumlah token ringkas', help: 'Tampilkan 1.2M / 345K, bukan angka penuh.' },
+    'timezone': { label: 'Zona waktu untuk tanggal', help: 'Pilih zona umum atau offset UTC (semua offset tersedia), atau default sistem. Label menampilkan offset UTC saat ini.' },
+    'showHeatmap': { label: 'Tampilkan heatmap token (tab Sepanjang Waktu)', help: 'Nonaktif secara default. Heatmap token tahunan bergaya GitHub di tab All; ekspor sebagai SVG atau publikasikan ke profil GitHub Anda.' },
+    'showEfficiency': { label: 'Tampilkan wawasan efisiensi', help: 'Nonaktif secara default. Menambahkan biaya/pesan, token/pesan, penghematan cache, dan perkiraan cache warmth.' },
+    'showCostliestMessages': { label: 'Tampilkan "10 pesan termahal"', help: 'Nonaktif secara default. Menampilkan giliran termahal; membuka detail menampilkan prompt-nya (teks Anda sendiri).' },
+    'enableShareCard': { label: 'Aktifkan share card penggunaan', help: 'Nonaktif secara default. Ringkasan SVG satu halaman yang dapat dikonfigurasi untuk dibuat dan dibagikan.' },
+    'enableSessionActions': { label: 'Aksi sesi (Lanjutkan & Hapus)', help: 'Nonaktif secara default. Menampilkan tombol Lanjutkan dan Hapus di tab Sesi. Keduanya BERTINDAK pada Claude Code Anda (membuka ulang percakapan / memindahkan log ke sampah) — bertentangan dengan sifat baca-saja extension ini, jadi tetap opsional bersama.' },
+    'projectGroupingMode': { label: 'Pengelompokan proyek', help: 'git = per repo · folder = level teratas · flat = setiap cwd.' },
+    'showCost': { label: 'Tampilkan biaya / token hari ini', help: '' },
+    'statusBarMetric': { label: 'Metrik status bar', help: 'Apa yang ditampilkan item status bar pertama: biaya hari ini, biaya bulan ini, atau total token hari ini (k/M).' },
+    'showContext': { label: 'Tampilkan pengisian jendela konteks (eksperimental)', help: 'Nonaktif secara default. Memperkirakan persentase konteks sesi saat ini, seperti /context, dari catatan log terbaru. Hanya bisa menampilkan total sisi masukan, bukan rincian kategori /context (itu internal Claude Code yang tidak ditulis ke disk), jadi ini perkiraan — tanda "~" menandai ukuran jendela yang ditebak.' },
+    'contextWindowOverride': { label: 'Override jendela konteks (token)', help: '0 = deteksi otomatis dari model. Atur jendela sebenarnya (mis. 1000000) untuk model proxy/kustom yang tidak dikenali deteksi otomatis.' },
+    'usageLimitTracking': { label: 'Tampilkan kuota 5 jam / mingguan', help: '' },
+    'showOpusWeekly': { label: 'Tampilkan batas Opus mingguan', help: 'Tambahkan batas Opus mingguan (opus:NN%) setelah angka 5 jam / mingguan.' },
+    'quotaFiveHourOnly': { label: 'Kuota: hanya periode 5 jam', help: 'Hanya tampilkan kuota 5 jam di status bar, sembunyikan angka mingguan (detail reset tetap di tooltip).' },
+    'showResetInStatusBar': { label: 'Kuota: tampilkan hitung mundur reset', help: 'Tambahkan hitung mundur reset ringkas di status bar (5h 6% ↻4.8h). Nonaktif membuatnya bersih (5h 6% · wk 1%); tooltip selalu menampilkan waktu reset lengkap.' },
+    'workflowQuotaWarnPercent': { label: 'Peringatan kuota workflow %', help: 'Beri peringatan sebelum proses berjalan jika sisa kuota 5 jam di bawah ini. 0 = nonaktif.' },
+    'dataDirectory': { label: 'Direktori data kustom', help: 'Direktori data Claude; kosong = deteksi otomatis.' },
+    'refreshInterval': { label: 'Interval penyegaran (dtk)', help: '' },
+    'fileWatchSeconds': { label: 'Jeda penyegaran live', help: 'Seberapa cepat dashboard menyegarkan setelah ada aktivitas baru. Ini hanya membaca ulang file log LOKAL Anda (tanpa panggilan API — pengambilan kuota dibatasi terpisah). "Off" menonaktifkan pemantauan live; jeda lebih lama lebih ringan untuk CPU.' },
+    'showInsights': { label: 'Tampilkan wawasan eksperimental', help: 'Nonaktif secara default. Menambahkan bagian "Wawasan eksperimental" di tab Konten — perkiraan kami sendiri dari log lokal Anda (mis. tagihan cache-churn: $ yang dihabiskan menulis ulang cache setelah pergantian model / jeda idle). Ini adalah heuristik hasil perhitungan, bukan metrik standar, jadi tetap opsional dan diberi label sebagai perkiraan.' },
+    'showConversationViewer': { label: 'Aktifkan penampil percakapan', help: 'Aktif secara default. Tab Sesi menampilkan tombol "lihat" yang membuka pembaca baca-saja untuk percakapan lampau — sehingga Anda bisa membaca ulang prompt dan jawaban model TANPA memuatnya kembali ke konteks model (berbeda dari resume). Hanya membaca file log lokal Anda (baca-saja), jadi aktif secara default; nonaktifkan untuk menyembunyikan tombolnya.' },
+    'dashboardAutoRefresh': { label: 'Penyegaran otomatis dashboard', help: 'Segarkan dashboard secara otomatis saat ada penggunaan baru. Nonaktif = hanya penyegaran manual (status bar tetap diperbarui).' },
+    'enableContentAnalysis': { label: 'Analisis konten (tab Konten)', help: 'Nonaktifkan untuk melewati pemindaian teks yang berat bagi CPU.' },
+    'analysis.calibrate': { label: 'Kalibrasi angka konten', help: 'Skalakan perkiraan ke total token yang benar-benar ditagih.' },
+    'advice.apiKey': { label: 'API key', help: 'Untuk backend api. Tetap berada di Pengaturan VS Code.' },
+    'advice.apiFormat': { label: 'Format API', help: 'anthropic = /v1/messages · openai = chat-completions.' },
+    'advice.apiUrl': { label: 'URL API', help: 'Endpoint untuk backend api.' },
+    'advice.model': { label: 'Model API', help: '' },
+    'advice.reasoningEffort': { label: 'Effort reasoning (openai)', help: '' },
+    'advice.promptWindowDays': { label: 'Jendela sampel prompt (hari)', help: '' },
+    'advice.userContext': { label: 'Konteks pribadi/proyek', help: 'Latar belakang opsional; menambahkan bagian "Personalisasi".' },
+    'advice.optimizer.enabled': { label: 'Aktifkan Usage Optimizer', help: 'Tampilkan kartu Optimizer opsional di tab Konten.' },
+  },
 };
 
 export class I18n {
   private static currentLanguage: SupportedLanguage = 'en';
   private static currentDecimalPlaces: number = 2;
+  // Decimals for COMPACT token display only (1.2M / 345.6K) — separate from the
+  // cost decimal places. Does not affect full integer token values.
+  private static tokenDecimalPlaces: number = 1;
   private static compactNumbers: boolean = false;
   private static timezone: string = '';
 
@@ -1899,13 +2309,28 @@ export class I18n {
     return this.currentLanguage;
   }
 
-  /** IANA timezone (e.g. "Asia/Hong_Kong"), or '' to use the system zone. */
+  /** IANA timezone (e.g. "Asia/Hong_Kong"), or '' to use the system zone. The
+   * setting is a dropdown now, but an old synced config could still hold an
+   * invalid hand-typed value — `Intl.DateTimeFormat` throws on a bad `timeZone`
+   * and that crashed the whole dashboard (#51). Reject anything Intl won't
+   * accept and fall back to the system zone. */
   static setTimezone(tz: string): void {
-    this.timezone = typeof tz === 'string' ? tz.trim() : '';
+    const clean = typeof tz === 'string' ? tz.trim() : '';
+    this.timezone = clean && I18n.isValidTimeZone(clean) ? clean : '';
   }
 
   static getTimezone(): string {
     return this.timezone;
+  }
+
+  /** True if `tz` is an IANA zone Intl accepts (so date formatting won't throw). */
+  static isValidTimeZone(tz: string): boolean {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Intl date-format options merged with the configured timezone (if any). */
@@ -1917,6 +2342,13 @@ export class I18n {
   static setDecimalPlaces(places: number): void {
     if (typeof places === 'number' && isFinite(places) && places >= 0 && places <= 4) {
       this.currentDecimalPlaces = Math.floor(places);
+    }
+  }
+
+  /** Decimals for compact token display, 0–2 (claudeCodeUsage.tokenDecimalPlaces). */
+  static setTokenDecimalPlaces(places: number): void {
+    if (typeof places === 'number' && isFinite(places) && places >= 0 && places <= 2) {
+      this.tokenDecimalPlaces = Math.floor(places);
     }
   }
 
@@ -1952,6 +2384,8 @@ export class I18n {
         return 'Deutsch (German)';
       case 'pt-BR':
         return 'Português Brasileiro (Brazilian Portuguese)';
+      case 'id':
+        return 'Bahasa Indonesia (Indonesian)';
       case 'en':
       default:
         return 'English';
@@ -1983,6 +2417,7 @@ export class I18n {
     if (locale.includes('ja')) return 'ja';
     if (locale.includes('ko')) return 'ko';
     if (locale.includes('pt')) return 'pt-BR';
+    if (locale.includes('id')) return 'id';
 
     return 'en';
   }
@@ -1995,7 +2430,7 @@ export class I18n {
   /** Always-compact token count (k / M / B) honouring the user's decimal
    * places — used by the status-bar "tokens" metric so it stays short. */
   static formatTokensCompact(num: number): string {
-    const p = this.currentDecimalPlaces;
+    const p = this.tokenDecimalPlaces;
     const abs = Math.abs(num);
     if (abs >= 1_000_000_000) {
       return (num / 1_000_000_000).toFixed(p) + 'B';
@@ -2011,15 +2446,18 @@ export class I18n {
 
   static formatNumber(num: number): string {
     if (this.compactNumbers) {
+      // Compact token display honours tokenDecimalPlaces (0–2); parseFloat trims
+      // trailing zeros so 1.20M reads as 1.2M.
+      const p = this.tokenDecimalPlaces;
       const abs = Math.abs(num);
       if (abs >= 1_000_000_000) {
-        return parseFloat((num / 1_000_000_000).toFixed(2)) + 'B';
+        return parseFloat((num / 1_000_000_000).toFixed(p)) + 'B';
       }
       if (abs >= 1_000_000) {
-        return parseFloat((num / 1_000_000).toFixed(2)) + 'M';
+        return parseFloat((num / 1_000_000).toFixed(p)) + 'M';
       }
       if (abs >= 1_000) {
-        return parseFloat((num / 1_000).toFixed(1)) + 'K';
+        return parseFloat((num / 1_000).toFixed(p)) + 'K';
       }
     }
     // Use the user's selected locale so the thousands separator etc. match

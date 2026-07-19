@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LIVE_REFRESH_SECONDS } from './refreshPolicy';
 
 // Single source of truth for every user setting (V2.1: "settings in the
 // dashboard"). Most settings moved OUT of VS Code's Settings UI to keep it
@@ -18,7 +19,7 @@ import * as vscode from 'vscode';
 
 export type SettingType = 'boolean' | 'number' | 'enum' | 'string';
 export type SettingStorage = 'config' | 'state';
-export type SettingGroup = 'general' | 'statusBar' | 'data' | 'advice';
+export type SettingGroup = 'general' | 'features' | 'statusBar' | 'data' | 'advice';
 
 export interface SettingDef {
   key: string; // dotted config key, e.g. 'advice.backend'
@@ -28,8 +29,11 @@ export interface SettingDef {
   group: SettingGroup;
   label: string; // short English label shown in the panel
   help?: string; // one-line English help
-  enumValues?: string[]; // for type 'enum'
+  enumValues?: string[]; // for type 'enum' (the full set of valid values)
   enumLabels?: string[]; // optional display labels (defaults to enumValues)
+  // Optional <optgroup> structure for a long enum (e.g. timezone: Common vs All
+  // zones). Purely presentational — enumValues stays the flat validation set.
+  enumGroups?: { label: string; values: string[]; labels: string[] }[];
   min?: number;
   max?: number;
   secret?: boolean; // mask the input (apiKey)
@@ -40,6 +44,110 @@ export interface SettingDef {
 // with other globalState entries (consent flags, dismissals, …).
 const STATE_PREFIX = 'ccu.setting.';
 const MIGRATION_FLAG = 'ccu.settingsMigrated.v1';
+// V2.2: one-shot conversion of the old double-negative pauseDashboardRefresh to
+// the positive dashboardAutoRefresh. Its own flag so it runs even for users who
+// already passed the v1 migration.
+const AUTOREFRESH_MIGRATION_FLAG = 'ccu.migrated.dashboardAutoRefresh';
+
+// Timezone dropdown ('' = system default). A dropdown (not free text) means an
+// invalid value can never be entered (#51). Rather than dump all ~400 IANA
+// zones, we curate the common ones — like a typical app's timezone picker — and
+// label each with its current UTC offset so it's easy to find (#: "地点 + 时区
+// 括号"). An exotic zone set earlier still stays selectable (the settings UI
+// injects the stored value if it's not in this list).
+//
+// Ordered roughly west → east. Offsets are computed live (DST-aware) at load.
+// Labels use the canonical IANA time-zone database identifier (the official,
+// apolitical standard) — its last path segment as a friendly city name — so no
+// editorialised country groupings that could read as taking a side.
+const CURATED_ZONES: { zone: string; city: string }[] = [
+  { zone: 'Pacific/Honolulu', city: 'Honolulu' },
+  { zone: 'America/Anchorage', city: 'Anchorage' },
+  { zone: 'America/Los_Angeles', city: 'Los Angeles' },
+  { zone: 'America/Denver', city: 'Denver' },
+  { zone: 'America/Chicago', city: 'Chicago' },
+  { zone: 'America/New_York', city: 'New York' },
+  { zone: 'America/Sao_Paulo', city: 'São Paulo' },
+  { zone: 'UTC', city: 'UTC' },
+  { zone: 'Europe/London', city: 'London' },
+  { zone: 'Europe/Paris', city: 'Paris' },
+  { zone: 'Europe/Berlin', city: 'Berlin' },
+  { zone: 'Europe/Athens', city: 'Athens' },
+  { zone: 'Europe/Moscow', city: 'Moscow' },
+  { zone: 'Asia/Dubai', city: 'Dubai' },
+  { zone: 'Asia/Karachi', city: 'Karachi' },
+  { zone: 'Asia/Kolkata', city: 'Kolkata' },
+  { zone: 'Asia/Dhaka', city: 'Dhaka' },
+  { zone: 'Asia/Bangkok', city: 'Bangkok' },
+  { zone: 'Asia/Jakarta', city: 'Jakarta (WIB)' },
+  { zone: 'Asia/Shanghai', city: 'Shanghai' },
+  { zone: 'Asia/Hong_Kong', city: 'Hong Kong' },
+  { zone: 'Asia/Singapore', city: 'Singapore' },
+  { zone: 'Asia/Makassar', city: 'Makassar (WITA)' },
+  { zone: 'Asia/Tokyo', city: 'Tokyo' },
+  { zone: 'Asia/Seoul', city: 'Seoul' },
+  { zone: 'Asia/Jayapura', city: 'Jayapura (WIT)' },
+  { zone: 'Australia/Sydney', city: 'Sydney' },
+  { zone: 'Pacific/Auckland', city: 'Auckland' },
+];
+
+/** Current UTC offset of a zone as "UTC+08:00" (DST-aware), or '' if unknown. */
+function utcOffsetLabel(zone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      timeZoneName: 'longOffset',
+    }).formatToParts(new Date());
+    const raw = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+    // "GMT+08:00" → "UTC+08:00"; bare "GMT" (UTC) → "UTC+00:00".
+    const norm = raw.replace('GMT', 'UTC');
+    return norm === 'UTC' ? 'UTC+00:00' : norm;
+  } catch {
+    return '';
+  }
+}
+
+// Full UTC-offset coverage (Carl: it's the *offsets* that must be complete, not
+// every city). Whole hours use fixed-offset Etc/GMT zones (POSIX-inverted sign,
+// no DST); the real fractional offsets use a representative zone. A region hint
+// aids recognition. Labels are computed live so they always match the actual
+// bucketing.
+// Pure UTC offsets — no place/country names at all (offset is neutral). The
+// backing IANA zone is an implementation detail; the label shows only the offset.
+const OFFSET_ZONES: { zone: string }[] = [
+  { zone: 'Etc/GMT+12' }, { zone: 'Etc/GMT+11' }, { zone: 'Etc/GMT+10' },
+  { zone: 'Pacific/Marquesas' }, { zone: 'Etc/GMT+9' }, { zone: 'Etc/GMT+8' },
+  { zone: 'Etc/GMT+7' }, { zone: 'Etc/GMT+6' }, { zone: 'Etc/GMT+5' }, { zone: 'Etc/GMT+4' },
+  { zone: 'America/St_Johns' }, { zone: 'Etc/GMT+3' }, { zone: 'Etc/GMT+2' },
+  { zone: 'Etc/GMT+1' }, { zone: 'UTC' }, { zone: 'Etc/GMT-1' }, { zone: 'Etc/GMT-2' }, { zone: 'Etc/GMT-3' },
+  { zone: 'Asia/Tehran' }, { zone: 'Etc/GMT-4' }, { zone: 'Asia/Kabul' },
+  { zone: 'Etc/GMT-5' }, { zone: 'Asia/Kolkata' }, { zone: 'Asia/Kathmandu' },
+  { zone: 'Etc/GMT-6' }, { zone: 'Asia/Yangon' }, { zone: 'Etc/GMT-7' }, { zone: 'Etc/GMT-8' },
+  { zone: 'Australia/Eucla' }, { zone: 'Etc/GMT-9' }, { zone: 'Australia/Darwin' },
+  { zone: 'Etc/GMT-10' }, { zone: 'Australia/Lord_Howe' }, { zone: 'Etc/GMT-11' },
+  { zone: 'Etc/GMT-12' }, { zone: 'Pacific/Chatham' }, { zone: 'Etc/GMT-13' }, { zone: 'Etc/GMT-14' },
+];
+
+const offLabel = (zone: string, name: string): string => {
+  const off = utcOffsetLabel(zone);
+  return off ? `(${off}) ${name}` : name;
+};
+const offsetOnly = (zone: string): string => `(${utcOffsetLabel(zone) || 'UTC'})`;
+
+// Flat set (validation accepts any listed zone) + labels; the dropdown groups them.
+const TIMEZONE_VALUES: string[] = ['', ...CURATED_ZONES.map((z) => z.zone), ...OFFSET_ZONES.map((z) => z.zone)];
+const TIMEZONE_LABELS: string[] = [
+  'System default',
+  ...CURATED_ZONES.map((z) => offLabel(z.zone, z.city)),
+  ...OFFSET_ZONES.map((z) => offsetOnly(z.zone)),
+];
+// Common named zones (IANA cities) stay handy at the top; every UTC offset is
+// under "UTC offset".
+const TIMEZONE_GROUPS = [
+  { label: 'System', values: [''], labels: ['System default'] },
+  { label: 'Common', values: CURATED_ZONES.map((z) => z.zone), labels: CURATED_ZONES.map((z) => offLabel(z.zone, z.city)) },
+  { label: 'UTC offset', values: OFFSET_ZONES.map((z) => z.zone), labels: OFFSET_ZONES.map((z) => offsetOnly(z.zone)) },
+];
 
 export const SETTINGS: SettingDef[] = [
   // --- General ---
@@ -51,7 +159,7 @@ export const SETTINGS: SettingDef[] = [
     group: 'general',
     label: 'Display language',
     help: 'UI language. "auto" follows VS Code.',
-    enumValues: ['auto', 'en', 'zh-TW', 'zh-CN', 'ja', 'ko'],
+    enumValues: ['auto', 'en', 'de-DE', 'zh-TW', 'zh-CN', 'ja', 'ko', 'pt-BR', 'id'],
   },
   {
     key: 'decimalPlaces',
@@ -64,6 +172,17 @@ export const SETTINGS: SettingDef[] = [
     max: 4,
   },
   {
+    key: 'tokenDecimalPlaces',
+    type: 'number',
+    default: 1,
+    storage: 'state',
+    group: 'general',
+    label: 'Token decimal places',
+    help: 'Decimals for compact token display (1.2M / 345.6K). Full integer counts are unaffected.',
+    min: 0,
+    max: 2,
+  },
+  {
     key: 'compactNumbers',
     type: 'boolean',
     default: false,
@@ -73,13 +192,79 @@ export const SETTINGS: SettingDef[] = [
     help: 'Show 1.2M / 345K instead of full numbers.',
   },
   {
+    key: 'showHeatmap',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Show token heatmap (All-time tab)',
+    help: 'Show a GitHub-style yearly token heatmap on the All tab. Off by default — mainly a shareable view of what you can already see elsewhere. Use "Export Token Heatmap" for a GitHub-profile SVG.',
+  },
+  {
+    key: 'showEfficiency',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Show efficiency insights',
+    help: 'Off by default (not everyone wants these). Adds cost/message, tokens/message and realised cache savings to Today / month / all-time and the projects table. (The "top 10 costliest messages" panel has its own toggle below.)',
+  },
+  {
+    key: 'enableShareCard',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Enable usage share card',
+    help: 'Off by default. When on, the All tab gets a configurable "Share card" — pick a range (week / month / year / a specific month), a scope (overall / a project / a session) and which metrics to show, then generate a one-page SVG to share. Only aggregate numbers leave your machine, and only when you export.',
+  },
+  {
+    key: 'showCostliestMessages',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Show "top 10 costliest messages"',
+    help: 'Off by default. Adds a panel on the Content tab that ranks your single most expensive turns and, on expand, shows the prompt that triggered each (plus a cost split so you can tell a cache miss from a long answer). It reads and displays your own prompt text, so it stays opt-in.',
+  },
+  {
+    key: 'showInsights',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Show experimental insights',
+    help: 'Off by default. Adds an "Experimental insights" section to the Content tab — our own estimates from your local logs (e.g. a cache-churn bill: $ spent re-writing cache after model switches / idle gaps). These are computed heuristics, not standardized metrics, so they stay opt-in and are labelled as estimates.',
+  },
+  {
+    key: 'enableSessionActions',
+    type: 'boolean',
+    default: false,
+    storage: 'state',
+    group: 'features',
+    label: 'Enable session resume & delete actions',
+    help: 'Off by default. When on, the Sessions tab shows Resume and Delete buttons. Both ACT on your Claude Code — resume reopens a conversation (and reloads it into context), delete moves its log file to the OS trash — which is at odds with this extension being read-only, so they stay opt-in together.',
+  },
+  {
+    key: 'showConversationViewer',
+    type: 'boolean',
+    default: true,
+    storage: 'state',
+    group: 'features',
+    label: 'Enable conversation viewer',
+    help: 'On by default. The Sessions tab shows a "view" button that opens a read-only reader for a past conversation — so you can re-read your prompts and the model\'s answers to jog your memory WITHOUT loading them back into the model\'s context (unlike resume). It only reads your local log files (read-only), so it is on by default; turn it off to hide the button.',
+  },
+  {
     key: 'timezone',
-    type: 'string',
+    type: 'enum',
     default: '',
     storage: 'state',
     group: 'general',
     label: 'Timezone for dates',
-    help: 'IANA zone (e.g. Asia/Hong_Kong). Empty = system.',
+    help: 'Pick a common zone or a UTC offset (every offset is covered), or the system default. Labels show the current UTC offset.',
+    enumValues: TIMEZONE_VALUES,
+    enumLabels: TIMEZONE_LABELS,
+    enumGroups: TIMEZONE_GROUPS,
   },
   {
     key: 'projectGroupingMode',
@@ -158,8 +343,8 @@ export const SETTINGS: SettingDef[] = [
     default: false,
     storage: 'state',
     group: 'statusBar',
-    label: 'Show only the 5-hour quota',
-    help: 'Hide the weekly (and Opus) windows; show just the 5-hour utilisation.',
+    label: 'Quota: 5-hour window only',
+    help: 'Show only the 5-hour quota in the status bar, hiding the weekly figure (reset details stay in the tooltip).',
   },
   {
     // Append the 5h / weekly reset countdown to the status-bar quota item.
@@ -168,8 +353,20 @@ export const SETTINGS: SettingDef[] = [
     default: false,
     storage: 'state',
     group: 'statusBar',
-    label: 'Show quota reset time in status bar',
-    help: 'Append the reset countdown (e.g. "5h:50%:2.3h") to the status-bar quota item.',
+    label: 'Quota: show reset countdown',
+    help: 'Append a compact reset countdown in the status bar (5h 6% ↻4.8h). Off keeps it clean (5h 6% · wk 1%); the tooltip always shows full reset times.',
+  },
+  {
+    // Format of the reset countdown appended by showResetInStatusBar (#74).
+    key: 'resetCountdownFormat',
+    type: 'enum',
+    default: 'decimal',
+    storage: 'state',
+    group: 'statusBar',
+    label: 'Quota: reset countdown format',
+    help: 'Only applies when "Quota: show reset countdown" is on. Decimal (4.8h / 1.6d), whole units (4h 48m / 1d 14h), or your computer\'s local clock time / date (18:20 / 2026-07-22).',
+    enumValues: ['decimal', 'units', 'clock'],
+    enumLabels: ['Decimal (4.8h / 1.6d)', 'Units (4h 48m / 1d 14h)', 'Local time (18:20 / 2026-07-22)'],
   },
   {
     key: 'workflowQuotaWarnPercent',
@@ -204,22 +401,26 @@ export const SETTINGS: SettingDef[] = [
     max: 3600,
   },
   {
-    key: 'fileWatching',
+    key: 'fileWatchSeconds',
+    type: 'enum',
+    default: '2',
+    storage: 'state',
+    group: 'data',
+    label: 'Live refresh delay',
+    help: 'Wait after the last local JSONL change before refreshing (quiet debounce; each new event restarts the delay). No API call is made; quota fetches are throttled separately. Off disables watching, and 60–300s is the lowest-CPU option for large histories.',
+    enumValues: [...LIVE_REFRESH_SECONDS],
+    enumLabels: ['Off', '1s', '2s', '5s', '10s', '20s', '30s', '60s', '120s', '300s'],
+  },
+  {
+    // V2.2: positive wording, replacing the old double-negative
+    // `pauseDashboardRefresh` (migrated by SettingsStore.migrateDashboardAutoRefresh).
+    key: 'dashboardAutoRefresh',
     type: 'boolean',
     default: true,
     storage: 'state',
     group: 'data',
-    label: 'Live file watching',
-    help: 'Refresh ~1.5s after each new message.',
-  },
-  {
-    key: 'pauseDashboardRefresh',
-    type: 'boolean',
-    default: false,
-    storage: 'state',
-    group: 'data',
-    label: 'Pause dashboard auto-refresh',
-    help: 'Status bar still updates; dashboard only on manual refresh.',
+    label: 'Dashboard auto-refresh',
+    help: 'Auto-refresh the dashboard as new usage lands. Off = manual refresh only (the status bar still updates).',
   },
   {
     key: 'enableContentAnalysis',
@@ -444,5 +645,35 @@ export class SettingsStore {
       }
     }
     await this.context.globalState.update(MIGRATION_FLAG, true);
+  }
+
+  /**
+   * One-shot V2.2 migration: the old `pauseDashboardRefresh` (double negative)
+   * becomes `dashboardAutoRefresh` (positive), inverted:
+   *   pauseDashboardRefresh === true  → dashboardAutoRefresh = false
+   *   false / undefined               → dashboardAutoRefresh = true (the default)
+   * Reads the old value from globalState (2.1) or settings.json (pre-2.1).
+   */
+  async migrateDashboardAutoRefresh(): Promise<void> {
+    if (this.context.globalState.get<boolean>(AUTOREFRESH_MIGRATION_FLAG, false)) {
+      return;
+    }
+    const newKey = STATE_PREFIX + 'dashboardAutoRefresh';
+    if (this.context.globalState.get(newKey) === undefined) {
+      let oldPause = this.context.globalState.get<boolean>(STATE_PREFIX + 'pauseDashboardRefresh');
+      if (oldPause === undefined) {
+        const info = this.cfg().inspect('pauseDashboardRefresh');
+        const v = info?.globalValue ?? info?.workspaceFolderValue ?? info?.workspaceValue;
+        if (typeof v === 'boolean') {
+          oldPause = v;
+        }
+      }
+      // Only write when the user had actually set the old flag; otherwise leave
+      // dashboardAutoRefresh at its catalog default (true).
+      if (oldPause !== undefined) {
+        await this.context.globalState.update(newKey, !oldPause);
+      }
+    }
+    await this.context.globalState.update(AUTOREFRESH_MIGRATION_FLAG, true);
   }
 }

@@ -1,6 +1,6 @@
 # Claude Code 使用量监控
 
-🌐 **语言**: [🏠 Main](README.md) | [English](README-en.md) | [繁體中文](README-zh-TW.md) | **简体中文** | [日本語](README-ja.md) | [한국어](README-ko.md)
+🌐 **语言**: [🏠 Main](README.md) | [English](README-en.md) | [繁體中文](README-zh-TW.md) | **简体中文** | [日本語](README-ja.md) | [한국어](README-ko.md) | [Bahasa Indonesia](README-id.md)
 
 ---
 
@@ -59,6 +59,20 @@ AI 建议生成的是一份 **Markdown 文档**，用文字展示比截图更直
 粘贴进一条粗略、没成形的需求，获得一条干净、**可直接粘贴**的提示词（纯文本、无 Markdown），并附上推荐的 effort / thinking / 模型（以小标签显示）。三个可选开关进一步微调（标出含糊指代 · 压缩长粘贴内容 · 建议风格方向）。实验性，默认关闭；**只发送你粘贴的文字**，不碰你的文件、不进终端，且首次有一次性同意确认。
 
 ---
+
+## 2.2 新功能
+
+- **用量分享卡**（可选，`enableShareCard`）：一张可配置的单页 SVG 用量卡——自选时间范围 × 范围（总体 / 工程 / 会话）× 展示哪些指标，以及主题（**Claude 经典橙** / **奶油** / **极光暗色** / **自动**），可选带上 GitHub 头像与名称。自包含、可复现；提示词、路径、ID 一律不出本机。中文语言下使用 万/亿 单位。
+- **只读会话查看器**（会话标签，**默认开启**）：每行的「查看」按钮以只读方式重开某个历史会话的提示词与 Markdown 渲染的回答，帮你回忆内容，而**不必**像「恢复」那样把它重新塞回模型上下文。思考与工具调用收进折叠区，默认展示最近若干轮。
+- **Token 热力图**（可选，`showHeatmap`）：All 标签顶部的 GitHub 风格年度 token 热力图，并可**导出 / 发布到你的 GitHub 主页**（自包含 SVG，一键复制 Markdown 嵌入代码）。
+- **实验性洞察**（可选，`showInsights`，Content 标签）：基于本地日志的启发式估算（均标注为估算）——**缓存损耗账单**（模型切换 / 空闲导致重写缓存的花费）、**各模型缓存保温时长**、**大单轮**、**你的活跃时段**、以及**技能 ROI**（每美元产出的输出 token）。
+- **最贵的 10 条消息**（可选，`showCostliestMessages`）：按成本排序单轮对话，区分**缓存未命中**与长回答，附缓存命中率与距上一轮的间隔。
+- **会话「活跃」列**：每个会话的估算实际操作时长（空闲间隔按 1.5 小时封顶），比原始的首尾时间跨度更有意义。
+- **缓存命中率列**：All-time（按月）与本月（按日）表格及其下钻均新增该列，逐行可见缓存效率。
+- **实时刷新延迟**（`fileWatchSeconds`：关 / 1 / 2 / 5 / 10 / 20 / 30 秒）取代原来的开 / 关切换；只重读**本地**日志。
+- **时区感知分桶**：Today / 日 / 月 / 小时 的统计都以你配置的 IANA 时区为准（下拉含完整 UTC 偏移），彼此之间以及与 Anthropic 控制台保持一致。
+- **升级后「新功能」提示**：每次首次运行新的 major.minor 版本时给一次可关闭的提示，让可选功能不被埋没。
+- **修复**：Sonnet 5 正确上报 1M 上下文窗口（#50）；日志带 TTL 拆分时，1 小时缓存写入按 2× 基础输入计价（#62）；多窗口下后台窗口在获得焦点时刷新、不再显示过期数据（#55）；时区设置改为校验过的下拉框，非法值不再拖垮仪表板（#51）；德语（de-DE）与巴西葡语（pt-BR）在各处均可选。
 
 ## 2.1 新功能
 
@@ -120,7 +134,7 @@ ext install GrowthJack.claude-code-usage
 
 | 设置 | 默认 | 作用 |
 |---|---|---|
-| `language` | `"auto"` | 界面语言：`auto` / `en` / `zh-TW` / `zh-CN` / `ja` / `ko`。 |
+| `language` | `"auto"` | 界面语言：`auto` / `en` / `de-DE` / `zh-TW` / `zh-CN` / `ja` / `ko` / `pt-BR` / `id`。 |
 | `dataDirectory` | `""` | 自定义 Claude 数据目录；留空 = 自动检测。 |
 | `advice.apiKey` | `""` | AI 建议 + 用量优化器的 API key（留空则 AI 建议会打开 demo）。 |
 
@@ -172,8 +186,14 @@ ext install GrowthJack.claude-code-usage
 **`Get AI Usage Advice` 显示 demo 而非真实建议**
 - AI 建议需要 key。若 `claudeCodeUsage.advice.apiKey` 为空，命令会打开一份手写 demo（文件名带 `…-DEMO-…`，顶部有醒目横幅）而不调用任何 API。在设置中填入 key 即可获得真实建议。
 
-**大历史下刷新缓慢**
-- 加载器每 25 个文件让出一次事件循环；空闲 tick 跳过重算。如仍有问题，提高 `refreshInterval` 或将 `enableContentAnalysis` 设为 `false`。
+**大历史下 CPU 占用高或刷新缓慢（包括 Linux）**
+- V2.2.1 移除了 active 状态下隐藏的 8 秒轮询覆盖，并限制首时间戳扫描。
+  在安装 V2.2.1 前，可先把**实时刷新延迟**设为**关闭**，把**刷新间隔**设为
+  **300–900 秒**，并视需要关闭**内容分析**。只关闭“仪表盘自动刷新”并不会
+  停止状态栏所需的日志解析。
+- 若 V2.2.1 仍持续高占用，请运行 **Show Diagnostic Logs**，只把匿名的
+  `refresh:` 行附到 issue #70；其中只有计数和耗时，不含提示词、路径、
+  session ID、凭证或原始日志行。
 
 **历史记录消失或缺少早期月份**
 - Claude Code 会自动删除超过 `cleanupPeriodDays`（默认 **30 天**）的对话日志。已删除的记录无法恢复。要保留更多历史，在 `~/.claude/settings.json` 中添加：
@@ -187,6 +207,8 @@ ext install GrowthJack.claude-code-usage
 ## 致谢
 
 由 [**@Carl723000**](https://github.com/Carl723000) 维护 —— 最早从 [@jack21](https://github.com/jack21) 的原始项目 [`ClaudeCodeUsage`](https://github.com/jack21) fork 而来，现在也是上游组织 [`ClaudeCodeUsage/ClaudeCodeUsage`](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage) 的 owner 之一、负责后续维护。MIT 授权。本文档「新功能」里的 2.x 内容由 @Carl723000 借助 [Claude Code](https://claude.com/claude-code) 完成，已在 2.0 基础上推进许多 —— 见 [CHANGELOG.md](CHANGELOG.md)。
+
+开发工具致谢：仓库维护同时使用了 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex/)。这只记录开发工具，与人类贡献者身份分开；Codex 不会进入 Release Drafter 的人类 contributor 列表，也不会获得伪造的 `Co-Authored-By` 身份。
 
 已并入的上游贡献者 PR / issue：
 
