@@ -961,7 +961,7 @@ export class UsageWebviewProvider {
       return '<div class="no-data"><p>' + I18n.t.popup.noDataMessage + '</p></div>';
     }
 
-    const todaySummary = this.renderUsageData(this.todayData) + this.renderTodayInsights();
+    const todaySummary = this.renderUsageData(this.todayData) + this.renderUsageTracking({ kind: 'day' });
 
     let hourlyBreakdown = '';
     if (this.hourlyDataForToday.length > 0) {
@@ -1303,6 +1303,93 @@ export class UsageWebviewProvider {
     return html;
   }
 
+  /** Daily-breakdown section (chart tabs + stacked cost chart + token
+   * composition + expandable per-day table), the design established on the
+   * This Month tab. Shared by the This Week and This Month tabs; the
+   * detailIdPrefix keeps the expandable hourly-detail containers unique when
+   * the same date appears on both tabs. */
+  private renderDailyBreakdownSection(
+    dailyData: { date: string; data: UsageData }[],
+    detailIdPrefix: string
+  ): string {
+    if (dailyData.length === 0) {
+      return '';
+    }
+    const sorted = [...dailyData].sort((a, b) => a.date.localeCompare(b.date));
+    return `
+      <div class="daily-breakdown">
+        <h3>${I18n.t.popup.dailyBreakdown}</h3>
+
+        <!-- Chart Tabs -->
+        <div class="chart-tabs">
+          <button class="chart-tab active" data-metric="cost">${I18n.t.popup.cost}</button>
+          <button class="chart-tab" data-metric="inputTokens">${I18n.t.popup.inputTokens}</button>
+          <button class="chart-tab" data-metric="outputTokens">${I18n.t.popup.outputTokens}</button>
+          <button class="chart-tab" data-metric="cacheCreation">${I18n.t.popup.cacheCreation}</button>
+          <button class="chart-tab" data-metric="cacheRead">${I18n.t.popup.cacheRead}</button>
+          <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
+        </div>
+
+        <!-- Chart Container (hc-wrap is self-contained: Y-axis + gridlines + scroll) -->
+        <div class="chart-content">
+          ${this.renderMainCostChart(sorted)}
+        </div>
+
+        ${this.renderCompositionChart(sorted.map((d) => ({ label: this.getShortDate(d.date), data: d.data })))}
+
+        <div class="daily-table-container">
+          <table class="daily-table">
+            <thead>
+              <tr>
+                <th>${I18n.t.popup.date}</th>
+                <th>${I18n.t.popup.cost}</th>
+                <th>${I18n.t.popup.inputTokens}</th>
+                <th>${I18n.t.popup.outputTokens}</th>
+                <th>${I18n.t.popup.cacheCreation}</th>
+                <th>${I18n.t.popup.cacheRead}</th>
+                <th>${I18n.t.popup.cacheHitRate}</th>
+                <th>${I18n.t.popup.messages}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dailyData
+                .map(
+                  ({ date, data }) => `
+                <tr class="daily-row" data-date="${date}">
+                  <td class="date-cell">${this.formatDate(date)}</td>
+                  <td class="cost-cell">${I18n.formatCurrency(data.totalCost)}</td>
+                  <td class="number-cell">${I18n.formatNumber(data.totalInputTokens)}</td>
+                  <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
+                  <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
+                  <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
+                  <td class="number-cell">${this.formatPercent(this.cacheHitRate(data))}</td>
+                  <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
+                  <td class="detail-cell">
+                    <button class="detail-button" onclick="toggleHourlyDetail('${date}')" title="${I18n.t.popup.hourlyBreakdown}">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path class="expand-icon" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+                <tr class="hourly-detail-row" data-date="${date}" style="display: none;">
+                  <td colspan="9">
+                    <div class="hourly-detail-container" id="hourly-detail-${detailIdPrefix}${date}" data-date="${date}">
+                      <div class="loading-indicator">載入中...</div>
+                    </div>
+                  </td>
+                </tr>
+              `
+                )
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
   private renderWeekData(): string {
     let resetBanner = '';
     if (this.weekResetsAt) {
@@ -1337,7 +1424,25 @@ export class UsageWebviewProvider {
         'Enable it in settings: <code>claudeCodeUsage.usageLimitTracking</code></p>' +
         '</div>';
     }
-    return resetBanner + this.renderUsageData(this.weekData);
+
+    // Billing-window start (resets_at − 7 days) — the same boundary used to
+    // aggregate weekData in extension.ts, reused for the insights card and the
+    // per-day breakdown so all three views agree.
+    const weekStartTs = this.weekResetsAt
+      ? new Date(this.weekResetsAt).getTime() - 7 * 24 * 60 * 60 * 1000
+      : undefined;
+
+    let insights = '';
+    let dailyBreakdown = '';
+    if (weekStartTs !== undefined && this.allRecords && this.allRecords.length > 0) {
+      insights = this.renderUsageTracking({ kind: 'week', sinceTs: weekStartTs });
+      dailyBreakdown = this.renderDailyBreakdownSection(
+        ClaudeDataLoader.getDailyDataForWeek(this.allRecords, new Date(weekStartTs)),
+        'week-'
+      );
+    }
+
+    return resetBanner + this.renderUsageData(this.weekData) + insights + dailyBreakdown;
   }
 
   private renderMonthData(): string {
@@ -1347,87 +1452,15 @@ export class UsageWebviewProvider {
 
     const monthSummary = this.renderUsageData(this.monthData);
 
-    const dailyBreakdown =
-      this.dailyDataForMonth.length > 0
-        ? `
-      <div class="daily-breakdown">
-        <h3>${I18n.t.popup.dailyBreakdown}</h3>
+    // Insights window = the current calendar month, matching monthData's
+    // aggregation (not the attribution panel's rolling 30 days).
+    const now = new Date();
+    const monthStartTs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const insights = this.renderUsageTracking({ kind: 'month', sinceTs: monthStartTs });
 
-        <!-- Chart Tabs -->
-        <div class="chart-tabs">
-          <button class="chart-tab active" data-metric="cost">${I18n.t.popup.cost}</button>
-          <button class="chart-tab" data-metric="inputTokens">${I18n.t.popup.inputTokens}</button>
-          <button class="chart-tab" data-metric="outputTokens">${I18n.t.popup.outputTokens}</button>
-          <button class="chart-tab" data-metric="cacheCreation">${I18n.t.popup.cacheCreation}</button>
-          <button class="chart-tab" data-metric="cacheRead">${I18n.t.popup.cacheRead}</button>
-          <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
-        </div>
+    const dailyBreakdown = this.renderDailyBreakdownSection(this.dailyDataForMonth, '');
 
-        <!-- Chart Container (hc-wrap is self-contained: Y-axis + gridlines + scroll) -->
-        <div class="chart-content" id="dailyChart">
-          ${this.renderDailyChart()}
-        </div>
-
-        ${this.renderCompositionChart(
-          [...this.dailyDataForMonth]
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .map((d) => ({ label: this.getShortDate(d.date), data: d.data }))
-        )}
-
-        <div class="daily-table-container">
-          <table class="daily-table">
-            <thead>
-              <tr>
-                <th>${I18n.t.popup.date}</th>
-                <th>${I18n.t.popup.cost}</th>
-                <th>${I18n.t.popup.inputTokens}</th>
-                <th>${I18n.t.popup.outputTokens}</th>
-                <th>${I18n.t.popup.cacheCreation}</th>
-                <th>${I18n.t.popup.cacheRead}</th>
-                <th>${I18n.t.popup.cacheHitRate}</th>
-                <th>${I18n.t.popup.messages}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${this.dailyDataForMonth
-                .map(
-                  ({ date, data }) => `
-                <tr class="daily-row" data-date="${date}">
-                  <td class="date-cell">${this.formatDate(date)}</td>
-                  <td class="cost-cell">${I18n.formatCurrency(data.totalCost)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalInputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
-                  <td class="number-cell">${this.formatPercent(this.cacheHitRate(data))}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
-                  <td class="detail-cell">
-                    <button class="detail-button" onclick="toggleHourlyDetail('${date}')" title="${I18n.t.popup.hourlyBreakdown}">
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path class="expand-icon" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-                <tr class="hourly-detail-row" data-date="${date}" style="display: none;">
-                  <td colspan="9">
-                    <div class="hourly-detail-container" id="hourly-detail-${date}">
-                      <div class="loading-indicator">載入中...</div>
-                    </div>
-                  </td>
-                </tr>
-              `
-                )
-                .join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `
-        : '';
-
-    return monthSummary + dailyBreakdown;
+    return monthSummary + insights + dailyBreakdown;
   }
 
   private renderAllTimeData(): string {
@@ -1435,7 +1468,7 @@ export class UsageWebviewProvider {
       return `<div class="no-data"><p>${I18n.t.popup.noDataMessage}</p></div>`;
     }
 
-    const allTimeSummary = this.renderUsageData(this.allTimeData);
+    const allTimeSummary = this.renderUsageData(this.allTimeData) + this.renderUsageTracking({ kind: 'all' });
 
     // Optional GitHub-style token heatmap (off by default; mainly a shareable
     // view). Inline SVG renders with working hover tooltips inside the webview.
@@ -2240,7 +2273,10 @@ export class UsageWebviewProvider {
    * text-length thinking estimate is deliberately excluded here (it lives on
    * the Sessions tab, clearly marked as an estimate). Hidden on light days.
    */
-  private renderTodayInsights(): string {
+  /** "Usage tracking" attribution card for one timeframe. Same card as the
+   * Today tab, scoped to the given attribution window so every timeframe tab
+   * (Today / This Week / This Month / All Time) gets the same insight. */
+  private renderUsageTracking(scope: AttributionScope): string {
     const t = I18n.t.popup;
     const rows: string[] = [];
     const barRow = (label: string, share: number, colorClass: string, tooltip: string): string =>
@@ -2251,10 +2287,10 @@ export class UsageWebviewProvider {
       '<div class="cbar-pct">' + this.formatPercent(share) + '</div>' +
       '</div>';
 
-    // Today's usage characteristics, ≥5% only (full sentence in the tooltip).
-    // All cost-weighted from exact usage — no estimates in this card.
+    // The timeframe's usage characteristics, ≥5% only (full sentence in the
+    // tooltip). All cost-weighted from exact usage — no estimates in this card.
     if (this.allRecords && this.allRecords.length > 0) {
-      const attr = ClaudeDataLoader.getUsageAttribution(this.allRecords, this.contentAnalysis, { kind: 'day' });
+      const attr = ClaudeDataLoader.getUsageAttribution(this.allRecords, this.contentAnalysis, scope);
       if (attr.totalCost > 0) {
         const add = (share: number, short: string, sentence: string, hint: string, color: string): void => {
           if (share < 0.05) {
@@ -3302,11 +3338,6 @@ export class UsageWebviewProvider {
       '</div>' +
       '</div>'
     );
-  }
-
-  private renderDailyChart(): string {
-    const sortedData = [...this.dailyDataForMonth].sort((a, b) => a.date.localeCompare(b.date));
-    return this.renderMainCostChart(sortedData);
   }
 
   private renderAllTimeChart(): string {
@@ -5704,10 +5735,14 @@ function toggleHourlyDetail(date) {
   console.log("[DEBUG] toggleHourlyDetail called for date:", date);
 
   try {
-    const detailRow = document.querySelector('.hourly-detail-row[data-date="' + date + '"]');
-    const button = document.querySelector('.daily-row[data-date="' + date + '"] .detail-button');
-    const container = document.getElementById('hourly-detail-' + date);
-    const chartBar = document.querySelector('.chart-bar-container[data-date="' + date + '"] .chart-bar');
+    // Scope to the active tab: the This Week and This Month tabs can both
+    // list the same date, so a document-wide lookup would always hit
+    // whichever tab happens to come first in the DOM.
+    const scope = document.querySelector('.tab-content.active') || document;
+    const detailRow = scope.querySelector('.hourly-detail-row[data-date="' + date + '"]');
+    const button = scope.querySelector('.daily-row[data-date="' + date + '"] .detail-button');
+    const container = scope.querySelector('.hourly-detail-container[data-date="' + date + '"]');
+    const chartBar = scope.querySelector('.chart-bar-container[data-date="' + date + '"] .chart-bar');
 
     console.log("[DEBUG] Found elements:", {
       detailRow: !!detailRow,
@@ -5880,10 +5915,17 @@ function closeAllMonthlyDetails() {
   console.log("[DEBUG] Closed all monthly detail rows");
 }
 
-function updateHourlyChart(date, metric) {
+function updateHourlyChart(date, metric, chartContent) {
   console.log("[DEBUG] updateHourlyChart called with date:", date, "metric:", metric);
 
-  const container = document.getElementById('hourly-detail-' + date);
+  // Resolve within the clicked detail when provided (the same date can be
+  // expanded on both the This Week and This Month tabs, so ids duplicate);
+  // fall back to the active tab's container.
+  let container = chartContent ? chartContent.closest('.hourly-detail-container') : null;
+  if (!container) {
+    const scope = document.querySelector('.tab-content.active') || document;
+    container = scope.querySelector('.hourly-detail-container[data-date="' + date + '"]');
+  }
   if (!container) return;
 
   // Update active tab
@@ -5897,7 +5939,7 @@ function updateHourlyChart(date, metric) {
   });
 
   // Re-render chart
-  const chartContainer = document.getElementById('hourly-chart-' + date);
+  const chartContainer = chartContent || container.querySelector('[id^="hourly-chart-"]');
   const hourlyData = window['hourlyData_' + date];
   if (hourlyData && chartContainer) {
     chartContainer.innerHTML = renderHourlyChart(hourlyData, metric);
@@ -5950,13 +5992,21 @@ window.addEventListener('message', function(event) {
   }
 
   if (message.command === 'hourlyDataResponse') {
-    const container = document.getElementById('hourly-detail-' + message.date);
-    if (container && message.data) {
-      console.log("[DEBUG] Rendering hourly data for date:", message.date);
-      container.innerHTML = renderHourlyData(message.data, message.date);
+    // Fill every container for this date — the This Week and This Month tabs
+    // can both carry a row for it, and the content is identical. Filling both
+    // also marks both loaded, so expanding the same date on the other tab
+    // doesn't strand a "loading" spinner. (Content comes from the extension
+    // host's own aggregation — same trust domain as the rest of the page.)
+    const containers = document.querySelectorAll('.hourly-detail-container[data-date="' + message.date + '"]');
+    if (message.data) {
+      containers.forEach(function(container) {
+        console.log("[DEBUG] Rendering hourly data for date:", message.date);
+        container.innerHTML = renderHourlyData(message.data, message.date);
+        container.dataset.loaded = 'true';
 
-      // Re-bind chart tab events after rendering
-      bindChartTabEvents(container);
+        // Re-bind chart tab events after rendering
+        bindChartTabEvents(container);
+      });
     }
   }
 
@@ -6026,7 +6076,7 @@ document.addEventListener('click', function(event) {
         if (chartContent) {
           const date = chartContent.id.replace('hourly-chart-', '');
           console.log("[DEBUG] Updating hourly chart for date:", date, "metric:", metric);
-          updateHourlyChart(date, metric);
+          updateHourlyChart(date, metric, chartContent);
         }
       } else {
         // This is a main chart (daily/monthly)
@@ -6100,7 +6150,7 @@ function handleChartTabClick(event) {
       const chartContent = container.querySelector('[id^="hourly-chart-"]');
       if (chartContent) {
         const date = chartContent.id.replace('hourly-chart-', '');
-        updateHourlyChart(date, metric);
+        updateHourlyChart(date, metric, chartContent);
       }
     } else {
       updateMainChart(metric, null);

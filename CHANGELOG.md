@@ -4,6 +4,36 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.2.1 / `ade48ab`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.8.1] — 2026-07-20
+
+### Fixed (fork-specific)
+
+- **Claude Sonnet 5 overcounted by 50%** — Sonnet 5 was priced at the $3/$15 Sonnet 4.x tier, but its official price is the introductory $2/$10 (cache write $2.50 5m / $4 1h, cache read $0.20) through 2026-08-31, per [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing). Pricing is now timestamp-aware: usage through 2026-08-31 bills at the introductory rate, usage from 2026-09-01 at the standard $3/$15 tier. Verified against ccusage over the full local history: every daily total now matches to the cent.
+- **Pricing refresh dropped the 1-hour cache-write rate** — "Refresh Token Pricing" (LiteLLM) didn't map LiteLLM's `cache_creation_input_token_cost_above_1hr` field, so after a manual refresh all 1-hour cache writes were billed at the cheaper 5-minute rate. The field is now mapped.
+
+---
+
+## [2.8.0] — 2026-07-20
+
+### Added (fork-specific)
+
+- **Usage tracking card on every timeframe tab** — the cost-weighted attribution card from the Today tab (large context, long sessions, subagent-heavy, workflows, top skill) now also renders on This Week, This Month, and All Time. Each card is scoped to its tab's own window: the week card uses the exact billing-window start (`resets_at − 7 days`), the month card uses the calendar month, and All Time covers everything via a new `'all'` attribution scope.
+- **This Week charts** — the This Week tab gains the same daily breakdown as This Month: metric switcher (cost / input / output / cache creation / cache read / messages), stacked cost chart, token-composition chart, and a per-day table with expandable hourly drill-downs. Rendered from a new `getDailyDataForWeek()` scoped to the billing window.
+
+### Changed (fork-specific)
+
+- **Shared daily-breakdown renderer** — the This Month tab's breakdown markup was extracted into a single `renderDailyBreakdownSection()` now used by both the Week and Month tabs, so their design stays identical by construction.
+
+### Fixed (fork-specific)
+
+- **Hourly drill-down cross-tab collision** — expandable per-day detail rows were looked up document-wide by date; with the same date present on both the This Week and This Month tabs, expanding a row on one tab could operate on the other tab's hidden row. Lookups are now scoped to the active tab, and the hourly-data response fills both tabs' containers.
+
+### Upstream alignment
+
+Unchanged from 2.7.0 — aligned with `jack21/ClaudeCodeUsage` v2.2.1 (`ade48ab`).
+
+---
+
 ## [2.7.0] — 2026-07-19
 
 ### Added (merged from upstream v2.2.0 / v2.2.1)

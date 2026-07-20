@@ -1009,7 +1009,7 @@ export class ClaudeDataLoader {
       }
 
       // Cost split by token type; the total is the sum of the four components.
-      const costParts = calculateCostBreakdown(usage, model);
+      const costParts = calculateCostBreakdown(usage, model, Date.parse(record.timestamp));
       const calculatedCost = costParts.input + costParts.output + costParts.cacheWrite + costParts.cacheRead;
 
       data.totalInputTokens += usage.input_tokens;
@@ -1259,6 +1259,36 @@ export class ClaudeDataLoader {
     return this.calculateUsageData(weekRecords);
   }
 
+  /** Per-day usage for the current weekly billing window, mirroring
+   * getDailyDataForMonth's shape (newest first). The window boundary is the
+   * exact weekStart timestamp; within it, records group by calendar day in
+   * the configured timezone, so day rows line up with the other tabs. */
+  static getDailyDataForWeek(records: ClaudeUsageRecord[], weekStart: Date): { date: string; data: UsageData }[] {
+    const tz = I18n.getTimezone();
+    const recordsByDate: Record<string, ClaudeUsageRecord[]> = {};
+
+    records.forEach((record) => {
+      if (new Date(record.timestamp) < weekStart) {
+        return;
+      }
+      const dateKey = dayKeyInZone(new Date(record.timestamp), tz);
+      if (!dateKey) {
+        return;
+      }
+      if (!recordsByDate[dateKey]) {
+        recordsByDate[dateKey] = [];
+      }
+      recordsByDate[dateKey].push(record);
+    });
+
+    return Object.entries(recordsByDate)
+      .map(([date, dayRecords]) => ({
+        date,
+        data: this.calculateUsageData(dayRecords),
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }
+
   /** Per-day usage keyed by 'YYYY-MM-DD' (in the configured timezone) for the
    * heatmap: tokens (all four token types), cost, and distinct sessions.
    * Skips synthetic / API-error records, mirroring the dashboard totals. */
@@ -1280,7 +1310,7 @@ export class ClaudeDataLoader {
       if (!key) {
         continue;
       }
-      const cb = calculateCostBreakdown(u, model);
+      const cb = calculateCostBreakdown(u, model, Date.parse(r.timestamp));
       const d = daily[key] ?? (daily[key] = { tokens: 0, cost: 0, sessions: 0 });
       d.tokens += tokens;
       d.cost += cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
@@ -1381,7 +1411,7 @@ export class ClaudeDataLoader {
         if (!u || !model || model === '<synthetic>' || r.isApiErrorMessage) {
           continue;
         }
-        const cb = calculateCostBreakdown(u, model);
+        const cb = calculateCostBreakdown(u, model, Date.parse(r.timestamp));
         const cost = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
         const nowMs = Date.parse(r.timestamp);
         const gapMs = prevTurnMs !== undefined && !isNaN(nowMs) ? nowMs - prevTurnMs : undefined;
@@ -1929,7 +1959,7 @@ export class ClaudeDataLoader {
         continue;
       }
       const kind: 'skill' | 'plugin' = r._skill ? 'skill' : 'plugin';
-      const cb = calculateCostBreakdown(u, m);
+      const cb = calculateCostBreakdown(u, m, Date.parse(r.timestamp));
       const cost = cb.input + cb.output + cb.cacheWrite + cb.cacheRead;
       const a = agg[name] ?? (agg[name] = { kind, costUsd: 0, outputTokens: 0, turns: 0 });
       a.costUsd += cost;
@@ -2347,7 +2377,7 @@ export class ClaudeDataLoader {
     if (this.tokenSum(record) === 0) {
       return 0;
     }
-    const parts = calculateCostBreakdown(record.message.usage, record.message.model);
+    const parts = calculateCostBreakdown(record.message.usage, record.message.model, Date.parse(record.timestamp));
     return parts.input + parts.output + parts.cacheWrite + parts.cacheRead;
   }
 
@@ -2366,7 +2396,8 @@ export class ClaudeDataLoader {
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const minTs =
-      scope.kind === 'day' ? startOfDay
+      scope.sinceTs !== undefined ? scope.sinceTs
+      : scope.kind === 'day' ? startOfDay
       : scope.kind === 'week' ? now.getTime() - 7 * 24 * 60 * 60 * 1000
       : scope.kind === 'month' ? now.getTime() - 30 * 24 * 60 * 60 * 1000
       : 0;

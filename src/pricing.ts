@@ -99,7 +99,7 @@ const OPUS_LEGACY: ModelPricing = {
   cache_read_input_token_cost: 1.5 / MILL,
 };
 
-// Sonnet 3.5 / 4 / 4.5 / 4.6 — Sonnet tier ($3 / $15, <=200K context)
+// Sonnet 3.5 / 4 / 4.5 / 4.6 — legacy Sonnet tier ($3 / $15, <=200K context)
 const SONNET: ModelPricing = {
   input_cost_per_token: 3 / MILL,
   output_cost_per_token: 15 / MILL,
@@ -107,6 +107,24 @@ const SONNET: ModelPricing = {
   cache_creation_1h_input_token_cost: 6 / MILL,
   cache_read_input_token_cost: 0.3 / MILL,
 };
+
+// Sonnet 5 — introductory pricing ($2 / $10) through 2026-08-31; standard
+// Sonnet-tier pricing ($3 / $15) applies from 2026-09-01. Verified 2026-07-20
+// against the official pricing page:
+// https://platform.claude.com/docs/en/about-claude/pricing
+// Billing at the $3 / $15 tier during the introductory window overcounted
+// Sonnet 5 usage by 50%. getModelPricing() switches on the usage timestamp so
+// records on each side of the boundary are billed at their own rate.
+const SONNET_5_INTRO: ModelPricing = {
+  input_cost_per_token: 2 / MILL,
+  output_cost_per_token: 10 / MILL,
+  cache_creation_input_token_cost: 2.5 / MILL,
+  cache_creation_1h_input_token_cost: 4 / MILL,
+  cache_read_input_token_cost: 0.2 / MILL,
+};
+
+// First instant of standard Sonnet 5 pricing ("starting September 1, 2026").
+const SONNET_5_STANDARD_START_MS = Date.parse('2026-09-01T00:00:00Z');
 
 // Haiku 4.5 ($1 / $5)
 const HAIKU_45: ModelPricing = {
@@ -248,9 +266,9 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   // Claude Opus 4 (2025-05-14)
   'claude-opus-4-20250514': OPUS_LEGACY,
 
-  // Claude Sonnet 5 (same $3 / $15 Sonnet tier). Family inference already maps
-  // any "sonnet" model to SONNET, so this is an explicit anchor for clarity.
-  'claude-sonnet-5': SONNET,
+  // Claude Sonnet 5 — introductory $2 / $10 tier until 2026-09-01 (see
+  // SONNET_5_INTRO); the timestamp-aware switch lives in getModelPricing().
+  'claude-sonnet-5': SONNET_5_INTRO,
 
   // Claude Sonnet 4.6
   'claude-sonnet-4-6': SONNET,
@@ -310,6 +328,10 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
     return { pricing: OPUS_CURRENT, family: 'Opus (current tier)' };
   }
   if (name.includes('sonnet')) {
+    // Sonnet 5 has its own (introductory) tier; 3.x / 4.x stay at $3 / $15.
+    if (/sonnet[-_]?5/.test(name)) {
+      return { pricing: SONNET_5_INTRO, family: 'Sonnet 5' };
+    }
     return { pricing: SONNET, family: 'Sonnet' };
   }
 
@@ -353,7 +375,18 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
  * @param modelName Model name
  * @returns Pricing information, or null if not found
  */
-export function getModelPricing(modelName: string | undefined): ModelPricing | null {
+export function getModelPricing(modelName: string | undefined, atMs?: number): ModelPricing | null {
+  const pricing = resolveModelPricing(modelName);
+  // Sonnet 5's $2 / $10 rate is introductory: usage from 2026-09-01 onward is
+  // billed at the standard Sonnet tier. Undated lookups (UI rate display) use
+  // "now" so the shown rate always matches what a request would cost today.
+  if (pricing === SONNET_5_INTRO && (atMs ?? Date.now()) >= SONNET_5_STANDARD_START_MS) {
+    return SONNET;
+  }
+  return pricing;
+}
+
+function resolveModelPricing(modelName: string | undefined): ModelPricing | null {
   if (!modelName) {
     return null;
   }
@@ -429,8 +462,8 @@ export function calculateCostFromPricing(tokens: TokenUsage, pricing: ModelPrici
  * @param modelName Model name
  * @returns Total cost (USD), returns 0 if pricing not found
  */
-export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | undefined): number {
-  const pricing = getModelPricing(modelName);
+export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | undefined, atMs?: number): number {
+  const pricing = getModelPricing(modelName, atMs);
 
   if (!pricing) {
     return 0;
@@ -445,9 +478,10 @@ export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | 
  */
 export function calculateCostBreakdown(
   tokens: TokenUsage,
-  modelName: string | undefined
+  modelName: string | undefined,
+  atMs?: number
 ): { input: number; output: number; cacheWrite: number; cacheRead: number } {
-  const pricing = getModelPricing(modelName);
+  const pricing = getModelPricing(modelName, atMs);
   if (!pricing) {
     return { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
   }
@@ -527,6 +561,13 @@ export function fetchLatestPricing(): Promise<{ updated: number }> {
                 typeof info.output_cost_per_token === 'number' ? info.output_cost_per_token : undefined,
               cache_creation_input_token_cost:
                 typeof info.cache_creation_input_token_cost === 'number' ? info.cache_creation_input_token_cost : undefined,
+              // LiteLLM names the 1-hour cache-write rate "..._above_1hr".
+              // Without this mapping a pricing refresh silently downgraded
+              // 1h cache writes to the 5-minute rate.
+              cache_creation_1h_input_token_cost:
+                typeof info.cache_creation_input_token_cost_above_1hr === 'number'
+                  ? info.cache_creation_input_token_cost_above_1hr
+                  : undefined,
               cache_read_input_token_cost:
                 typeof info.cache_read_input_token_cost === 'number' ? info.cache_read_input_token_cost : undefined,
             };

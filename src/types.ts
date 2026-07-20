@@ -226,11 +226,15 @@ export interface ContentAnalysis {
 }
 
 // Scope of the usage-attribution panel. day = today, week = last 7 days,
-// month = last 30 days; session/project narrow to one session / one project.
+// month = last 30 days, all = everything; session/project narrow to one
+// session / one project. sinceTs overrides the time-based kinds' default
+// rolling window with an exact start (e.g. the weekly billing window or the
+// calendar month), so an insights card can match its tab's aggregation.
 export interface AttributionScope {
-  kind: 'day' | 'week' | 'month' | 'session' | 'project';
+  kind: 'day' | 'week' | 'month' | 'all' | 'session' | 'project';
   sessionId?: string;
   projectPath?: string;
+  sinceTs?: number;
 }
 
 // One row of an attribution table (a skill, agent type, plugin or model).
