@@ -4,6 +4,23 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.2.1 / `ade48ab`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.9.0] — 2026-07-28
+
+### Added (fork-specific)
+
+- **Fable weekly quota window** — the OAuth usage API's modern `limits[]` array carries per-model weekly windows (`kind: "weekly_scoped"`, e.g. Fable) that the extension previously dropped. Scoped windows now appear in the status bar (`Fable 2%`) and as their own rows in the quota tooltip, with the same stale-window handling as the 5-hour/weekly figures.
+- **Reasoning-effort breakdown** — records stamped with a top-level `effort` ("xhigh", "high", …) are aggregated into a cost-weighted split, shown as a section in the attribution panel and as rows in the per-timeframe "Usage tracking" card.
+- **MCP server attribution** — `attributionMcpServer`/`attributionMcpTool` fields are now read; MCP servers get their own attribution-panel section and a top-server row in the "Usage tracking" card.
+- **Exact thinking tokens** — newer Claude Code versions log `usage.output_tokens_details.thinking_tokens`; when present, summaries show an exact "Thinking tokens" figure (distinct from the text-length estimate used elsewhere).
+- **Fast-mode pricing** — records with `speed: "fast"` bill at the official fast-mode premium (Opus 4.8 $10/$50, Opus 4.7 $30/$150; cache multipliers stack on the fast input price).
+- **US inference-geo multiplier** — records with `inference_geo: "us"` bill the official 1.1× multiplier on every token category.
+
+### Upstream alignment
+
+Unchanged — aligned with `jack21/ClaudeCodeUsage` v2.2.1 (`ade48ab`). Fable per-token pricing was already correct ($10/$50, cache $12.50/$20/$1); no pricing change was needed for Fable.
+
+---
+
 ## [2.8.1] — 2026-07-20
 
 ### Fixed (fork-specific)

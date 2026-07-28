@@ -261,12 +261,20 @@ export class StatusBarManager {
       showOpusWeekly: this.showOpusWeekly,
       resetFormat: this.resetCountdownFormat
     };
-    const text = formatQuotaStatusText(live, opts);
-    if (!text) {
+    let text = formatQuotaStatusText(live, opts);
+    // Per-model weekly windows (e.g. the Fable weekly limit) from the modern
+    // limits[] array — legacy fields never carry them. Suppressed by the
+    // 5h-only preference like every other weekly figure.
+    const scoped = this.quotaFiveHourOnly ? [] : this.scopedWeekly(usageLimits);
+    if (!text && scoped.length === 0) {
       this.quotaItem.hide();
       return;
     }
-    const worstPct = worstShownUtilisation(live, opts);
+    let worstPct = worstShownUtilisation(live, opts);
+    for (const s of scoped) {
+      text += `${text ? ' · ' : ''}${s.label} ${Math.round(s.limit.utilization)}%`;
+      worstPct = Math.max(worstPct, s.limit.utilization);
+    }
 
     this.quotaItem.text = `$(dashboard) ${text}`;
 
@@ -279,8 +287,34 @@ export class StatusBarManager {
       this.quotaItem.backgroundColor = undefined;
     }
 
-    this.quotaItem.tooltip = this.createQuotaTooltip(live as ClaudeApiUsageResponse);
+    this.quotaItem.tooltip = this.createQuotaTooltip(live, scoped);
     this.quotaItem.show();
+  }
+
+  /** Per-model weekly windows (kind "weekly_scoped") from the modern limits[]
+   * array, with the same stale-window handling as liveWindows(): recently
+   * expired shows 0% (awaiting refetch), long-expired is dropped. */
+  private scopedWeekly(usageLimits: ClaudeApiUsageResponse | null): { label: string; limit: ClaudeUsageLimit }[] {
+    const entries = usageLimits?.limits;
+    if (!Array.isArray(entries)) {
+      return [];
+    }
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+    const out: { label: string; limit: ClaudeUsageLimit }[] = [];
+    for (const e of entries) {
+      if (e?.kind !== 'weekly_scoped' || typeof e.percent !== 'number') {
+        continue;
+      }
+      const label = e.scope?.model?.display_name || e.scope?.surface || null;
+      if (!label) {
+        continue;
+      }
+      const rolled = this.rollWindow({ utilization: e.percent, resets_at: e.resets_at || '' }, WEEK);
+      if (rolled) {
+        out.push({ label, limit: rolled });
+      }
+    }
+    return out;
   }
 
   /**
@@ -296,49 +330,47 @@ export class StatusBarManager {
     if (!usageLimits) {
       return null;
     }
-    const now = Date.now();
     const H5 = 5 * 60 * 60 * 1000;
     const WEEK = 7 * 24 * 60 * 60 * 1000;
-    // A window's utilization is a point-in-time snapshot valid until resets_at.
-    // Once that passes the window has rolled over: utilisation is back at 0 for
-    // the new period. Rather than show a stale value (the old #24 bug) or hide
-    // the row entirely (which looked like the indicator vanished), we display
-    // 0% and roll the reset time forward by whole periods so the countdown is
-    // sensible. A forced refetch (see extension.maybeFetchUsageLimits) then
-    // replaces this estimate with the real new-window value shortly after.
-    const roll = (limit: ClaudeUsageLimit | undefined, periodMs: number): ClaudeUsageLimit | undefined => {
-      if (!limit) {
-        return undefined;
-      }
-      const t = Date.parse(limit.resets_at);
-      if (isNaN(t)) {
-        return limit; // unparseable — don't reason about it, keep as-is
-      }
-      if (t > now) {
-        return limit; // still current
-      }
-      // Expired. If it expired long ago the fetch has been failing for ages and
-      // we have no trustworthy data: drop it rather than assert a fabricated 0%.
-      if (now - t > 2 * periodMs) {
-        return undefined;
-      }
-      // Expired recently: the window rolled over, so utilisation is back to 0.
-      // But these windows are USAGE-anchored — the next window (and its reset)
-      // only starts when you next send a message. Fabricating "reset = old + 5h"
-      // showed a countdown that was wrong until the next real fetch (the reset
-      // appeared to already be ticking before any message). So show 0% with NO
-      // countdown (resets_at cleared → "—"); the real reset lands on next use.
-      return { utilization: 0, resets_at: '' };
-    };
     const out: ClaudeApiUsageResponse = {
-      five_hour: roll(usageLimits.five_hour, H5),
-      seven_day: roll(usageLimits.seven_day, WEEK),
-      seven_day_opus: roll(usageLimits.seven_day_opus, WEEK)
+      five_hour: this.rollWindow(usageLimits.five_hour, H5),
+      seven_day: this.rollWindow(usageLimits.seven_day, WEEK),
+      seven_day_opus: this.rollWindow(usageLimits.seven_day_opus, WEEK)
     };
     if (!out.five_hour && !out.seven_day && !out.seven_day_opus) {
       return null;
     }
     return out;
+  }
+
+  /** Stale-window handling shared by legacy and scoped windows.
+   *
+   * A window's utilization is a point-in-time snapshot valid until resets_at.
+   * Once that passes the window has rolled over: utilisation is back at 0 for
+   * the new period. Rather than show a stale value (the old #24 bug) or hide
+   * the row entirely (which looked like the indicator vanished), we display
+   * 0% and clear the countdown; a forced refetch (see
+   * extension.maybeFetchUsageLimits) replaces this estimate shortly after.
+   * These windows are USAGE-anchored — the next window's reset only starts on
+   * the next message — so no forward-projected countdown is fabricated.
+   * Long-expired windows (fetch failing for ages) are dropped instead of
+   * asserting a fabricated 0%. Unparseable resets_at values are kept as-is. */
+  private rollWindow(limit: ClaudeUsageLimit | undefined, periodMs: number): ClaudeUsageLimit | undefined {
+    if (!limit) {
+      return undefined;
+    }
+    const now = Date.now();
+    const t = Date.parse(limit.resets_at);
+    if (isNaN(t)) {
+      return limit; // unparseable — don't reason about it, keep as-is
+    }
+    if (t > now) {
+      return limit; // still current
+    }
+    if (now - t > 2 * periodMs) {
+      return undefined;
+    }
+    return { utilization: 0, resets_at: '' };
   }
 
   private showNoData(): void {
@@ -417,7 +449,10 @@ export class StatusBarManager {
     return md;
   }
 
-  private createQuotaTooltip(usageLimits: ClaudeApiUsageResponse): vscode.MarkdownString {
+  private createQuotaTooltip(
+    usageLimits: ClaudeApiUsageResponse | null,
+    scoped: { label: string; limit: ClaudeUsageLimit }[] = []
+  ): vscode.MarkdownString {
     const t = I18n.t.popup;
     const md = new vscode.MarkdownString();
     md.supportThemeIcons = true;
@@ -433,14 +468,18 @@ export class StatusBarManager {
       `<th></th><th align="right">${t.share}</th>` +
       `<th align="right">${t.resets}</th></tr>\n`
     );
-    if (usageLimits.five_hour) {
+    if (usageLimits?.five_hour) {
       md.appendMarkdown(this.quotaRowHtml(t.quota5h, usageLimits.five_hour, false));
     }
-    if (usageLimits.seven_day) {
+    if (usageLimits?.seven_day) {
       md.appendMarkdown(this.quotaRowHtml(t.quotaWeekly, usageLimits.seven_day, true));
     }
-    if (usageLimits.seven_day_opus) {
+    if (usageLimits?.seven_day_opus) {
       md.appendMarkdown(this.quotaRowHtml(`${t.quotaWeekly} (Opus)`, usageLimits.seven_day_opus, true));
+    }
+    // Per-model weekly windows from the modern limits[] array (e.g. Fable).
+    for (const s of scoped) {
+      md.appendMarkdown(this.quotaRowHtml(`${t.quotaWeekly} (${s.label})`, s.limit, true));
     }
     md.appendMarkdown(`</table>\n\n*${t.quotaHint}*`);
     return md;

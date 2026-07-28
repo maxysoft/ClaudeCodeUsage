@@ -751,6 +751,13 @@ export class ClaudeDataLoader {
               const attrPlugin = (parsed as { attributionPlugin?: unknown }).attributionPlugin;
               record._skill = typeof attrSkill === 'string' && attrSkill.trim() !== '' ? attrSkill : undefined;
               record._plugin = typeof attrPlugin === 'string' && attrPlugin.trim() !== '' ? attrPlugin : undefined;
+              // MCP attribution + reasoning effort, stamped the same way.
+              const attrMcpServer = (parsed as { attributionMcpServer?: unknown }).attributionMcpServer;
+              const attrMcpTool = (parsed as { attributionMcpTool?: unknown }).attributionMcpTool;
+              record._mcpServer = typeof attrMcpServer === 'string' && attrMcpServer.trim() !== '' ? attrMcpServer : undefined;
+              record._mcpTool = typeof attrMcpTool === 'string' && attrMcpTool.trim() !== '' ? attrMcpTool : undefined;
+              const effort = (parsed as { effort?: unknown }).effort;
+              record._effort = typeof effort === 'string' && effort.trim() !== '' ? effort : undefined;
               if (agentInfo) {
                 record._agentId = agentInfo.agentId;
                 record._agentType = agentInfo.agentType;
@@ -979,6 +986,7 @@ export class ClaudeDataLoader {
       totalCost: 0,
       costBreakdown: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
       messageCount: 0,
+      totalThinkingTokens: 0,
       modelBreakdown: {},
     };
 
@@ -1016,6 +1024,7 @@ export class ClaudeDataLoader {
       data.totalOutputTokens += usage.output_tokens;
       data.totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
       data.totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+      data.totalThinkingTokens = (data.totalThinkingTokens || 0) + (usage.output_tokens_details?.thinking_tokens || 0);
       data.totalCost += calculatedCost;
       data.costBreakdown.input += costParts.input;
       data.costBreakdown.output += costParts.output;
@@ -2498,6 +2507,8 @@ export class ClaudeDataLoader {
     // over the <command-name> heuristic whenever any record carries the fields.
     const skillExactW: Record<string, { weight: number; count: number; tokens: number }> = {};
     const pluginExactW: Record<string, { weight: number; count: number; tokens: number }> = {};
+    const byEffort: Record<string, { weight: number; count: number }> = {};
+    const byMcpServer: Record<string, { weight: number; count: number }> = {};
     for (const r of scoped) {
       const w = this.recordCost(r);
       if (w <= 0) {
@@ -2526,6 +2537,20 @@ export class ClaudeDataLoader {
       }
       if (r._workflowId) {
         workflowW += w;
+      }
+      if (r._effort) {
+        if (!byEffort[r._effort]) {
+          byEffort[r._effort] = { weight: 0, count: 0 };
+        }
+        byEffort[r._effort].weight += w;
+        byEffort[r._effort].count += 1;
+      }
+      if (r._mcpServer) {
+        if (!byMcpServer[r._mcpServer]) {
+          byMcpServer[r._mcpServer] = { weight: 0, count: 0 };
+        }
+        byMcpServer[r._mcpServer].weight += w;
+        byMcpServer[r._mcpServer].count += 1;
       }
       const sessionId = r._sessionId || 'unknown';
       if (!bySession[sessionId]) {
@@ -2616,6 +2641,8 @@ export class ClaudeDataLoader {
       subagents: toEntries(byAgentType),
       plugins,
       models: toEntries(byModel),
+      efforts: toEntries(byEffort),
+      mcpServers: toEntries(byMcpServer),
     };
   }
 

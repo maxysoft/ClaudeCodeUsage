@@ -74,3 +74,36 @@ test('getModelPricing falls back to the right family for an unknown snapshot', (
   assert.ok(pricing, 'expected a fallback pricing object, got null');
   assert.equal(pricing!.input_cost_per_token, 5 / 1_000_000);
 });
+
+test('Sonnet 5 bills introductory $2/$10 before 2026-09-01 and standard $3/$15 after', () => {
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  const intro = calculateCostFromTokens(usage, 'claude-sonnet-5', Date.parse('2026-07-15T00:00:00Z'));
+  const standard = calculateCostFromTokens(usage, 'claude-sonnet-5', Date.parse('2026-09-01T00:00:00Z'));
+  assert.ok(Math.abs(intro - 12) < 1e-9, `expected ~12 (intro), got ${intro}`);
+  assert.ok(Math.abs(standard - 18) < 1e-9, `expected ~18 (standard), got ${standard}`);
+});
+
+test('fast mode swaps Opus 4.8 to its premium $10/$50 tier', () => {
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000, speed: 'fast' };
+  const fast = calculateCostFromTokens(usage, 'claude-opus-4-8');
+  // 10 + 50 = 60 vs standard 5 + 25 = 30.
+  assert.ok(Math.abs(fast - 60) < 1e-9, `expected ~60, got ${fast}`);
+  // Unknown-fast-tier models keep standard rates (no fabricated premium).
+  const noFastTier = calculateCostFromTokens(
+    { input_tokens: 1_000_000, output_tokens: 0, speed: 'fast' },
+    'claude-haiku-4-5'
+  );
+  assert.ok(Math.abs(noFastTier - 1) < 1e-9, `expected ~1, got ${noFastTier}`);
+});
+
+test('inference_geo "us" applies the 1.1x multiplier to every component', () => {
+  const base = calculateCostFromTokens(
+    { input_tokens: 1_000_000, output_tokens: 1_000_000, inference_geo: 'global' },
+    'claude-opus-4-8'
+  );
+  const us = calculateCostFromTokens(
+    { input_tokens: 1_000_000, output_tokens: 1_000_000, inference_geo: 'us' },
+    'claude-opus-4-8'
+  );
+  assert.ok(Math.abs(us - base * 1.1) < 1e-9, `expected ${base * 1.1}, got ${us}`);
+});

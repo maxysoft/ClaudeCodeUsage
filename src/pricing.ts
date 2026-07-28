@@ -21,6 +21,12 @@ export interface TokenUsage {
     ephemeral_1h_input_tokens?: number;
     ephemeral_5m_input_tokens?: number;
   };
+  // Fast mode marker as Claude Code logs it ("standard" | "fast"). Fast mode
+  // bills Opus 4.7/4.8 at premium rates (see FAST_MODE_PRICING).
+  speed?: string;
+  // Inference geography ("global" | "us" | "not_available" | ""). US-only
+  // inference bills a 1.1x multiplier on every token category (4.6+ models).
+  inference_geo?: string;
 }
 
 /**
@@ -125,6 +131,42 @@ const SONNET_5_INTRO: ModelPricing = {
 
 // First instant of standard Sonnet 5 pricing ("starting September 1, 2026").
 const SONNET_5_STANDARD_START_MS = Date.parse('2026-09-01T00:00:00Z');
+
+// Fast mode premium rates (research preview), per the official pricing page.
+// Applied when a usage record carries speed: "fast". Cache multipliers stack
+// on the fast input price (1.25x 5m / 2x 1h / 0.1x read).
+// https://platform.claude.com/docs/en/about-claude/pricing#fast-mode-pricing
+const FAST_MODE_PRICING: Record<string, ModelPricing> = {
+  'claude-opus-4-8': {
+    input_cost_per_token: 10 / MILL,
+    output_cost_per_token: 50 / MILL,
+    cache_creation_input_token_cost: 12.5 / MILL,
+    cache_creation_1h_input_token_cost: 20 / MILL,
+    cache_read_input_token_cost: 1 / MILL,
+  },
+  'claude-opus-4-7': {
+    input_cost_per_token: 30 / MILL,
+    output_cost_per_token: 150 / MILL,
+    cache_creation_input_token_cost: 37.5 / MILL,
+    cache_creation_1h_input_token_cost: 60 / MILL,
+    cache_read_input_token_cost: 3 / MILL,
+  },
+};
+
+/** Fast-mode pricing for a model, when the record says speed:"fast" and the
+ * model has a published fast tier. Matches dated snapshots by prefix. */
+function fastModePricing(modelName: string | undefined): ModelPricing | null {
+  if (!modelName) {
+    return null;
+  }
+  const base = modelName.replace(/\[[^\]]*\]\s*$/, '').toLowerCase();
+  for (const [id, pricing] of Object.entries(FAST_MODE_PRICING)) {
+    if (base === id || base.startsWith(id + '-')) {
+      return pricing;
+    }
+  }
+  return null;
+}
 
 // Haiku 4.5 ($1 / $5)
 const HAIKU_45: ModelPricing = {
@@ -463,33 +505,39 @@ export function calculateCostFromPricing(tokens: TokenUsage, pricing: ModelPrici
  * @returns Total cost (USD), returns 0 if pricing not found
  */
 export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | undefined, atMs?: number): number {
-  const pricing = getModelPricing(modelName, atMs);
-
-  if (!pricing) {
-    return 0;
-  }
-
-  return calculateCostFromPricing(tokens, pricing);
+  const parts = calculateCostBreakdown(tokens, modelName, atMs);
+  return parts.input + parts.output + parts.cacheWrite + parts.cacheRead;
 }
 
 /**
  * Break a model's cost down by token type (input / output / cache write / cache read).
  * The four components sum to the same total as calculateCostFromTokens.
+ *
+ * Honours two per-record billing modifiers when the usage carries them:
+ * - speed: "fast" swaps in the fast-mode premium rates (Opus 4.7/4.8);
+ * - inference_geo: "us" applies the 1.1x US-only inference multiplier.
  */
 export function calculateCostBreakdown(
   tokens: TokenUsage,
   modelName: string | undefined,
   atMs?: number
 ): { input: number; output: number; cacheWrite: number; cacheRead: number } {
-  const pricing = getModelPricing(modelName, atMs);
+  let pricing = getModelPricing(modelName, atMs);
+  if (tokens.speed === 'fast') {
+    const fast = fastModePricing(modelName);
+    if (fast) {
+      pricing = fast;
+    }
+  }
   if (!pricing) {
     return { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
   }
+  const geo = tokens.inference_geo === 'us' ? 1.1 : 1;
   return {
-    input: tokens.input_tokens * (pricing.input_cost_per_token || 0),
-    output: tokens.output_tokens * (pricing.output_cost_per_token || 0),
-    cacheWrite: cacheCreationCost(tokens, pricing),
-    cacheRead: (tokens.cache_read_input_tokens || 0) * (pricing.cache_read_input_token_cost || 0),
+    input: tokens.input_tokens * (pricing.input_cost_per_token || 0) * geo,
+    output: tokens.output_tokens * (pricing.output_cost_per_token || 0) * geo,
+    cacheWrite: cacheCreationCost(tokens, pricing) * geo,
+    cacheRead: (tokens.cache_read_input_tokens || 0) * (pricing.cache_read_input_token_cost || 0) * geo,
   };
 }
 

@@ -1207,6 +1207,18 @@ export class UsageWebviewProvider {
       cacheHitRate.toFixed(0) +
       '%</div>' +
       '</div>' +
+      // Exact thinking tokens (usage.output_tokens_details) — only rendered
+      // when the logs carry the field, so older histories show no empty cell.
+      ((data.totalThinkingTokens || 0) > 0
+        ? '<div class="summary-item">' +
+          '<div class="label">' +
+          I18n.t.popup.thinkingTokens +
+          '</div>' +
+          '<div class="value">' +
+          I18n.formatNumber(data.totalThinkingTokens || 0) +
+          '</div>' +
+          '</div>'
+        : '') +
       '</div>' +
       costComposition +
       '</div>';
@@ -2307,6 +2319,27 @@ export class UsageWebviewProvider {
         if (attr.skills.length > 0) {
           add(attr.skills[0].share, attr.skills[0].key, t.attrSkillChar.replace('{name}', attr.skills[0].key), t.attrSkillCharHint, 'cf-1');
         }
+        // Reasoning-effort split — one row per effort level >=5%.
+        for (const e of attr.efforts) {
+          if (e.share >= 0.05) {
+            rows.push(barRow(
+              t.attrEfforts + ': ' + e.key,
+              e.share,
+              'cf-2',
+              t.attrEfforts + ' ' + e.key + ' — ' + Math.round(e.share * 100) + '% · ×' + I18n.formatNumber(e.count)
+            ));
+          }
+        }
+        // Top MCP server, when one contributes noticeably.
+        if (attr.mcpServers.length > 0 && attr.mcpServers[0].share >= 0.05) {
+          const m = attr.mcpServers[0];
+          rows.push(barRow(
+            'MCP: ' + m.key,
+            m.share,
+            'cf-3',
+            t.attrMcpServers + ' — ' + m.key + ' ' + Math.round(m.share * 100) + '% · ×' + I18n.formatNumber(m.count)
+          ));
+        }
       }
     }
 
@@ -2660,7 +2693,11 @@ export class UsageWebviewProvider {
       group(t.attrSkills, attr.skills, 'cf-1') +
       group(t.attrSubagents, attr.subagents, 'cf-2') +
       group(t.attrPlugins, attr.plugins, 'cf-3') +
-      (attr.models.length > 1 ? group(t.attrModels, attr.models, 'cf-5') : '');
+      (attr.models.length > 1 ? group(t.attrModels, attr.models, 'cf-5') : '') +
+      // Reasoning-effort split (records stamped with a top-level `effort`)
+      // and MCP-server attribution — only shown when the logs carry them.
+      (attr.efforts.length > 0 ? group(t.attrEfforts, attr.efforts, 'cf-2') : '') +
+      (attr.mcpServers.length > 0 ? group(t.attrMcpServers, attr.mcpServers, 'cf-3') : '');
     return html;
   }
 

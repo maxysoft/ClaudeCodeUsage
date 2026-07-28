@@ -130,6 +130,9 @@ export interface Translations {
     attrSubagents: string;
     attrPlugins: string;
     attrModels: string;
+    attrEfforts: string;
+    attrMcpServers: string;
+    thinkingTokens: string;
     attrShare: string;
     count: string;
     scopeDay: string;
@@ -342,6 +345,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: 'Subagents',
       attrPlugins: 'Plugins',
       attrModels: 'Models',
+      attrEfforts: 'Reasoning effort',
+      attrMcpServers: 'MCP servers',
+      thinkingTokens: 'Thinking tokens',
       attrShare: '% of usage',
       count: 'Count',
       scopeDay: 'Day',
@@ -569,6 +575,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: "Subagenten",
       attrPlugins: "Plugins",
       attrModels: "Modelle",
+      attrEfforts: "Reasoning-Aufwand",
+      attrMcpServers: "MCP-Server",
+      thinkingTokens: "Thinking-Tokens",
       attrShare: "% der Nutzung",
       count: "Anzahl",
       scopeDay: "Tag",
@@ -795,6 +804,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: '子代理',
       attrPlugins: '插件',
       attrModels: '模型',
+      attrEfforts: '推理力度',
+      attrMcpServers: 'MCP 伺服器',
+      thinkingTokens: '思考 Tokens',
       attrShare: '用量佔比',
       count: '次數',
       scopeDay: '日',
@@ -1018,6 +1030,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: '子代理',
       attrPlugins: '插件',
       attrModels: '模型',
+      attrEfforts: '推理力度',
+      attrMcpServers: 'MCP 服务器',
+      thinkingTokens: '思考 Tokens',
       attrShare: '用量占比',
       count: '次数',
       scopeDay: '日',
@@ -1245,6 +1260,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: 'サブエージェント',
       attrPlugins: 'プラグイン',
       attrModels: 'モデル',
+      attrEfforts: '推論エフォート',
+      attrMcpServers: 'MCPサーバー',
+      thinkingTokens: '思考トークン',
       attrShare: '使用量比率',
       count: '回数',
       scopeDay: '日',
@@ -1473,6 +1491,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: '서브에이전트',
       attrPlugins: '플러그인',
       attrModels: '모델',
+      attrEfforts: '추론 강도',
+      attrMcpServers: 'MCP 서버',
+      thinkingTokens: '사고 토큰',
       attrShare: '사용량 비율',
       count: '횟수',
       scopeDay: '일',
@@ -1701,6 +1722,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: 'Subagentes',
       attrPlugins: 'Plugins',
       attrModels: 'Modelos',
+      attrEfforts: 'Esforço de raciocínio',
+      attrMcpServers: 'Servidores MCP',
+      thinkingTokens: 'Tokens de raciocínio',
       attrShare: '% do uso',
       count: 'Quantidade',
       scopeDay: 'Dia',
@@ -1929,6 +1953,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       attrSubagents: 'Subagent',
       attrPlugins: 'Plugin',
       attrModels: 'Model',
+      attrEfforts: 'Upaya penalaran',
+      attrMcpServers: 'Server MCP',
+      thinkingTokens: 'Token berpikir',
       attrShare: '% penggunaan',
       count: 'Jumlah',
       scopeDay: 'Hari',

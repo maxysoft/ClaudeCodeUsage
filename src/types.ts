@@ -14,6 +14,15 @@ export interface ClaudeUsageRecord {
         ephemeral_1h_input_tokens?: number;
         ephemeral_5m_input_tokens?: number;
       };
+      // Fast mode marker ("standard" | "fast") — fast bills premium rates.
+      speed?: string;
+      // "global" | "us" | "not_available" | "" — "us" bills a 1.1x multiplier.
+      inference_geo?: string;
+      // Exact output-token split; thinking_tokens present on newer Claude
+      // Code versions. When available it replaces the text-length estimate.
+      output_tokens_details?: {
+        thinking_tokens?: number;
+      };
     };
     model?: string;
     id?: string;
@@ -61,6 +70,12 @@ export interface ClaudeUsageRecord {
   // lines instead of the <command-name>/Skill-tool heuristic.
   _skill?: string;
   _plugin?: string;
+  // MCP attribution stamped on the usage line (attributionMcpServer/Tool).
+  _mcpServer?: string;
+  _mcpTool?: string;
+  // Reasoning effort of the request (top-level `effort` on the log line),
+  // e.g. "high" | "xhigh" | "max".
+  _effort?: string;
 }
 
 export interface UsageData {
@@ -77,6 +92,11 @@ export interface UsageData {
     cacheRead: number;
   };
   messageCount: number;
+  // Exact thinking tokens summed from usage.output_tokens_details, when the
+  // log carries them (newer Claude Code versions). 0/absent when the logs
+  // don't carry the field — distinct from the content analysis' text-length
+  // ESTIMATE of thinking share.
+  totalThinkingTokens?: number;
   modelBreakdown: Record<string, {
     inputTokens: number;
     outputTokens: number;
@@ -264,6 +284,10 @@ export interface UsageAttribution {
   subagents: AttributionEntry[];
   plugins: AttributionEntry[];
   models: AttributionEntry[];
+  // Cost-weighted share per reasoning effort level ("xhigh", "high", ...).
+  efforts: AttributionEntry[];
+  // Cost-weighted share per MCP server (records stamped attributionMcpServer).
+  mcpServers: AttributionEntry[];
 }
 
 export interface ExtensionConfig {
@@ -418,9 +442,29 @@ export interface ClaudeUsageLimit {
   resets_at: string; // ISO timestamp
 }
 
+// One entry of the modern `limits[]` array on the OAuth usage response.
+// kind "session" = the 5-hour window, "weekly_all" = the overall weekly
+// window, "weekly_scoped" = a per-model weekly window (e.g. Fable) whose
+// model name sits in scope.model.display_name.
+export interface ClaudeQuotaLimitEntry {
+  kind?: string;
+  group?: string;
+  percent?: number; // 0-100
+  severity?: string;
+  resets_at?: string;
+  is_active?: boolean;
+  scope?: {
+    model?: { id?: string | null; display_name?: string | null } | null;
+    surface?: string | null;
+  } | null;
+}
+
 // Response from the OAuth usage endpoint (mirrors what /usage shows).
+// The legacy five_hour/seven_day fields are still populated; per-model
+// weekly windows (e.g. the Fable weekly limit) only appear in `limits[]`.
 export interface ClaudeApiUsageResponse {
   five_hour?: ClaudeUsageLimit;
   seven_day?: ClaudeUsageLimit;
   seven_day_opus?: ClaudeUsageLimit;
+  limits?: ClaudeQuotaLimitEntry[];
 }
