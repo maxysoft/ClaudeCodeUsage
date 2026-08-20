@@ -4,6 +4,14 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.2.2 / `cb4a30b`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.10.1] — 2026-08-02
+
+### Changed (fork-specific)
+
+- **Per-model weekly caps shown by default** — `showScopedWeekly` now defaults to on (upstream defaults it off), so the status bar reads e.g. `wk 4% (fable 17%)` out of the box. A cap still only appears once it has usage against it; turn it off in ⚙ Settings if unwanted.
+
+---
+
 ## [2.10.0] — 2026-08-02
 
 ### Added (merged from upstream v2.2.2)

@@ -332,11 +332,13 @@ export const SETTINGS: SettingDef[] = [
     label: 'Show 5h / weekly quota',
   },
   {
-    // Opt-in model-scoped weekly caps in the status bar. Was showOpusWeekly
+    // Model-scoped weekly caps in the status bar. Was showOpusWeekly
     // (PR #38, @wheelbarrel00) until the API began naming the scope itself.
+    // Fork divergence: default ON (upstream defaults off) — per-model caps
+    // (e.g. Fable) are a headline feature of this fork.
     key: 'showScopedWeekly',
     type: 'boolean',
-    default: false,
+    default: true,
     storage: 'state',
     group: 'statusBar',
     label: 'Show per-model weekly limit',
