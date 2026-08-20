@@ -2,7 +2,24 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream merge: 2.2.1 / `ade48ab`). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream merge: 2.2.2 / `cb4a30b`). Format follows [Keep a Changelog](https://keepachangelog.com).
+
+## [2.10.0] — 2026-08-02
+
+### Added (merged from upstream v2.2.2)
+
+- **Richer quota windows** — upstream's take on the per-model weekly limits supersedes this fork's v2.9.0 implementation: a dedicated `quotaWindows.ts` normalizer reads both API generations, the status bar nests a per-model cap in the weekly figure ("wk 9% (fable 17%)"), the tooltip lists every weekly cap with its own bar, reset countdowns follow the configured format, and usage credits (spend against your cap) appear in the tooltip once used. `showOpusWeekly` becomes `showScopedWeekly` (existing choice carries over).
+- **Lower multi-window energy use** — polling and file watchers suspend in unfocused VS Code windows and refresh immediately on focus.
+- **Quota failure throttling** — repeated quota authentication failures back off up to one hour, retrying immediately after credentials change.
+- **Usage dashboard recovery** — one oversized non-transcript `.jsonl` no longer aborts the earliest-timestamp probe and blanks the dashboard.
+- **Opus 5 context window** — bare `claude-opus-5` recognised as a 1M-context model.
+- Missing pt-BR / Indonesian settings translations filled in.
+
+### Upstream alignment
+
+This fork is aligned with `jack21/ClaudeCodeUsage` v2.2.2 (`cb4a30b`) — every upstream feature through that commit is present. Fork-exclusive additions on top: "This Week" billing tab with charts and reset countdown, session cost in the status bar, usage-tracking card on every timeframe tab, effort/MCP/thinking usage details, fast-mode & US-geo billing guards, Sonnet 5 introductory-pricing boundary, `maxysoft` publisher branding, and the tag-push-only release workflow.
+
+---
 
 ## [2.9.0] — 2026-07-28
 

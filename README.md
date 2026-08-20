@@ -46,8 +46,8 @@ Hover the quota indicator for a breakdown:
 
 ![Quota tooltip](images/v2-quota-en.png)
 
-*Real `/usage` data — utilisation percent, reset countdown, and the
-weekly reset weekday and time.*
+*Real `/usage` data: utilisation percent, plus time left and the wall-clock reset for every window.*
+*Every weekly cap your plan meters gets its own row, per-model ones included (Anthropic supplies the name, so the row follows whichever model is capped), plus usage credits when you have them enabled.*
 
 ### Dashboard
 
@@ -177,6 +177,7 @@ consent prompt.
   switch the first item to today's total **token** count (compact k/M).
 - **Weekly Opus limit** (`showOpusWeekly`, opt-in) — append `opus:NN%` to the
   quota item for heavy Opus users. (PR #38, [@wheelbarrel00](https://github.com/wheelbarrel00).)
+  *Since renamed `showScopedWeekly`, and it now names whichever model your plan caps.*
 - **AI advice 2.0** — bring your own key: **Anthropic** (`/v1/messages`) by
   default, or any OpenAI-compatible endpoint (`advice.apiFormat`). Fed with the
   new signals (runs, cache hit rates, attribution, thinking share); optional
@@ -398,7 +399,8 @@ Contributors whose upstream PRs / issues are incorporated here:
   original status-bar context-window indicator and the `showCost` toggle.
 - [@wheelbarrel00](https://github.com/wheelbarrel00) —
   [PR #38](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/38), the opt-in
-  weekly Opus limit (`showOpusWeekly`) in the status bar.
+  weekly Opus limit in the status bar, which grew into today's
+  `showScopedWeekly`.
 - [@brenoneill](https://github.com/brenoneill) —
   [PR #14](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/14), custom
   data directory (merged into upstream 1.0.8).

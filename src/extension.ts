@@ -22,6 +22,7 @@ import { buildAdviceSummary } from './adviceSummary';
 import { getDemoBody } from './adviceDemoSample';
 import { ClaudeApiUsageResponse, ContentAnalysis, ExtensionConfig } from './types';
 import { SettingsStore } from './settings';
+import { normalizeQuotaWindows } from './quotaWindows';
 import {
   diffUsageManifests,
   scanUsageManifest,
@@ -30,6 +31,7 @@ import {
 import {
   commitRefreshSnapshot,
   pollIntervalMs,
+  quotaFailureBackoffMs,
   QuietDebounce,
   RefreshRequest,
   RefreshSingleFlight,
@@ -37,6 +39,7 @@ import {
   reportColdRefreshFailure,
   shouldCommitUsageLoad,
   shouldReloadUsage,
+  WindowActivityGate,
 } from './refreshPolicy';
 import { formatRefreshDiagnostic } from './refreshDiagnostics';
 
@@ -64,6 +67,8 @@ export class ClaudeCodeUsageExtension {
   private fileWatcher: fs.FSWatcher | undefined;
   private readonly watchDebounce = new QuietDebounce();
   private readonly refreshGate = new RefreshSingleFlight();
+  private readonly windowActivity =
+    new WindowActivityGate(vscode.window.state.focused);
   private watcherEventsSinceRefresh = 0;
   private coalescedTriggersSinceRefresh = 0;
   private watchedDir: string | null = null;
@@ -120,6 +125,9 @@ export class ClaudeCodeUsageExtension {
     // V2.2: convert the old pauseDashboardRefresh to the positive
     // dashboardAutoRefresh (inverted). Runs once.
     void this.settings.migrateDashboardAutoRefresh();
+    // Rename showOpusWeekly -> showScopedWeekly (the API stopped naming Opus).
+    // Runs once.
+    void this.settings.migrateScopedWeekly();
     // Usage Optimizer (Phase 9c): the webview posts a draft prompt; we run it
     // through the same model backend as the advice feature and post back a
     // tightened prompt + a settings recommendation. Consent gate lives here.
@@ -133,9 +141,11 @@ export class ClaudeCodeUsageExtension {
     this.setupCommands();
     this.loadConfiguration();
     this.loadPersistedQuota();
-    this.startAutoRefresh();
-    this.refreshData(false, 'startup').then(() => this.startFileWatching());
-    this.startCredentialsWatching();
+    if (this.windowActivity.focused) {
+      this.startAutoRefresh();
+      void this.refreshData(false, 'startup').then(() => this.startFileWatching());
+      this.startCredentialsWatching();
+    }
     this.startWindowFocusRefresh();
     this.maybeAnnounceWhatsNew();
     console.log('Claude Code Usage Extension: Initialization complete');
@@ -685,7 +695,7 @@ export class ClaudeCodeUsageExtension {
     I18n.setTokenDecimalPlaces(config.tokenDecimalPlaces);
     I18n.setCompactNumbers(config.compactNumbers);
     I18n.setTimezone(config.timezone);
-    this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showOpusWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
+    this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showScopedWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
 
     // Listen for configuration changes
     vscode.workspace.onDidChangeConfiguration(e => {
@@ -724,7 +734,7 @@ export class ClaudeCodeUsageExtension {
       showContext: s.get<boolean>('showContext'),
       contextWindowOverride: s.get<number>('contextWindowOverride'),
       statusBarMetric: s.get<'cost' | 'monthly-cost' | 'tokens'>('statusBarMetric'),
-      showOpusWeekly: s.get<boolean>('showOpusWeekly'),
+      showScopedWeekly: s.get<boolean>('showScopedWeekly'),
       showResetInStatusBar: s.get<boolean>('showResetInStatusBar'),
       quotaFiveHourOnly: s.get<boolean>('quotaFiveHourOnly'),
       resetCountdownFormat: s.get<'decimal' | 'units' | 'clock'>('resetCountdownFormat'),
@@ -754,14 +764,14 @@ export class ClaudeCodeUsageExtension {
     // /usage fetch (the full reload path), else the quota stays empty until the
     // next tick.
     'showCost', 'showContext', 'statusBarMetric',
-    'showOpusWeekly', 'quotaFiveHourOnly', 'showResetInStatusBar', 'resetCountdownFormat',
+    'showScopedWeekly', 'quotaFiveHourOnly', 'showResetInStatusBar', 'resetCountdownFormat',
   ]);
 
   /** Dashboard Settings change — status-bar-only toggles apply in place, others reload. */
   private onSettingsChangedFromPanel(key?: string): void {
     if (key && ClaudeCodeUsageExtension.STATUS_BAR_ONLY_SETTINGS.has(key)) {
       const config = this.getConfiguration();
-      this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showOpusWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
+      this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showScopedWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
       this.statusBar.updateQuota(this.cache.usageLimits ?? null);
       return;
     }
@@ -775,7 +785,7 @@ export class ClaudeCodeUsageExtension {
     I18n.setTokenDecimalPlaces(config.tokenDecimalPlaces);
     I18n.setCompactNumbers(config.compactNumbers);
     I18n.setTimezone(config.timezone);
-    this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showOpusWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
+    this.statusBar.setVisibility(config.showCost, config.showContext, config.usageLimitTracking, config.statusBarMetric, config.showScopedWeekly, config.quotaFiveHourOnly, config.showResetInStatusBar, config.resetCountdownFormat);
 
     // Restart auto-refresh with new interval
     this.startAutoRefresh();
@@ -792,6 +802,10 @@ export class ClaudeCodeUsageExtension {
    * filesystems do not support recursive watching).
    */
   private async startFileWatching(): Promise<void> {
+    if (!this.windowActivity.focused) {
+      this.stopFileWatching();
+      return;
+    }
     const config = this.getConfiguration();
     if (!(config.fileWatchSeconds > 0)) {
       this.stopFileWatching(); // "Off"
@@ -854,6 +868,11 @@ export class ClaudeCodeUsageExtension {
    * watch — those still self-correct on the next refresh tick.
    */
   private startCredentialsWatching(): void {
+    if (!this.windowActivity.focused) {
+      this.stopCredentialsWatching();
+      return;
+    }
+    this.stopCredentialsWatching();
     const credsPath = this.apiClient.getCredentialsPath();
     const dir = path.dirname(credsPath);
     const name = path.basename(credsPath);
@@ -869,17 +888,22 @@ export class ClaudeCodeUsageExtension {
           clearTimeout(this.credsDebounceTimer);
         }
         this.credsDebounceTimer = setTimeout(() => {
-          // The cached quota belongs to the previous token/account. Expire it so
-          // the next refresh bypasses the TTL and refetches with the new token.
-          // The api client's own 429 cool-down still protects the endpoint.
-          this.cache.usageLimitsLastUpdate = new Date(0);
-          void this.refreshData(false, 'credentials');
+          this.handleCredentialsChange();
         }, 800);
       });
     } catch {
       // Watching unsupported on this platform/filesystem — the refresh tick
       // still picks up the new account within a TTL.
     }
+  }
+
+  private handleCredentialsChange(): void {
+    // The cached quota and any failure backoff belong to the previous
+    // token/account. Clear both so a successful re-login retries immediately.
+    this.cache.usageLimitsLastUpdate = new Date(0);
+    this.cache.usageLimitsFailStreak = 0;
+    this.cache.usageLimitsBackoffUntil = new Date(0);
+    void this.refreshData(false, 'credentials');
   }
 
   private stopCredentialsWatching(): void {
@@ -902,32 +926,54 @@ export class ClaudeCodeUsageExtension {
     return Date.now() - this.lastActivityAt < 60000;
   }
 
-  /** Refresh when this window regains focus (#55). Each VS Code window is a
-   * separate extension host; Electron heavily throttles timers AND fs.watch
-   * delivery in unfocused/hidden windows, so a background window's status bar
-   * goes stale (only the window you last worked in keeps up). On focus we force
-   * an immediate refresh and re-arm the timer + watcher so the window catches up
-   * at once instead of after the next (throttled) tick — or never. */
+  private suspendRecurringWork(): void {
+    this.stopAutoRefresh();
+    this.stopFileWatching();
+    this.stopCredentialsWatching();
+  }
+
+  private resumeRecurringWork(): void {
+    this.startAutoRefresh();
+    void this.startFileWatching();
+    this.startCredentialsWatching();
+    void this.refreshData(false, 'focus');
+  }
+
+  private handleWindowFocusChange(focused: boolean): void {
+    const transition = this.windowActivity.update(focused);
+    if (transition === 'suspend') {
+      this.suspendRecurringWork();
+    } else if (transition === 'resume') {
+      this.resumeRecurringWork();
+    }
+  }
+
+  /** Keep recurring work only in the active VS Code window. Each window owns a
+   * separate Extension Host, so leaving timers and watchers active in every
+   * background window multiplies the same local scans. A focused window catches
+   * up immediately; a background window stays idle until then. */
   private startWindowFocusRefresh(): void {
-    let wasFocused = vscode.window.state.focused;
     this.context.subscriptions.push(
       vscode.window.onDidChangeWindowState((state) => {
-        if (state.focused && !wasFocused) {
-          this.startAutoRefresh(); // reset a cadence that may have been throttled
-          this.startFileWatching(); // re-attach the watcher if it was dropped
-          void this.refreshData(false, 'focus'); // catch up now
-        }
-        wasFocused = state.focused;
+        this.handleWindowFocusChange(state.focused);
       })
     );
   }
 
-  private startAutoRefresh(): void {
+  private stopAutoRefresh(): void {
+    this.refreshGen += 1;
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = undefined;
     }
-    const gen = ++this.refreshGen;
+  }
+
+  private startAutoRefresh(): void {
+    this.stopAutoRefresh();
+    if (!this.windowActivity.focused) {
+      return;
+    }
+    const gen = this.refreshGen;
     const tick = (): void => {
       if (gen !== this.refreshGen) {
         return; // superseded by a newer startAutoRefresh — stop this chain
@@ -1007,9 +1053,10 @@ export class ClaudeCodeUsageExtension {
       );
       return fetched;
     }
-    // Failed (usually a 429). Exponentially back off — 60s, 120s … capped at 10 min.
+    // Failed (usually a 429 or invalid/expired credentials). Exponentially back
+    // off to one hour; a credentials-file change clears this immediately.
     this.cache.usageLimitsFailStreak++;
-    const backoffMs = Math.min(600000, 60000 * Math.pow(2, this.cache.usageLimitsFailStreak - 1));
+    const backoffMs = quotaFailureBackoffMs(this.cache.usageLimitsFailStreak);
     this.cache.usageLimitsBackoffUntil = new Date(now + backoffMs);
     return this.cache.usageLimits;
   }
@@ -1018,14 +1065,12 @@ export class ClaudeCodeUsageExtension {
    * utilisation is stale and a refetch is warranted). */
   private hasExpiredWindow(u: ClaudeApiUsageResponse): boolean {
     const now = Date.now();
-    const expired = (w?: { resets_at: string }): boolean => {
-      if (!w) {
-        return false;
-      }
-      const t = Date.parse(w.resets_at);
+    // Via the normalizer so scoped weekly caps count too: those live only in the
+    // generic `limits` array, and a stale one is just as much a reason to refetch.
+    return normalizeQuotaWindows(u).some((w) => {
+      const t = Date.parse(w.resetsAt);
       return !isNaN(t) && t <= now;
-    };
-    return expired(u.five_hour) || expired(u.seven_day) || expired(u.seven_day_opus);
+    });
   }
 
   private async refreshData(
@@ -1298,10 +1343,7 @@ export class ClaudeCodeUsageExtension {
   }
 
   dispose(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
+    this.stopAutoRefresh();
     this.stopFileWatching();
     this.stopCredentialsWatching();
     this.statusBar.dispose();
