@@ -1258,7 +1258,10 @@ export class ClaudeCodeUsageExtension {
           : null;
         // Weekly billing window requires the OAuth quota API (usageLimitTracking).
         // Only compute when resets_at is available; otherwise weekData stays null.
-        const weekResetsAt = this.cache.usageLimits?.seven_day?.resets_at;
+        // Read through the normalizer: the legacy seven_day field still works
+        // today, but newer API generations move the data into limits[].
+        const weekResetsAt = normalizeQuotaWindows(this.cache.usageLimits)
+          .find((w) => w.kind === 'weekly_all')?.resetsAt;
         const weekData = weekResetsAt
           ? ClaudeDataLoader.getThisWeekData(
               records,
