@@ -2,11 +2,16 @@ import * as vscode from 'vscode';
 import { ClaudeApiUsageResponse, ContextWindowInfo, SessionData, UsageData } from './types';
 import { I18n } from './i18n';
 import {
+  CONTEXT_FILL_THRESHOLDS,
+  QUOTA_FILL_THRESHOLDS,
+  fillLevel,
   formatMonthlyReset,
   formatQuotaStatusText,
   formatResetCell,
   formatSharePercent,
   worstShownUtilisation,
+  FillLevel,
+  FillThresholds,
   QuotaStatusOptions,
   ResetCountdownFormat
 } from './quotaFormat';
@@ -18,6 +23,9 @@ import {
   normalizeQuotaWindows,
   visibleQuotaWindows
 } from './quotaWindows';
+import { CodexStatusMetric, formatCodexStatus } from './codexStatus';
+import { CodexUsageScopeView } from './providers/codex/codexUsage';
+import { ProviderLimitSnapshot } from './providers/providerTypes';
 
 export class StatusBarManager {
   private statusBarItem: vscode.StatusBarItem;
@@ -39,6 +47,21 @@ export class StatusBarManager {
   private quotaFiveHourOnly: boolean = false; // show only the 5h window
   private showResetInBar: boolean = false;    // append reset countdown to the bar
   private resetCountdownFormat: ResetCountdownFormat = 'decimal'; // style of that countdown (#74)
+  private provider: 'claude' | 'codex' = 'claude';
+  private lastClaudeUsage: {
+    todayData: UsageData | null;
+    workspaceTodayData: UsageData | null;
+    error?: string;
+    monthData: UsageData | null;
+    sessionData: SessionData | null;
+  } | null = null;
+  private lastClaudeQuota: ClaudeApiUsageResponse | null = null;
+  private lastClaudeContext: ContextWindowInfo | null = null;
+  private lastCodex: {
+    scope: CodexUsageScopeView;
+    metric: CodexStatusMetric;
+    limit: ProviderLimitSnapshot | null;
+  } | null = null;
 
   constructor() {
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -62,7 +85,43 @@ export class StatusBarManager {
 
   setLoading(loading: boolean): void {
     this.isLoading = loading;
+    if (this.provider === 'codex' && this.lastCodex) {
+      return;
+    }
     this.updateStatusBar();
+  }
+
+  setProvider(provider: 'claude' | 'codex'): void {
+    this.provider = provider;
+    if (provider === 'codex') {
+      this.contextItem.hide();
+      if (this.lastCodex) {
+        this.renderCodex(
+          this.lastCodex.scope,
+          this.lastCodex.metric,
+          this.lastCodex.limit,
+        );
+      } else {
+        this.statusBarItem.text = 'CX —';
+        this.statusBarItem.tooltip = I18n.t.providers.codex.noRecentTask;
+        this.statusBarItem.backgroundColor = undefined;
+        this.quotaItem.hide();
+        this.applyCostVisibility();
+      }
+      return;
+    }
+    if (this.lastClaudeUsage) {
+      this.updateUsageData(
+        this.lastClaudeUsage.todayData,
+        this.lastClaudeUsage.workspaceTodayData,
+        this.lastClaudeUsage.error,
+        undefined,
+        this.lastClaudeUsage.monthData,
+        this.lastClaudeUsage.sessionData,
+      );
+    }
+    this.updateQuota(this.lastClaudeQuota);
+    this.updateContext(this.lastClaudeContext);
   }
 
   /** Apply the showCost / showContext settings. Hiding takes effect
@@ -91,6 +150,13 @@ export class StatusBarManager {
     }
     // Re-apply the first item — it may need to become an icon-only entry point.
     this.applyCostVisibility();
+    if (this.provider === 'codex' && this.lastCodex) {
+      this.renderCodex(
+        this.lastCodex.scope,
+        this.lastCodex.metric,
+        this.lastCodex.limit,
+      );
+    }
   }
 
   /** Show / hide the first status-bar item per the showCost setting. When cost
@@ -123,6 +189,16 @@ export class StatusBarManager {
     monthData?: UsageData | null,
     sessionData?: SessionData | null
   ): void {
+    this.lastClaudeUsage = {
+      todayData,
+      workspaceTodayData: workspaceTodayData ?? null,
+      error,
+      monthData: monthData ?? null,
+      sessionData: sessionData ?? null,
+    };
+    if (this.provider === 'codex') {
+      return;
+    }
     // Quota is account-level and decoupled from local-data state: the caller
     // is expected to call updateQuota() separately so workspaces without
     // history still see it. We only touch the cost item here.
@@ -207,6 +283,11 @@ export class StatusBarManager {
    * Hidden when there is no current session or the setting is off.
    */
   updateContext(info: ContextWindowInfo | null): void {
+    this.lastClaudeContext = info;
+    if (this.provider === 'codex') {
+      this.contextItem.hide();
+      return;
+    }
     if (!info || !this.showContext || info.windowTokens <= 0) {
       this.contextItem.hide();
       return;
@@ -216,14 +297,9 @@ export class StatusBarManager {
     const approx = info.estimated ? '~' : '';
     this.contextItem.text = `$(layers) ${approx}${Math.round(pct)}%`;
 
-    // Same thresholds as the quota item: amber at 80%, red at 95%.
-    if (pct >= 95) {
-      this.contextItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (pct >= 80) {
-      this.contextItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-      this.contextItem.backgroundColor = undefined;
-    }
+    // Amber at 80%, red at 95% — see CONTEXT_FILL_THRESHOLDS for why this no
+    // longer matches the quota item.
+    this.contextItem.backgroundColor = this.fillBackground(fillLevel(pct, CONTEXT_FILL_THRESHOLDS));
 
     const t = I18n.t.popup;
     const md = new vscode.MarkdownString();
@@ -237,7 +313,7 @@ export class StatusBarManager {
     const freeSpace = Math.max(0, info.windowTokens - info.contextTokens);
     const num = (n: number): string => I18n.formatNumber(n);
     let html = '<table>';
-    html += `<tr><td>${this.progressBarSvg(pct, 30)}</td><td align="right"><b>${pct.toFixed(1)}%</b></td></tr>`;
+    html += `<tr><td>${this.progressBarSvg(pct, 30, CONTEXT_FILL_THRESHOLDS)}</td><td align="right"><b>${pct.toFixed(1)}%</b></td></tr>`;
     html += `<tr><td>${t.inputTokens}</td><td align="right">${num(info.inputTokens)}</td></tr>`;
     html += `<tr><td>${t.cacheRead}</td><td align="right">${num(info.cacheReadTokens)}</td></tr>`;
     html += `<tr><td>${t.cacheCreation}</td><td align="right">${num(info.cacheCreationTokens)}</td></tr>`;
@@ -256,6 +332,10 @@ export class StatusBarManager {
    * Public so it can be refreshed on its own while the rest of the UI is idle.
    */
   updateQuota(usageLimits: ClaudeApiUsageResponse | null): void {
+    this.lastClaudeQuota = usageLimits;
+    if (this.provider === 'codex') {
+      return;
+    }
     // Normalize first: the API exposes quota windows two ways and only the
     // generic `limits` array still carries the per-model caps. See
     // quotaWindows.ts. liveQuotaWindows then drops or zeroes anything whose
@@ -283,17 +363,58 @@ export class StatusBarManager {
 
     this.quotaItem.text = `$(dashboard) ${text}`;
 
-    // Stay quiet until usage actually gets high.
-    if (worstPct >= 95) {
-      this.quotaItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (worstPct >= 80) {
-      this.quotaItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-      this.quotaItem.backgroundColor = undefined;
-    }
+    // Stay quiet until usage actually gets high (amber at 75%, red at 90%, as
+    // the official Claude app does — QUOTA_FILL_THRESHOLDS).
+    this.quotaItem.backgroundColor = this.fillBackground(fillLevel(worstPct, QUOTA_FILL_THRESHOLDS));
 
     this.quotaItem.tooltip = this.createQuotaTooltip(live, creditsFromUsage(usageLimits));
     this.quotaItem.show();
+  }
+
+  updateCodex(
+    scope: CodexUsageScopeView,
+    metric: CodexStatusMetric,
+    limit: ProviderLimitSnapshot | null,
+  ): void {
+    this.lastCodex = { scope, metric, limit };
+    if (this.provider === 'codex') {
+      this.renderCodex(scope, metric, limit);
+    }
+  }
+
+  private renderCodex(
+    scope: CodexUsageScopeView,
+    metric: CodexStatusMetric,
+    limit: ProviderLimitSnapshot | null,
+  ): void {
+    const formatted = formatCodexStatus(scope, metric, limit);
+    const copy = I18n.t.providers.codex;
+    this.isLoading = false;
+    this.statusBarItem.text = formatted.text;
+    this.statusBarItem.backgroundColor = undefined;
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`**${copy.title} — ${copy.lastTask}**\n\n`);
+    if (scope.indexedSubtotal) {
+      md.appendMarkdown(`_${copy.indexedSubtotal} — ${copy.indexingInProgress}_\n\n`);
+    }
+    md.appendMarkdown(`| ${copy.processed} | ${I18n.formatNumber(scope.total.processed)} |\n`);
+    md.appendMarkdown('|:--|--:|\n');
+    md.appendMarkdown(`| ${copy.fresh} | ${I18n.formatNumber(scope.total.fresh)} |\n`);
+    md.appendMarkdown(`| ${copy.output} | ${I18n.formatNumber(scope.total.output)} |\n`);
+    md.appendMarkdown(`| ${copy.reasoning} | ${I18n.formatNumber(scope.total.reasoning)} |\n`);
+    md.appendMarkdown(`| ${copy.childThreads} | ${I18n.formatNumber(scope.childThreads)} |\n`);
+    this.statusBarItem.tooltip = md;
+    this.applyCostVisibility();
+
+    if (formatted.limitText) {
+      this.quotaItem.text = `$(dashboard) ${formatted.limitText}`;
+      this.quotaItem.tooltip = `${copy.accountSnapshotLastObserved} — ${formatted.limitText}`;
+      this.quotaItem.backgroundColor = undefined;
+      this.quotaItem.show();
+    } else {
+      this.quotaItem.hide();
+    }
+    this.contextItem.hide();
   }
 
   private showNoData(): void {
@@ -408,20 +529,11 @@ export class StatusBarManager {
       );
     }
     if (credits && credits.used > 0) {
-      // The amount rather than a percentage: the cap is user-adjustable and may
-      // be unlimited, so a share of it says little. The bar still tracks the cap
-      // whenever there is a finite one.
-      const spent = this.formatCreditAmount(credits.used, credits.currency);
-      const amount = credits.limit === null
-        ? spent
-        : `${spent} / ${this.formatCreditAmount(credits.limit, credits.currency)}`;
+      // Only the spent amount: the cap is user-adjustable and may be unlimited,
+      // so neither a share of it nor the cap itself says much beside the spend.
+      const amount = this.formatCreditAmount(credits.used, credits.currency);
       md.appendMarkdown(
-        this.quotaRowHtml(
-          t.quotaCredits,
-          amount,
-          credits.percent ?? 0,
-          formatMonthlyReset(credits.resetsAt)
-        )
+        this.creditsRowHtml(t.quotaCredits, amount, formatMonthlyReset(credits.resetsAt))
       );
     }
     md.appendMarkdown(`</table>\n\n*${t.quotaHint}*`);
@@ -468,6 +580,34 @@ export class StatusBarManager {
     );
   }
 
+  /** The credits row carries no bar (the figure is an amount of money, not a
+   * share of a fixed cap), so its value spans the bar and share columns,
+   * left-aligned to start where the bars start. Parking the amount in the
+   * right-aligned share column instead stretched that column to the amount's
+   * width, pushing every percentage away from its bar the moment credits
+   * appeared. */
+  private creditsRowHtml(label: string, amount: string, resets: string): string {
+    return (
+      `<tr>` +
+      `<td align="left"><b>${label}</b></td>` +
+      `<td colspan="2" align="left">${amount}</td>` +
+      `<td align="right">&nbsp;&nbsp;${resets}</td>` +
+      `</tr>\n`
+    );
+  }
+
+  /** Status-bar item background for a fill level. Kept beside the bar colours
+   * below so the two signals for one indicator can only be changed together. */
+  private fillBackground(level: FillLevel): vscode.ThemeColor | undefined {
+    if (level === 'error') {
+      return new vscode.ThemeColor('statusBarItem.errorBackground');
+    }
+    if (level === 'warning') {
+      return new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    return undefined;
+  }
+
   /** Progress bar: nested <span>s with solid background colours so the
    * sanitiser keeps everything we need. The outer span paints the full
    * 100% track in solid medium gray (#bbb) — visible on both light and
@@ -475,15 +615,19 @@ export class StatusBarManager {
    * The inner span paints the filled portion in colour, sitting on top of
    * the gray track.
    *
-   * Bar colour mirrors the status-bar warning/error thresholds (amber at
-   * >=80%, red at >=95%) so the visual signal matches the indicator. */
-  private progressBarSvg(pct: number, total: number = 24): string {
+   * `thresholds` decides where amber and red begin, so a bar always agrees with
+   * the background of the item it belongs to. Quota and context deliberately
+   * pass different pairs — see QUOTA_FILL_THRESHOLDS. */
+  private progressBarSvg(pct: number, total: number = 24, thresholds: FillThresholds = QUOTA_FILL_THRESHOLDS): string {
     const TOTAL = total;
     const filled = Math.max(0, Math.min(TOTAL, Math.round((pct / 100) * TOTAL)));
     const empty = TOTAL - filled;
-    let color = '#4caf50';                    // green
-    if (pct >= 95) { color = '#f44336'; }     // red
-    else if (pct >= 80) { color = '#ff9800'; } // amber
+    const level = fillLevel(pct, thresholds);
+    const color = level === 'error'
+      ? '#f44336'                             // red
+      : level === 'warning'
+        ? '#ff9800'                           // amber
+        : '#4caf50';                          // green
     const nbsp = (n: number) => '&nbsp;'.repeat(n);
     return (
       `<span style="background-color:#bbbbbb;font-size:48%;border-radius:3px;">` +

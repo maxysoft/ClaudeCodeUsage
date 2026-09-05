@@ -53,8 +53,8 @@ export interface QuotaCredits {
   limit: number | null;
   currency: string;
   /** used/limit as 0-100, or null when there is no finite cap to measure
-   *  against. Drives the progress bar only: the row shows the amount, since a
-   *  percentage of a cap the user can change at will says little. */
+   *  against. Not currently displayed: the credits row shows the amount and no
+   *  bar, since a percentage of a cap the user can change at will says little. */
   percent: number | null;
   /** Local midnight on the 1st of next month, when the monthly cap rolls over.
    *  Derived, not reported: the payload carries no reset for credits, but the

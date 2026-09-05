@@ -5,7 +5,10 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 
 import {
+  CONTEXT_FILL_THRESHOLDS,
+  QUOTA_FILL_THRESHOLDS,
   compactReset,
+  fillLevel,
   formatMonthlyReset,
   formatQuotaStatusText,
   formatResetCell,
@@ -295,4 +298,52 @@ test('a genuinely fractional share keeps a decimal whatever the field says', () 
   // Never round real precision away just because the field is nominally integral.
   assert.equal(formatSharePercent(8.42, 0), '8.4%');
   assert.equal(formatSharePercent(0.5, 0), '0.5%');
+});
+
+
+// Fill thresholds drive both the tooltip bar colour and the status-bar item
+// background, so they are pinned here rather than left as literals at each use.
+// Quota follows the official Claude app (75/90); the context window keeps the
+// later 80/95 pair, since a nearly-full context is recoverable by compacting
+// while a spent quota is not.
+
+test('quota thresholds match the official Claude app', () => {
+  assert.deepEqual(QUOTA_FILL_THRESHOLDS, { warnAt: 75, errorAt: 90 });
+});
+
+test('the context window keeps its own, later thresholds', () => {
+  assert.deepEqual(CONTEXT_FILL_THRESHOLDS, { warnAt: 80, errorAt: 95 });
+});
+
+test('quota fill level steps at 75 and 90 inclusive', () => {
+  const level = (pct: number) => fillLevel(pct, QUOTA_FILL_THRESHOLDS);
+  assert.equal(level(0), 'normal');
+  assert.equal(level(74.9), 'normal');
+  assert.equal(level(75), 'warning');
+  assert.equal(level(89.9), 'warning');
+  assert.equal(level(90), 'error');
+  assert.equal(level(100), 'error');
+});
+
+test('context fill level steps at 80 and 95 inclusive', () => {
+  const level = (pct: number) => fillLevel(pct, CONTEXT_FILL_THRESHOLDS);
+  assert.equal(level(79.9), 'normal');
+  assert.equal(level(80), 'warning');
+  assert.equal(level(94.9), 'warning');
+  assert.equal(level(95), 'error');
+});
+
+test('the two pairs disagree exactly in the 75-80 and 90-95 bands', () => {
+  // The band that motivated the split: quota warns where the context bar is
+  // still quiet, and reds out where it is merely amber.
+  assert.equal(fillLevel(77, QUOTA_FILL_THRESHOLDS), 'warning');
+  assert.equal(fillLevel(77, CONTEXT_FILL_THRESHOLDS), 'normal');
+  assert.equal(fillLevel(92, QUOTA_FILL_THRESHOLDS), 'error');
+  assert.equal(fillLevel(92, CONTEXT_FILL_THRESHOLDS), 'warning');
+});
+
+test('out-of-range fills clamp to the nearest level', () => {
+  // Callers clamp before drawing, but a level must never come back undefined.
+  assert.equal(fillLevel(-5, QUOTA_FILL_THRESHOLDS), 'normal');
+  assert.equal(fillLevel(140, QUOTA_FILL_THRESHOLDS), 'error');
 });

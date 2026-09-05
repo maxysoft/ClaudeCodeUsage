@@ -2,7 +2,22 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream merge: 2.2.2 / `cb4a30b`). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream merge: 2.3.0 / `eca4e43`). Format follows [Keep a Changelog](https://keepachangelog.com).
+
+## [2.11.0] — 2026-09-05
+
+### Added (merged from upstream v2.3.0)
+
+- **Codex beta provider** — the dashboard gains Claude / Codex Beta provider tabs. Codex usage is read locally from Codex session logs and shown with API-equivalent cost (unknown models stay unpriced), daily and monthly time series, recent-task status, and its own settings group; the status bar can follow either provider. Fork-exclusive Claude surfaces (the "This Week" tab, usage-tracking cards, content analysis) render on the Claude provider only.
+- **Official quota thresholds** — quota display follows the official usage-threshold levels.
+- **Tidier usage-credits tooltip row** — the credits line in the quota tooltip is more compact.
+- **Persistent chart metrics** — chart-tab metric choices are remembered per chart (`applyChartMetric`/`restoreChartMetrics`) and restored on reopen. This fork's cross-tab hourly drill-down (the same date expanded on both This Week and This Month) stays container-scoped under the new machinery.
+
+### Upstream alignment
+
+This fork is aligned with `jack21/ClaudeCodeUsage` v2.3.0 (`eca4e43`) — every upstream feature through that commit is present. Fork-exclusive additions on top: "This Week" billing tab with charts and reset countdown, session cost in the status bar, usage-tracking card on every timeframe tab, effort/MCP/thinking usage details, fast-mode & US-geo billing guards, Sonnet 5 introductory-pricing boundary, `maxysoft` publisher branding, and the tag-push-only release workflow.
+
+---
 
 ## [2.10.1] — 2026-08-02
 
@@ -299,7 +314,7 @@ This fork is aligned with `jack21/ClaudeCodeUsage` v2.1.1 (`e52634c`) — every 
 
 ---
 
-## [Unreleased]
+## [2.3.0] — Unreleased
 
 ## [2.2.0] — 2026-07-07
 

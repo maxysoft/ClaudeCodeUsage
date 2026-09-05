@@ -1,7 +1,8 @@
-// Pure helpers for the quota STATUS-BAR text (not the tooltip). Dependency-free
-// and unit-tested. Product requirement: the status bar must stay clean — no
-// dense colon-heavy output like "5h:6%:4.8h | wk:1%:1.6d". Reset countdowns are
-// opt-in (showResetInStatusBar); the full reset detail lives in the tooltip.
+// Pure helpers for quota presentation: the status-bar text, the tooltip's own
+// cells, and the fill thresholds both share. Dependency-free and unit-tested.
+// Product requirement: the status bar must stay clean — no dense colon-heavy
+// output like "5h:6%:4.8h | wk:1%:1.6d". Reset countdowns are opt-in
+// (showResetInStatusBar); the full reset detail lives in the tooltip.
 
 import { QuotaWindow, groupQuotaRows } from './quotaWindows';
 
@@ -250,4 +251,38 @@ export function formatQuotaStatusText(windows: QuotaWindow[] | null, opts: Quota
  * tooltip lists every window unconditionally, so the figure stays reachable. */
 export function worstShownUtilisation(windows: QuotaWindow[] | null, opts: QuotaStatusOptions): number {
   return shownWindows(windows, opts).reduce((worst, w) => Math.max(worst, w.utilization), 0);
+}
+
+/** How full a bar is, in the three steps the UI paints. */
+export type FillLevel = 'normal' | 'warning' | 'error';
+
+/** The percentages at which a fill turns amber and then red. Both are inclusive
+ * lower bounds. */
+export interface FillThresholds {
+  warnAt: number;
+  errorAt: number;
+}
+
+/** Quota bars and the quota status-bar background. These follow the official
+ * Claude app rather than being chosen here, so a user reading both sees the same
+ * window called amber or red in each. */
+export const QUOTA_FILL_THRESHOLDS: FillThresholds = { warnAt: 75, errorAt: 90 };
+
+/** The context-window indicator, which deliberately keeps the later pair the
+ * quota bars used to share. A nearly-full context is recoverable — compact or
+ * start a fresh session — so warning at 75% would cry wolf on a normal long
+ * session, whereas a spent quota genuinely blocks work until it resets. */
+export const CONTEXT_FILL_THRESHOLDS: FillThresholds = { warnAt: 80, errorAt: 95 };
+
+/** Which step a fill percentage lands on. Unclamped input is fine: anything at
+ * or above `errorAt` is an error and anything below `warnAt`, negative included,
+ * is normal. */
+export function fillLevel(pct: number, thresholds: FillThresholds): FillLevel {
+  if (pct >= thresholds.errorAt) {
+    return 'error';
+  }
+  if (pct >= thresholds.warnAt) {
+    return 'warning';
+  }
+  return 'normal';
 }

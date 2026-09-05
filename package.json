@@ -1,8 +1,8 @@
 {
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
-  "description": "Monitor Claude Code usage and costs in VSCode status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.10.1",
+  "description": "Monitor Claude Code and Codex usage and costs in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
+  "version": "2.11.0",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",
@@ -26,6 +26,9 @@
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "openai",
+    "local-usage",
     "usage",
     "cost",
     "monitoring",
@@ -60,6 +63,11 @@
           "type": "string",
           "default": "",
           "description": "Custom Claude data directory path (leave empty for auto-detection)"
+        },
+        "claudeCodeUsage.codex.dataDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Codex data directory (leave empty for CODEX_HOME or ~/.codex)"
         },
         "claudeCodeUsage.language": {
           "type": "string",
@@ -208,9 +216,15 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/test/*.test.js .github/scripts/*.test.mjs"
+    "test": "npm run test:node",
+    "test:node": "npm run compile && node --test out/test/*.test.js .github/scripts/*.test.mjs",
+    "test:ui": "npm run compile && playwright test",
+    "test:ui:update": "npm run compile && playwright test --update-snapshots",
+    "test:release": "npm run test:node && npm run test:ui"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1",
     "@types/node": "24.0.15",
     "@types/vscode": "^1.74.0",
     "typescript": "^5.8.3"
