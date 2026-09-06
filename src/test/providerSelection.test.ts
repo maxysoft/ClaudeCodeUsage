@@ -73,6 +73,8 @@ test('Codex dashboard HTML uses only classes already rendered by the Claude dash
       endTime: now,
       data: usage,
       peakContextTokens: 2_200,
+      skills: [{ key: 'fixture-skill', cost: 0.5, count: 2 }],
+      plugins: [],
     };
     const project: ProjectGroup = {
       groupName: 'ClaudeCodeUsage',

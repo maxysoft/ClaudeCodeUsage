@@ -53,6 +53,7 @@ import {
   CostlyMessage,
   ClaudeApiUsageResponse,
   ContentAnalysis,
+  ContentSlice,
   ProjectGroup,
   ProjectUsage,
   SessionData,
@@ -2757,6 +2758,7 @@ export class UsageWebviewProvider {
         ' data-sort-session="' + this.escapeHtml(fullName.toLowerCase()) + '"' +
         ' data-sort-project="' + this.escapeHtml((s.projectName || '').toLowerCase()) + '"' +
         ' data-sort-context="' + s.peakContextTokens + '"' +
+        ' data-sort-skills="' + ((s.skills || []).length + (s.plugins || []).length) + '"' +
         ' data-sort-thinking="' + (thinkingShare ?? -1) + '"' +
         ' data-sort-duration="' + (s.endTime.getTime() - s.startTime.getTime()) + '"' +
         ' data-sort-active="' + (activeMap[s.sessionId] || 0) + '"' +
@@ -2769,6 +2771,7 @@ export class UsageWebviewProvider {
         this.escapeHtml(displayName) +
         '</td>' +
         this.renderProjectCell(s.projectName, s.projectPath) +
+        this.sessionToolsCell(s) +
         '<td class="cost-cell">' + I18n.formatCurrency(d.totalCost) + '</td>' +
         '<td class="number-cell">' + I18n.formatNumber(d.totalInputTokens) + '</td>' +
         '<td class="number-cell">' + I18n.formatNumber(d.totalOutputTokens) + '</td>' +
@@ -2852,6 +2855,7 @@ export class UsageWebviewProvider {
       th('time', t.startTime) +
       th('session', t.sessionTitle) +
       th('project', t.project) +
+      th('skills', t.sessionSkills) +
       th('cost', t.cost) +
       th('input', t.inputTokens) +
       th('output', t.outputTokens) +
@@ -2993,6 +2997,37 @@ export class UsageWebviewProvider {
   }
 
   /** A table cell showing the project's friendly name with its full path beneath. */
+  /** Sessions-table cell: which skills / plugins the session used, from the
+   * attribution Claude Code stamps on each usage line. Shows the priciest one
+   * plus a "+N" overflow chip; the tooltip lists every entry with its exact
+   * spend and turn count. "-" when the logs carry no attribution (older
+   * Claude Code versions never stamped it). */
+  private sessionToolsCell(s: SessionUsage): string {
+    const t = I18n.t.popup;
+    const entries = [
+      ...(s.skills || []).map((e) => ({ ...e, kind: 'skill' })),
+      ...(s.plugins || []).map((e) => ({ ...e, kind: 'plugin' })),
+    ].sort((a, b) => b.cost - a.cost);
+    if (entries.length === 0) {
+      return '<td class="tools-cell">-</td>';
+    }
+    const tip = [
+      t.sessionSkillsHelp,
+      ...entries.map(
+        (e) =>
+          `${e.key} (${e.kind}) — ${I18n.formatCurrency(e.cost)} · ×${I18n.formatNumber(e.count)}`
+      ),
+    ].join('\n');
+    const top = entries[0];
+    const overflow = entries.length - 1;
+    return (
+      '<td class="tools-cell" title="' + this.escapeHtml(tip) + '">' +
+      '<span class="tool-chip">' + this.escapeHtml(top.key) + '</span>' +
+      (overflow > 0 ? '<span class="tool-more">+' + overflow + '</span>' : '') +
+      '</td>'
+    );
+  }
+
   private renderProjectCell(name: string, fullPath: string): string {
     const safeName = this.escapeHtml(name || 'unknown');
     return '<td class="project-cell"><div class="project-name">' + safeName + '</div>' + this.projectPathLine(fullPath || '') + '</td>';
@@ -4242,6 +4277,11 @@ export class UsageWebviewProvider {
         toolRows += barRow(s.key, toolTokens[i], maxTool, 'cf-4');
       });
       toolSection = '<h4 class="cbar-subhead">' + t.byTool + '</h4><div class="cbar-list">' + toolRows + '</div>';
+      // How much context each call of a tool drags in. The bars above rank by
+      // TOTAL, which a frequently-used cheap tool wins; this ranks by tokens
+      // PER CALL, which is what makes two ways of answering the same question
+      // (a graph query vs. reading the file) comparable.
+      toolSection += this.renderToolEfficiency(analysis.toolResultBreakdown, (v) => tokensFor('toolResults', v));
     }
 
     // Calibrated figures are exact-anchored; estimates are text-length only.
@@ -4261,6 +4301,58 @@ export class UsageWebviewProvider {
       '<div class="cbar-list">' + catRows + '</div>' +
       toolSection +
       '</div>'
+    );
+  }
+
+  /**
+   * "Tokens per tool call": how much context one call of each tool pulls in,
+   * ranked worst-first. Deliberately a measurement, not a savings figure —
+   * the logs record what each call actually returned, never what an
+   * alternative call would have returned, so any "saved" number would be a
+   * guess. Two tools answering the same question can be compared directly
+   * (e.g. a graph query vs. reading the file it summarises).
+   *
+   * @param slices  per-tool result sizes + call counts (last 30 days)
+   * @param calibrate scales a text-length estimate onto the billed input side
+   */
+  private renderToolEfficiency(
+    slices: ContentSlice[],
+    calibrate: (estimatedTokens: number) => number
+  ): string {
+    const t = I18n.t.popup;
+    const rows = slices
+      .filter((s) => s.count > 0)
+      .map((s) => ({
+        key: s.key,
+        calls: s.count,
+        total: calibrate(s.estimatedTokens),
+        perCall: calibrate(s.estimatedTokens) / s.count,
+      }))
+      .sort((a, b) => b.perCall - a.perCall);
+    if (rows.length === 0) {
+      return '';
+    }
+    const max = Math.max(...rows.map((r) => r.perCall), 1);
+    const body = rows
+      .map(
+        (r) =>
+          '<div class="cbar-row" title="' +
+          this.escapeHtml(
+            r.key + ' — ' + I18n.formatNumber(Math.round(r.perCall)) + ' / ' + t.perCall +
+            ' · ' + I18n.formatNumber(r.calls) + ' × · ' + I18n.formatNumber(r.total) + ' ' + t.estTokens
+          ) + '">' +
+          '<div class="cbar-label">' + this.escapeHtml(r.key) + '</div>' +
+          '<div class="cbar-track"><div class="cbar-fill cf-4" style="width: ' +
+          ((r.perCall / max) * 100).toFixed(1) + '%;"></div></div>' +
+          '<div class="cbar-val">×' + I18n.formatNumber(r.calls) + '</div>' +
+          '<div class="cbar-pct">' + I18n.formatNumber(Math.round(r.perCall)) + '</div>' +
+          '</div>'
+      )
+      .join('');
+    return (
+      '<h4 class="cbar-subhead">' + t.toolEfficiency + '</h4>' +
+      '<p class="table-hint">' + t.toolEfficiencyHelp + '</p>' +
+      '<div class="cbar-list">' + body + '</div>'
     );
   }
 
@@ -5656,6 +5748,30 @@ export class UsageWebviewProvider {
       .project-name {
         font-weight: bold;
         color: var(--vscode-symbolIcon-functionForeground);
+      }
+
+      .tools-cell {
+        white-space: nowrap;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+
+      .tool-chip {
+        display: inline-block;
+        max-width: 130px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: bottom;
+        padding: 1px 6px;
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 999px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-foreground);
+      }
+
+      .tool-more {
+        margin-left: 4px;
+        opacity: 0.75;
       }
 
       .project-path {

@@ -93,6 +93,8 @@ export interface Translations {
     projectBreakdown: string;
     fullPath: string;
     peakContext: string;
+    sessionSkills: string;
+    sessionSkillsHelp: string;
     tokenComposition: string;
     lastActive: string;
     pricing: string;
@@ -119,6 +121,9 @@ export interface Translations {
     calibratedTokens: string;
     thinkingTokensCalibrated: string;
     byTool: string;
+    toolEfficiency: string;
+    toolEfficiencyHelp: string;
+    perCall: string;
     catUserPrompts: string;
     catAssistantText: string;
     catAssistantThinking: string;
@@ -1089,6 +1094,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: 'Project Usage',
       fullPath: 'Full Path',
       peakContext: 'Peak Context',
+      sessionSkills: 'Skills / plugins',
+      sessionSkillsHelp: 'Skills and plugins used in this session, with their exact spend. From the attribution Claude Code stamps on each usage line.',
       tokenComposition: 'Token Composition',
       lastActive: 'Last Active',
       pricing: 'Pricing',
@@ -1115,6 +1122,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: 'Calibrated tokens',
       thinkingTokensCalibrated: 'real thinking tokens (calibrated)',
       byTool: 'Tool Results by Tool',
+      toolEfficiency: 'Tokens per tool call',
+      toolEfficiencyHelp: 'How much context one call of each tool pulls in, biggest first. A measurement of what each call returned — not a savings figure, since the logs never record what an alternative call would have cost.',
+      perCall: 'call',
       catUserPrompts: 'Your prompts',
       catAssistantText: 'Assistant responses',
       catAssistantThinking: 'Assistant thinking',
@@ -1328,6 +1338,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: "Nutzung nach Projekt",
       fullPath: "Vollständiger Pfad",
       peakContext: "Größter Kontext",
+      sessionSkills: "Skills / Plugins",
+      sessionSkillsHelp: "In dieser Sitzung genutzte Skills und Plugins mit ihren exakten Kosten. Aus der Attribution, die Claude Code in jede Nutzungszeile schreibt.",
       tokenComposition: "Token-Zusammensetzung",
       lastActive: "Zuletzt aktiv",
       pricing: "Preise",
@@ -1354,6 +1366,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: "Kalibrierte Tokens",
       thinkingTokensCalibrated: "echte Denk-Tokens (kalibriert)",
       byTool: "Tool-Ergebnisse nach Tool",
+      toolEfficiency: "Tokens pro Tool-Aufruf",
+      toolEfficiencyHelp: "Wie viel Kontext ein einzelner Aufruf jedes Tools mitbringt, größte zuerst. Eine Messung dessen, was jeder Aufruf zurückgab — keine Einsparung, da die Logs nie festhalten, was eine Alternative gekostet hätte.",
+      perCall: "Aufruf",
       catUserPrompts: "Deine Eingaben",
       catAssistantText: "Assistent-Antworten",
       catAssistantThinking: "Assistent-Denken",
@@ -1570,6 +1585,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: '各專案使用量',
       fullPath: '完整路徑',
       peakContext: '峰值上下文',
+      sessionSkills: '技能 / 外掛',
+      sessionSkillsHelp: '本次會話使用的技能與外掛，含精確花費。來自 Claude Code 寫入每筆用量記錄的歸因欄位。',
       tokenComposition: 'Token 組成',
       lastActive: '最近活動',
       pricing: '計費標準',
@@ -1596,6 +1613,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: '已校準 token',
       thinkingTokensCalibrated: '真實思考 token（已校準）',
       byTool: '各工具結果用量',
+      toolEfficiency: '每次工具呼叫的 Tokens',
+      toolEfficiencyHelp: '每個工具單次呼叫帶入多少內容，由多到少排序。這是實際回傳量的量測，不是節省量——日誌從未記錄替代做法會花多少。',
+      perCall: '次',
       catUserPrompts: '你的提問',
       catAssistantText: '助手回覆',
       catAssistantThinking: '助手思考',
@@ -1805,6 +1825,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: '各项目使用量',
       fullPath: '完整路径',
       peakContext: '峰值上下文',
+      sessionSkills: '技能 / 插件',
+      sessionSkillsHelp: '本次会话使用的技能与插件，含精确花费。来自 Claude Code 写入每条用量记录的归因字段。',
       tokenComposition: 'Token 组成',
       lastActive: '最近活动',
       pricing: '计费标准',
@@ -1831,6 +1853,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: '已校准 token',
       thinkingTokensCalibrated: '真实思考 token（已校准）',
       byTool: '各工具结果用量',
+      toolEfficiency: '每次工具调用的 Tokens',
+      toolEfficiencyHelp: '每个工具单次调用带入多少内容，由多到少排序。这是实际返回量的测量，不是节省量——日志从未记录替代做法会花多少。',
+      perCall: '次',
       catUserPrompts: '你的提问',
       catAssistantText: '助手回复',
       catAssistantThinking: '助手思考',
@@ -2040,6 +2065,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: 'プロジェクト別使用量',
       fullPath: 'フルパス',
       peakContext: '最大コンテキスト',
+      sessionSkills: 'スキル / プラグイン',
+      sessionSkillsHelp: 'このセッションで使用したスキルとプラグイン、および正確なコスト。Claude Code が各使用行に記録する属性情報に基づきます。',
       tokenComposition: 'トークン構成',
       lastActive: '最終アクティブ',
       pricing: '料金',
@@ -2066,6 +2093,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: 'キャリブレーション済みトークン',
       thinkingTokensCalibrated: '実際の思考トークン（キャリブレーション済み）',
       byTool: 'ツール別の結果使用量',
+      toolEfficiency: 'ツール呼び出し1回あたりのトークン',
+      toolEfficiencyHelp: '各ツールの1回の呼び出しが持ち込むコンテキスト量を多い順に表示します。実際に返された量の実測値であり、削減量ではありません（代替手段の消費量はログに残らないため）。',
+      perCall: '回',
       catUserPrompts: 'あなたの入力',
       catAssistantText: 'アシスタント応答',
       catAssistantThinking: 'アシスタント思考',
@@ -2280,6 +2310,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: '프로젝트별 사용량',
       fullPath: '전체 경로',
       peakContext: '최대 컨텍스트',
+      sessionSkills: '스킬 / 플러그인',
+      sessionSkillsHelp: '이 세션에서 사용한 스킬과 플러그인 및 정확한 비용. Claude Code가 각 사용 기록에 남기는 속성 정보 기반입니다.',
       tokenComposition: '토큰 구성',
       lastActive: '마지막 활동',
       pricing: '요금',
@@ -2306,6 +2338,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: '보정된 토큰',
       thinkingTokensCalibrated: '실제 사고 토큰(보정됨)',
       byTool: '도구별 결과 사용량',
+      toolEfficiency: '도구 호출당 토큰',
+      toolEfficiencyHelp: '각 도구의 한 번 호출이 가져오는 컨텍스트 양을 많은 순으로 보여줍니다. 실제 반환량의 측정값이며 절감량이 아닙니다 — 대안의 비용은 로그에 남지 않습니다.',
+      perCall: '회',
       catUserPrompts: '내 입력',
       catAssistantText: '어시스턴트 응답',
       catAssistantThinking: '어시스턴트 사고',
@@ -2520,6 +2555,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: 'Uso por projeto',
       fullPath: 'Caminho completo',
       peakContext: 'Pico de contexto',
+      sessionSkills: 'Skills / plugins',
+      sessionSkillsHelp: 'Skills e plugins usados nesta sessão, com o custo exato. Vem da atribuição que o Claude Code grava em cada linha de uso.',
       tokenComposition: 'Composição de tokens',
       lastActive: 'Última atividade',
       pricing: 'Preços',
@@ -2546,6 +2583,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: 'Tokens calibrados',
       thinkingTokensCalibrated: 'tokens reais de raciocínio (calibrado)',
       byTool: 'Resultados de ferramentas por ferramenta',
+      toolEfficiency: 'Tokens por chamada de ferramenta',
+      toolEfficiencyHelp: 'Quanto contexto uma única chamada de cada ferramenta traz, do maior para o menor. É a medição do que cada chamada retornou — não uma economia, já que os logs nunca registram quanto custaria a alternativa.',
+      perCall: 'chamada',
       catUserPrompts: 'Seus prompts',
       catAssistantText: 'Respostas do assistente',
       catAssistantThinking: 'Raciocínio do assistente',
@@ -2760,6 +2800,8 @@ const translations: Record<SupportedLanguage, Translations> = {
       projectBreakdown: 'Penggunaan Proyek',
       fullPath: 'Path Lengkap',
       peakContext: 'Konteks Puncak',
+      sessionSkills: 'Skill / plugin',
+      sessionSkillsHelp: 'Skill dan plugin yang dipakai pada sesi ini, beserta biaya persisnya. Berasal dari atribusi yang dicatat Claude Code pada tiap baris penggunaan.',
       tokenComposition: 'Komposisi Token',
       lastActive: 'Terakhir Aktif',
       pricing: 'Harga',
@@ -2786,6 +2828,9 @@ const translations: Record<SupportedLanguage, Translations> = {
       calibratedTokens: 'Token terkalibrasi',
       thinkingTokensCalibrated: 'token pemikiran sebenarnya (terkalibrasi)',
       byTool: 'Hasil Tool per Tool',
+      toolEfficiency: 'Token per panggilan tool',
+      toolEfficiencyHelp: 'Berapa banyak konteks yang dibawa satu panggilan tiap tool, terbesar dulu. Ini pengukuran hasil nyata tiap panggilan — bukan penghematan, karena log tak pernah mencatat biaya alternatifnya.',
+      perCall: 'panggilan',
       catUserPrompts: 'Prompt Anda',
       catAssistantText: 'Respons asisten',
       catAssistantThinking: 'Pemikiran asisten',

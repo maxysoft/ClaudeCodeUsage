@@ -4,6 +4,30 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.3.0 / `eca4e43`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.13.0] — 2026-09-06
+
+### Added (fork-specific)
+
+- **Tokens per tool call** — a new panel on the Content tab ranking every tool by how much context one call of it pulls in, biggest first. The existing "by tool" bars rank by total, which a frequently-used cheap tool wins; ranking per call is what makes two ways of answering the same question comparable (an MCP graph query against reading the file it summarises). Deliberately a measurement, not a savings figure: the logs record what each call returned, never what an alternative would have returned, so a "saved" number would be a guess. Figures use the same billing-calibrated scaling as the rest of the content analysis.
+
+### Upstream alignment
+
+Unchanged — aligned with `jack21/ClaudeCodeUsage` v2.3.0 (`eca4e43`).
+
+---
+
+## [2.12.0] — 2026-09-06
+
+### Added (fork-specific)
+
+- **Skills and plugins per session** — the Sessions table gains a sortable "Skills / plugins" column showing which skills and plugins a conversation used. The cell shows the priciest entry plus a `+N` overflow marker; hovering lists every skill and plugin with its exact spend and turn count. Figures come from the `attributionSkill` / `attributionPlugin` fields Claude Code stamps on each usage line, so they are measurements rather than estimates — sessions from logs that predate the stamping show `-`.
+
+### Upstream alignment
+
+Unchanged — aligned with `jack21/ClaudeCodeUsage` v2.3.0 (`eca4e43`).
+
+---
+
 ## [2.11.0] — 2026-09-05
 
 ### Added (merged from upstream v2.3.0)

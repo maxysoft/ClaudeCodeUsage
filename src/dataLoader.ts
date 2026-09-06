@@ -28,6 +28,7 @@ import {
   ProjectGroup,
   ProjectUsage,
   SessionData,
+  SessionToolUse,
   SessionUsage,
   SkillUse,
   ThinkingShare,
@@ -2267,6 +2268,8 @@ export class ClaudeDataLoader {
         endTime,
         data: this.calculateUsageData(sessionRecords),
         peakContextTokens,
+        skills: this.sessionToolUse(sessionRecords, (r) => r._skill),
+        plugins: this.sessionToolUse(sessionRecords, (r) => r._plugin),
       };
     });
 
@@ -2275,6 +2278,32 @@ export class ClaudeDataLoader {
       // real spend even if no prompt landed in the window (e.g. continuations).
       .filter((s) => s.data.messageCount > 0 || s.data.totalCost > 0)
       .sort((a, b) => b.endTime.getTime() - a.endTime.getTime())
+      .slice(0, limit);
+  }
+
+  /** Per-session skill / plugin usage: exact spend and turn count of the
+   * records Claude Code stamped with that attribution, most expensive first.
+   * Capped so one session can't blow up the materialized index. */
+  private static sessionToolUse(
+    records: ClaudeUsageRecord[],
+    pick: (r: ClaudeUsageRecord) => string | undefined,
+    limit: number = 12
+  ): SessionToolUse[] {
+    const agg: Record<string, { cost: number; count: number }> = {};
+    for (const record of records) {
+      const key = pick(record);
+      if (!key) {
+        continue;
+      }
+      if (!agg[key]) {
+        agg[key] = { cost: 0, count: 0 };
+      }
+      agg[key].cost += this.recordCost(record);
+      agg[key].count += 1;
+    }
+    return Object.entries(agg)
+      .map(([key, v]) => ({ key, cost: v.cost, count: v.count }))
+      .sort((a, b) => b.cost - a.cost || b.count - a.count)
       .slice(0, limit);
   }
 

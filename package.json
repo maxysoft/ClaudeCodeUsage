@@ -2,7 +2,7 @@
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
   "description": "Monitor Claude Code and Codex usage and costs in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.11.0",
+  "version": "2.13.0",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",

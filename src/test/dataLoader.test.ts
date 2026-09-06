@@ -218,3 +218,42 @@ test('request ID presence may degrade within one message without double-counting
     assert.equal(records.length, 1, name);
   }
 });
+
+test('session breakdown reports skills and plugins by exact spend', () => {
+  const turn = (
+    sessionId: string,
+    outputTokens: number,
+    attribution: { _skill?: string; _plugin?: string }
+  ): ClaudeUsageRecord => ({
+    timestamp: new Date().toISOString(),
+    message: { model: 'claude-opus-4-8', usage: { input_tokens: 0, output_tokens: outputTokens } },
+    _sessionId: sessionId,
+    ...attribution,
+  });
+
+  const [session] = ClaudeDataLoader.getSessionBreakdown([
+    turn('s1', 1_000_000, { _skill: 'cheap-skill' }),
+    turn('s1', 4_000_000, { _skill: 'pricey-skill', _plugin: 'my-plugin' }),
+    turn('s1', 1_000_000, { _skill: 'pricey-skill' }),
+    turn('s1', 1_000_000, {}), // unattributed turn: counted in cost, not in either list
+  ]);
+
+  // Opus output is $25/MTok: pricey-skill spans 5M tokens over 2 turns, cheap 1M.
+  assert.deepEqual(
+    session.skills.map((s) => [s.key, s.count]),
+    [['pricey-skill', 2], ['cheap-skill', 1]],
+    'skills sort by cost, most expensive first'
+  );
+  assert.ok(Math.abs(session.skills[0].cost - 125) < 1e-6, `expected ~125, got ${session.skills[0].cost}`);
+  assert.deepEqual(session.plugins.map((p) => p.key), ['my-plugin']);
+  // The unattributed turn still belongs to the session total.
+  assert.ok(Math.abs(session.data.totalCost - 175) < 1e-6, `expected ~175, got ${session.data.totalCost}`);
+});
+
+test('a session with no attribution stamped reports empty skill and plugin lists', () => {
+  const [session] = ClaudeDataLoader.getSessionBreakdown([
+    { ...record('claude-opus-4-8'), _sessionId: 's2' },
+  ]);
+  assert.deepEqual(session.skills, []);
+  assert.deepEqual(session.plugins, []);
+});

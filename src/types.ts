@@ -128,6 +128,19 @@ export interface SessionUsage {
   // Largest context window observed in the session
   // (input + cache read + cache creation tokens of a single request).
   peakContextTokens: number;
+  // What the session used, from the attribution fields Claude Code stamps on
+  // each usage line (`attributionSkill` / `attributionPlugin`). Cost is the
+  // exact spend of the stamped lines, so these are measurements, not
+  // estimates. Empty on older logs that predate the stamping.
+  skills: SessionToolUse[];
+  plugins: SessionToolUse[];
+}
+
+// One skill or plugin used inside a session, with its exact spend.
+export interface SessionToolUse {
+  key: string;
+  cost: number;
+  count: number;
 }
 
 // One expensive assistant turn, for the Content tab's "costliest messages"
