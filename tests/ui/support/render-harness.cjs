@@ -215,6 +215,12 @@ function addClaudeData(provider, fixture = 'default') {
   provider.updateData(
     { ...today, sessionStart: new Date(now.getTime() - 3_600_000), sessionEnd: now },
     today,
+    // Fork-exclusive: weekData sits at position 3 (the "This Week" billing-window
+    // tab). Upstream's signature has no such parameter, so omitting it here shifts
+    // every later argument by one and hands allTimeData a daily-breakdown array —
+    // renderUsageData then throws on the missing costBreakdown and the whole page
+    // fails to render, which reads as a Playwright timeout rather than a crash.
+    claudeUsage(3),
     claudeUsage(6),
     claudeUsage(18),
     [
