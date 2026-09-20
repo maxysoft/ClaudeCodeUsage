@@ -57,7 +57,7 @@ jobs:
       tag_name: ${{ steps.create_tag.outputs.tag_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -96,10 +96,10 @@ jobs:
       )
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
 
@@ -138,7 +138,7 @@ jobs:
         run: node .github/scripts/verify-vsix.mjs "$VSIX"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.ver.outputs.vsix }}
           path: ${{ steps.ver.outputs.vsix }}
@@ -149,7 +149,7 @@ jobs:
         # tag_name: use the actual git tag ref when available, otherwise use the
         # tag_name output from the tag job (same-run build path).
         if: startsWith(github.ref, 'refs/tags/v') || needs.tag.outputs.new_tag == 'true'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.tag.outputs.tag_name }}
           files: ${{ steps.ver.outputs.vsix }}

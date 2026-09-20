@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
-const CHECKOUT_SHA = 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5';
+const CHECKOUT_SHA = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
 
 function read(relativePath) {
   return readFileSync(resolve(REPO_ROOT, relativePath), 'utf8');
@@ -111,7 +111,9 @@ test('release draft gets a post-merge reconciliation pass', () => {
 test('maintainer-only mention workflow retains its privileged Claude boundary', () => {
   const privileged = read('.github/workflows/claude.yml');
   assert.match(privileged, /contents: write/);
-  assert.match(privileged, /anthropics\/claude-code-action@v1/);
+  // Pinned by commit SHA, not by the mutable v1 tag: this workflow runs with
+  // contents: write, so a retagged upstream release must not change what runs.
+  assert.match(privileged, /anthropics\/claude-code-action@[0-9a-f]{40} # v1\b/);
   assert.match(privileged, /OWNER","MEMBER","COLLABORATOR/);
 });
 
@@ -131,3 +133,23 @@ test('CONTRIBUTING distinguishes current automatic, reviewed Codex, and privileg
 // changelog wording is not asserted here. The CI hardening itself is
 // verified functionally by the tests above against first-pass.mjs and the
 // workflow YAML files.
+
+test('every workflow action is pinned to a commit SHA, never a mutable tag', () => {
+  // A tag can be moved to point at new code; a commit SHA cannot. publish.yml
+  // attaches release assets and claude.yml runs with contents: write, so an
+  // upstream retag would otherwise change what executes here.
+  const dir = resolve(REPO_ROOT, '.github', 'workflows');
+  const offenders = [];
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.yml'))) {
+    const body = readFileSync(resolve(dir, file), 'utf8');
+    for (const [, ref] of body.matchAll(/^\s*uses:\s*(\S+)/gm)) {
+      if (ref.startsWith('./') || ref.startsWith('docker://')) {
+        continue;
+      }
+      if (!/@[0-9a-f]{40}$/.test(ref)) {
+        offenders.push(`${file}: ${ref}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
+});

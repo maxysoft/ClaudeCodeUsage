@@ -6,6 +6,10 @@ upstream merge: 2.3.3 / `b83e7d6`). Format follows [Keep a Changelog](https://ke
 
 ## [2.14.0] — 2026-09-20
 
+### Security (fork-specific)
+
+- **Every GitHub Actions reference is pinned to a commit SHA** — `actions/upload-artifact` (in the release workflow), plus `actions/checkout` and `anthropics/claude-code-action` in the maintainer mention workflow, were still on mutable tags. A tag can be repointed at new code; those two workflows attach release assets and run with `contents: write`, so a retag upstream would have silently changed what executes. All six actions are now SHA-pinned at their latest release (checkout v7.0.1, setup-node v7.0.0, upload-artifact v7.0.1, action-gh-release v3.0.3, release-drafter v7.7.0, claude-code-action v1), each annotated with its version, and a new policy test fails the build if any workflow reintroduces a tag reference.
+
 ### Fixed (fork-specific)
 
 - **"Usage tracking" card matched the wrong window on the This Week and This Month tabs** — upstream's v2.3.3 attribution refactor moved scoping to timezone day keys, which snapped the fork's exact boundary (`resets_at − 7 days`, almost always mid-day) to the start of its civil day. The card then counted up to 24 hours of usage that the tab's own headline and per-day breakdown excluded, so the two disagreed. The boundary is honoured as an exact instant again, for both records and skill invocations, and a regression test now asserts the card equals the tab total.
