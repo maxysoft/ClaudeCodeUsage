@@ -2,6 +2,7 @@ import {
   CodexInsightEvidenceKey,
   CodexInsightKind,
 } from './providers/codex/codexInsights';
+import type { BackgroundWorkReason } from './backgroundWorkState';
 
 /** Copy contract retained for provider-aware renderers in webview.ts. */
 export const CODEX_QUALITY_FLAGS = [
@@ -11,6 +12,7 @@ export const CODEX_QUALITY_FLAGS = [
   'missing-token-info',
   'invalid-token-count',
   'counter-regression',
+  'component-delta-clamped',
   'missing-parent',
   'index-backfill-incomplete',
   'ambiguous-session-identity',
@@ -149,6 +151,7 @@ export interface CodexViewCopy {
   indexedAllTime: string;
   indexedSubtotal: string;
   indexingInProgress: string;
+  indexingReasons: Record<BackgroundWorkReason, string>;
   updatedAt: string;
   claudeTokenAccounting: string;
   codexTokenAccounting: string;
@@ -233,6 +236,7 @@ export const CODEX_COPY_EN: CodexViewCopy = {
     'missing-token-info': 'Missing token information',
     'invalid-token-count': 'Invalid token count',
     'counter-regression': 'Usage counter moved backwards',
+    'component-delta-clamped': 'Cached or reasoning token delta exceeded its parent total and was capped',
     'missing-parent': 'Parent session log missing; conservative usage retained',
     'index-backfill-incomplete': 'Usage index is still being built; current totals are incomplete and indexing will continue automatically',
     'ambiguous-session-identity': 'Duplicate session identity is ambiguous; both local copies are retained',
@@ -289,6 +293,15 @@ export const CODEX_COPY_EN: CodexViewCopy = {
   observedSessionDuration: 'Elapsed span between the first and last observed events; a proxy, not actual active time.',
   indexedSubtotal: 'Indexed subtotal',
   indexingInProgress: 'Indexing is still in progress; unverified legacy totals are excluded.',
+  indexingReasons: {
+    'first-index': 'First local history setup',
+    'parser-migration': 'Updating the local parser index',
+    'period-migration': 'Updating date history',
+    'hourly-history': 'Building recent hourly history',
+    'history-backfill': 'Completing local history',
+    'rule-migration': 'Updating measurement rules',
+    resume: 'Resuming local history',
+  },
   indexedLogEntries: 'Indexed log entries',
   indexedStorage: 'Indexed storage',
   indexedAllTime: 'Indexed all time',

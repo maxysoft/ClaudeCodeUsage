@@ -26,6 +26,7 @@ export interface CodexJsonlScanResult {
   bytesRead: number;
   reachedEnd: boolean;
   oversizedLines: number;
+  finalLineAccepted: boolean;
 }
 
 export interface CodexJsonlChunkProgress {
@@ -64,6 +65,7 @@ export async function scanCodexJsonlLines(
   onLine: (line: string, endOffset: number) => void,
   onChunk?: (progress: CodexJsonlChunkProgress) => Promise<void>,
   maxLineBytes: number = CODEX_MAX_JSONL_LINE_BYTES,
+  acceptFinalLine?: (line: string) => boolean,
 ): Promise<CodexJsonlScanResult> {
   const start = Math.max(0, cursor.offset);
   const end = Math.max(start, endExclusive);
@@ -74,6 +76,7 @@ export async function scanCodexJsonlLines(
   let pendingBytes = 0;
   let bytesRead = 0;
   let oversizedLines = 0;
+  let finalLineAccepted = false;
 
   for await (const rawChunk of reader.read(entry, start, end)) {
     if (readPosition >= end) {
@@ -138,10 +141,26 @@ export async function scanCodexJsonlLines(
     });
   }
 
+  if (!discarding && pendingBytes > 0 && readPosition >= end && acceptFinalLine) {
+    let lineBuffer = pendingParts.length === 1
+      ? pendingParts[0]
+      : Buffer.concat(pendingParts, pendingBytes);
+    if (lineBuffer[lineBuffer.length - 1] === 0x0d) {
+      lineBuffer = lineBuffer.subarray(0, lineBuffer.length - 1);
+    }
+    const line = lineBuffer.toString('utf8');
+    if (acceptFinalLine(line)) {
+      onLine(line, end);
+      safeOffset = end;
+      finalLineAccepted = true;
+    }
+  }
+
   return {
     cursor: snapshotCursor(safeOffset, discarding),
     bytesRead,
     reachedEnd: readPosition >= end,
     oversizedLines,
+    finalLineAccepted,
   };
 }

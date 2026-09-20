@@ -125,7 +125,17 @@ jobs:
         run: echo "vsix=claude-code-usage-$(node -p "require('./package.json').version").vsix" >> "$GITHUB_OUTPUT"
 
       - name: Package .vsix
-        run: npx -y @vscode/vsce package --no-dependencies --out "${{ steps.ver.outputs.vsix }}"
+        env:
+          VSIX: ${{ steps.ver.outputs.vsix }}
+        run: npx -y @vscode/vsce@3.9.2 package --no-dependencies --out "$VSIX"
+
+      # Fail closed before the artifact leaves the runner: the verifier rejects
+      # a package that carries sources, tests, dotfiles or key material, or that
+      # is missing a runtime entry point (the same check CI runs on every push).
+      - name: Verify .vsix
+        env:
+          VSIX: ${{ steps.ver.outputs.vsix }}
+        run: node .github/scripts/verify-vsix.mjs "$VSIX"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -9,6 +9,7 @@ import { CODEX_COPY_EN } from '../codexView';
 import { I18n } from '../i18n';
 import { buildScopedCodexInsights } from '../providers/codex/codexInsights';
 import { buildCodexUsageView } from '../providers/codex/codexUsage';
+import { buildProjectUsageMatrixSnapshot } from '../projectUsageMatrix';
 import { ContentAnalysis, ProjectGroup, SessionUsage, SupportedLanguage, UsageData } from '../types';
 import { CODEX_WEBVIEW_NOW, codexWebviewFixture } from './codexWebviewFixtures';
 
@@ -53,6 +54,7 @@ function claudeUsageFixture(): UsageData {
 
 test('Codex dashboard HTML uses only classes already rendered by the Claude dashboard', () => {
   const originalLoad = (Module as any)._load;
+  const originalNow = Date.now;
   (Module as any)._load = function(request: string, parent: unknown, isMain: boolean) {
     if (request === 'vscode') {
       return { workspace: { workspaceFolders: [] } };
@@ -60,6 +62,7 @@ test('Codex dashboard HTML uses only classes already rendered by the Claude dash
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
+    Date.now = () => CODEX_WEBVIEW_NOW;
     const { UsageWebviewProvider } = require('../webview') as typeof import('../webview');
     const provider = new UsageWebviewProvider({} as any) as any;
     const usage = claudeUsageFixture();
@@ -104,13 +107,31 @@ test('Codex dashboard HTML uses only classes already rendered by the Claude dash
       skillUses: [],
     };
     provider.todayData = usage;
-    provider.monthData = usage;
+    provider.rolling30DayData = usage;
     provider.allTimeData = usage;
     provider.hourlyDataForToday = [{ hour: '12:00', data: usage }];
-    provider.dailyDataForMonth = [{ date: '2026-07-20', data: usage }];
+    provider.dailyDataForRolling30Days = [{ date: '2026-07-20', data: usage }];
+    provider.hourlyDataForRolling30DaysByDay = {
+      '2026-07-20': [{ hour: '12:00', data: usage }],
+    };
     provider.dailyDataForAllTime = [{ date: '2026-07', data: usage }];
     provider.sessionBreakdown = [session];
     provider.projectBreakdown = [project];
+    provider.claudeProjectUsageMatrix = buildProjectUsageMatrixSnapshot(
+      'claude',
+      [1, 2, 3, 4, 5].map((value) => ({
+        projectKey: `claude-project-${value}`,
+        projectName: `Claude project ${value}`,
+        day: '2026-07-20',
+        tokens: value * 1_000,
+        coverage: 'partial' as const,
+      })),
+      {
+        asOfDay: '2026-07-20',
+        timeZone: 'Asia/Hong_Kong',
+        coverage: 'partial',
+      },
+    );
     provider.contentAnalysis = content;
     provider.providerAvailability = { claude: true, codex: true };
     const codexSnapshot = codexWebviewFixture();
@@ -124,9 +145,32 @@ test('Codex dashboard HTML uses only classes already rendered by the Claude dash
     provider.currentProvider = 'codex';
     const codexHtml = provider.getMainContent();
     const codexClasses = renderedClasses(codexHtml);
-    const codexOnly = [...codexClasses].filter((className) => !claudeClasses.has(className)).sort();
+    // The weekly allowance disclosure is shared by both providers, but this
+    // compact Claude fixture has no quota observations and therefore does not
+    // render that optional surface. Keep the parity gate strict for every
+    // unconditional class while acknowledging this data-dependent shared one.
+    const conditionalShared = new Set(['weekly-value-details']);
+    const codexOnly = [...codexClasses]
+      .filter((className) => !claudeClasses.has(className) && !conditionalShared.has(className))
+      .sort();
 
     assert.deepEqual(codexOnly, []);
+    const drilldownDay = Object.keys(codexView.last30DaysHourlyByDay)[0];
+    assert.ok(drilldownDay, 'fixture exposes one materialized hourly day');
+    const drilldownMonth = drilldownDay.slice(0, 7);
+    assert.match(
+      codexHtml,
+      new RegExp('class="chart-bar cost-bar cost-stacked clickable"[^>]+data-cost[^>]+title="' + drilldownMonth),
+    );
+    assert.match(codexHtml, new RegExp('aria-controls="monthly-detail-' + drilldownMonth + '"'));
+    const monthRows = codexView.allTimeDaily
+      .filter((row) => row.day.startsWith(drilldownMonth + '-'))
+      .sort((left, right) => left.day.localeCompare(right.day));
+    const monthHtml = provider.renderCodexMonthDailyDetail(drilldownMonth, monthRows);
+    assert.match(monthHtml, /data-codex-alltime-daily/);
+    assert.match(monthHtml, new RegExp('id="codex-alltime-hourly-detail-' + drilldownDay + '"'));
+    assert.match(monthHtml, /data-codex-materialized-hours="true"/);
+    assert.match(monthHtml, new RegExp('onclick="toggleCodexHourlyDetail\\(\\\'' + drilldownDay + '\\\', this\\)"'));
     const equivalentCostIndex = codexHtml.indexOf('API-equivalent cost');
     const processedIndex = codexHtml.indexOf('Processed');
     assert.ok(equivalentCostIndex >= 0, 'Codex summary shows API-equivalent cost');
@@ -172,6 +216,7 @@ test('Codex dashboard HTML uses only classes already rendered by the Claude dash
       /Duplicate session identity is ambiguous; both local copies are retained[^<]*2/,
     );
   } finally {
+    Date.now = originalNow;
     (Module as any)._load = originalLoad;
   }
 });
@@ -210,6 +255,7 @@ test('Codex tab stays visible while its first index is still running', () => {
           totalFiles: 1_827,
           indexedBytes: 1_024,
           totalBytes: 4_096,
+          reason: 'first-index',
         },
       },
     );
@@ -219,11 +265,192 @@ test('Codex tab stays visible while its first index is still running', () => {
     assert.match(html, /id="provider-tab-codex"/);
     assert.doesNotMatch(html, /id="provider-tab-compare"/);
     assert.match(html, /Indexing is still in progress/);
+    assert.match(html, /First local history setup/);
     assert.match(html, /Indexed log entries[^<]*1,566\/1,827 \(86%\)/);
     assert.doesNotMatch(html, /1\.6K\/1\.8K/);
     assert.match(html, /Indexed storage[^<]*1kB\/4kB/i);
   } finally {
     I18n.setLanguage(originalLanguage);
+    (Module as any)._load = originalLoad;
+  }
+});
+
+test('Codex index progress patches live text without rebuilding the webview', () => {
+  const originalLoad = (Module as any)._load;
+  const originalLanguage = I18n.getCurrentLanguage();
+  I18n.setLanguage('en');
+  (Module as any)._load = function(request: string, parent: unknown, isMain: boolean) {
+    if (request === 'vscode') {
+      return { workspace: { workspaceFolders: [] } };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    const { UsageWebviewProvider } = require('../webview') as typeof import('../webview');
+    const provider = new UsageWebviewProvider({} as any) as any;
+    const messages: Array<Record<string, unknown>> = [];
+    let rebuilds = 0;
+    provider.panel = {
+      webview: {
+        postMessage: (message: Record<string, unknown>) => {
+          messages.push(message);
+          return Promise.resolve(true);
+        },
+      },
+    };
+    provider.currentProvider = 'codex';
+    provider.updateWebview = () => { rebuilds += 1; };
+
+    provider.updateCodexProgress({
+      scannedFiles: 1_566,
+      totalFiles: 1_827,
+      indexedBytes: 1_024,
+      totalBytes: 4_096,
+      reason: 'first-index',
+    });
+
+    assert.equal(rebuilds, 0);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].command, 'codexIndexProgress');
+    assert.match(String(messages[0].text), /Indexed log entries: 1,566\/1,827 \(86%\)/);
+    assert.match(String(messages[0].text), /Indexed storage: 1kB\/4kB/i);
+  } finally {
+    I18n.setLanguage(originalLanguage);
+    (Module as any)._load = originalLoad;
+  }
+});
+
+test('a ready dashboard receives a live data fragment and reloads only when delivery fails', async () => {
+  const originalLoad = (Module as any)._load;
+  (Module as any)._load = function(request: string, parent: unknown, isMain: boolean) {
+    if (request === 'vscode') {
+      return { workspace: { workspaceFolders: [] } };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    const { UsageWebviewProvider } = require('../webview') as typeof import('../webview');
+    const provider = new UsageWebviewProvider({} as any) as any;
+    const base = claudeUsageFixture();
+    provider.currentProvider = 'claude';
+    provider.currentTab = 'today';
+    provider.todayData = base;
+    provider.rolling30DayData = base;
+    provider.allTimeData = base;
+    provider.providerAvailability = { claude: true, codex: false, codexData: false };
+
+    const documentAssignments: string[] = [];
+    const messages: Array<Record<string, unknown>> = [];
+    let delivered = true;
+    const webview = {
+      postMessage: (message: Record<string, unknown>) => {
+        messages.push(message);
+        return Promise.resolve(delivered);
+      },
+      set html(value: string) {
+        documentAssignments.push(value);
+      },
+    };
+    provider.panel = { webview };
+
+    provider.updateWebview();
+    assert.equal(documentAssignments.length, 1, 'the first paint assigns the full document');
+    provider.webviewClientReady = true;
+    provider.todayData = { ...base, totalCost: base.totalCost + 1 };
+    provider.updateWebview();
+    provider.todayData = { ...base, totalCost: base.totalCost + 1.5 };
+    provider.updateWebview();
+    await Promise.resolve();
+
+    assert.equal(documentAssignments.length, 1, 'a delivered refresh keeps the document alive');
+    assert.equal(messages.length, 1, 'same-turn data updates coalesce into one patch');
+    assert.equal(messages[0].command, 'dashboardDataPatch');
+    assert.equal(messages[0].provider, 'claude');
+    assert.equal(messages[0].tab, 'today');
+    assert.equal(typeof messages[0].html, 'string');
+    assert.doesNotMatch(String(messages[0].html), /<script(?:\s|>)/i);
+    assert.deepEqual(messages[0].claudeLast30HoursByDay, {});
+
+    delivered = false;
+    provider.todayData = { ...base, totalCost: base.totalCost + 2 };
+    provider.updateWebview();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(messages.length, 2);
+    assert.equal(documentAssignments.length, 2, 'failed delivery falls back to a full document');
+    assert.match(documentAssignments[1], /<!DOCTYPE html>/);
+    assert.equal(provider.webviewClientReady, false);
+  } finally {
+    (Module as any)._load = originalLoad;
+  }
+});
+
+test('an unchanged Compare refresh does not assign a new Webview document', () => {
+  const originalLoad = (Module as any)._load;
+  const originalNow = Date.now;
+  (Module as any)._load = function(request: string, parent: unknown, isMain: boolean) {
+    if (request === 'vscode') {
+      return { workspace: { workspaceFolders: [] } };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    let now = CODEX_WEBVIEW_NOW;
+    Date.now = () => now;
+    const { UsageWebviewProvider } = require('../webview') as typeof import('../webview');
+    const provider = new UsageWebviewProvider({} as any) as any;
+    const usage = claudeUsageFixture();
+    const documentAssignments: string[] = [];
+    provider.currentProvider = 'compare';
+    provider.currentTab = 'today';
+    provider.todayData = usage;
+    provider.rolling30DayData = usage;
+    provider.allTimeData = usage;
+    provider.providerAvailability = { claude: true, codex: true, codexData: true };
+    provider.panel = {
+      webview: {
+        set html(value: string) {
+          documentAssignments.push(value);
+        },
+      },
+    };
+
+    provider.updateWebview();
+    assert.equal(documentAssignments.length, 1, 'the initial Compare paint assigns one document');
+    assert.equal(
+      provider.compareSnapshotUpdatedAt,
+      CODEX_WEBVIEW_NOW,
+      'the initial Compare snapshot records its render timestamp',
+    );
+
+    now += 60_000;
+    // Fork-exclusive: weekData is the third argument, so the rolling 30-day and
+    // all-time aggregates follow it.
+    provider.updateData(null, usage, usage, usage, usage);
+    assert.equal(
+      documentAssignments.length,
+      1,
+      'an unchanged provider snapshot remains byte-identical as wall-clock time advances',
+    );
+    assert.equal(
+      provider.compareSnapshotUpdatedAt,
+      CODEX_WEBVIEW_NOW,
+      'an unchanged Compare snapshot keeps the same visible update timestamp',
+    );
+
+    now += 60_000;
+    provider.updateData(null, usage, usage, {
+      ...usage,
+      totalInputTokens: usage.totalInputTokens + 1,
+    });
+    assert.equal(documentAssignments.length, 2, 'changed Compare data still assigns a fresh document');
+    assert.equal(
+      provider.compareSnapshotUpdatedAt,
+      now,
+      'changed Compare data advances the visible update timestamp',
+    );
+  } finally {
+    Date.now = originalNow;
     (Module as any)._load = originalLoad;
   }
 });
@@ -357,7 +584,7 @@ test('provider and Codex view copy is complete in every UI locale', () => {
         if (typeof value === 'string') {
           assert.notEqual(value.trim(), '', `${language} has empty Codex copy`);
         } else {
-          assert.ok([5, 15, 16, 17, 18].includes(Object.keys(value).length));
+          assert.ok([5, 7, 15, 16, 17, 18, 19].includes(Object.keys(value).length));
         }
       }
       assert.deepEqual(
@@ -428,7 +655,13 @@ test('provider and Codex view copy is complete in every UI locale', () => {
     assert.doesNotMatch(englishVisibleCopy, /\b(?:fresh|new)\b/i);
     const settingsSource = readFileSync(path.resolve(__dirname, '..', '..', 'src', 'settings.ts'), 'utf8');
     assert.match(settingsSource, /key: 'codex\.statusMetric'[\s\S]*?enumValues: \['fresh', 'processed', 'output'\][\s\S]*?enumLabels: \['Uncached', 'Processed', 'Output'\]/);
-    assert.match(settingsSource, /help: 'Uncached usage, processed tokens, or output tokens\.'/);
+    assert.match(settingsSource, /help: "Today's uncached usage, processed tokens, or output tokens\."/);
+    const extensionSource = readFileSync(path.resolve(__dirname, '..', '..', 'src', 'extension.ts'), 'utf8');
+    assert.match(
+      extensionSource,
+      /statusBar\.updateCodex\(\s*this\.codexView\.today,\s*config\.codexStatusMetric,/,
+      'Codex status must use the configured-zone Today scope, not the recent task scope',
+    );
   } finally {
     I18n.setLanguage(previous);
   }

@@ -8,6 +8,20 @@ import * as https from 'https';
 
 import { ModelPricing } from './types';
 
+export type PricingBackend = 'anthropic' | 'aws-bedrock-in-region';
+
+let pricingBackend: PricingBackend = 'anthropic';
+
+/** Select the price table used for Claude model cost calculations. */
+export function setPricingBackend(backend: PricingBackend): void {
+  pricingBackend = backend === 'aws-bedrock-in-region' ? backend : 'anthropic';
+}
+
+/** Return the currently selected Claude pricing backend. */
+export function getPricingBackend(): PricingBackend {
+  return pricingBackend;
+}
+
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
@@ -66,7 +80,8 @@ const MILL = 1_000_000;
 // Anthropic / Claude pricing
 // Verified 2026-05-21 — https://platform.claude.com/docs/en/about-claude/pricing
 //
-// Cache pricing follows Anthropic's standard multipliers vs base input price:
+// Cache pricing follows Anthropic's standard multipliers vs base input price,
+// except where a model-specific rate below says otherwise:
 //   - 5-minute cache write : 1.25x base input  (what Claude Code writes by default)
 //   - 1-hour cache write   : 2.00x base input  (used when a 1h TTL is requested)
 //   - cache read (hit)     : 0.10x base input
@@ -76,6 +91,17 @@ const MILL = 1_000_000;
 // portion is billed at its own rate; otherwise the whole cache-write total
 // falls back to the 5-minute rate (what Claude Code writes by default).
 // =====================================================================
+
+// Fable 5.1 / Mythos 5.1 — frontier tier ($10 / $50), verified 2026-09-06.
+// Cache reads are the model-specific exception: 0.025x input ($0.25/MTok).
+// https://platform.claude.com/docs/en/models/fable-5-1/overview
+const FABLE_5_1: ModelPricing = {
+  input_cost_per_token: 10 / MILL,
+  output_cost_per_token: 50 / MILL,
+  cache_creation_input_token_cost: 12.5 / MILL,
+  cache_creation_1h_input_token_cost: 20 / MILL,
+  cache_read_input_token_cost: 0.25 / MILL,
+};
 
 // Fable 5 / Mythos 5 — frontier tier ($10 / $50), verified 2026-06-09
 // https://platform.claude.com/docs/en/about-claude/pricing
@@ -186,6 +212,93 @@ const HAIKU_35: ModelPricing = {
   cache_read_input_token_cost: 0.08 / MILL,
 };
 
+// AWS Bedrock in-region, on-demand pricing (USD per 1M tokens).
+//
+// The Bedrock table also publishes batch prices. Claude Code's normal
+// pay-as-you-go inference is not batch inference, so only the standard input /
+// output rates and the cache rates are used here.
+const BEDROCK_OPUS_5: ModelPricing = {
+  input_cost_per_token: 5.5 / MILL,
+  output_cost_per_token: 27.5 / MILL,
+  cache_creation_input_token_cost: 6.875 / MILL,
+  cache_creation_1h_input_token_cost: 11 / MILL,
+  cache_read_input_token_cost: 0.55 / MILL,
+};
+
+// AWS Bedrock Claude Sonnet 4.5 / 4.6 in-region, on-demand pricing.
+const BEDROCK_SONNET_45_PLUS: ModelPricing = {
+  input_cost_per_token: 3.3 / MILL,
+  output_cost_per_token: 16.5 / MILL,
+  cache_creation_input_token_cost: 4.125 / MILL,
+  cache_creation_1h_input_token_cost: 6.6 / MILL,
+  cache_read_input_token_cost: 0.33 / MILL,
+};
+
+// Sonnet 5's $2/$10 launch promotion ended on 2026-08-31. The standard
+// in-region rates now match the Sonnet 4.5/4.6 tier.
+const BEDROCK_SONNET_5: ModelPricing = {
+  input_cost_per_token: 3.3 / MILL,
+  output_cost_per_token: 16.5 / MILL,
+  cache_creation_input_token_cost: 4.125 / MILL,
+  cache_creation_1h_input_token_cost: 6.6 / MILL,
+  cache_read_input_token_cost: 0.33 / MILL,
+};
+
+const BEDROCK_HAIKU_45: ModelPricing = {
+  input_cost_per_token: 1.1 / MILL,
+  output_cost_per_token: 5.5 / MILL,
+  cache_creation_input_token_cost: 1.375 / MILL,
+  cache_creation_1h_input_token_cost: 2.2 / MILL,
+  cache_read_input_token_cost: 0.11 / MILL,
+};
+
+/**
+ * Resolve the user-supplied Claude model label to an AWS Bedrock model family.
+ *
+ * Claude Code may log a short model name (`claude-sonnet-5`) even when the
+ * request was routed through Bedrock. Bedrock itself may expose a regional
+ * inference-profile prefix such as `us.anthropic.`. In the explicit Bedrock
+ * mode both forms must use the same in-region table.
+ */
+function getBedrockPricing(modelName: string): ModelPricing | null {
+  const name = modelName
+    .toLowerCase()
+    .replace(/\[[^\]]*\]\s*$/, '')
+    .replace(/^(?:(?:global|us|eu|apac|in)\.)?anthropic[./]/, '')
+    // Some integrations display the version separator as "." or "_", while
+    // Claude Code's native IDs use "-". Treat those labels as the same
+    // Bedrock model family so pricing is not silently reduced to Anthropic's
+    // generic Sonnet fallback.
+    .replace(/[._]/g, '-')
+    .replace(/\s+/g, '-');
+
+  if (name.includes('claude-opus-5') || name.includes('opus-5')) {
+    return BEDROCK_OPUS_5;
+  }
+  if (
+    name.includes('claude-opus-4-8') ||
+    name.includes('claude-opus-4-7') ||
+    name.includes('claude-opus-4-6') ||
+    name.includes('claude-opus-4-5') ||
+    name.includes('opus-4-8') ||
+    name.includes('opus-4-7') ||
+    name.includes('opus-4-6') ||
+    name.includes('opus-4-5')
+  ) {
+    return BEDROCK_OPUS_5;
+  }
+  if (name.includes('claude-sonnet-5') || name.includes('sonnet-5')) {
+    return BEDROCK_SONNET_5;
+  }
+  if (name.includes('claude-sonnet-4-6') || name.includes('claude-sonnet-4-5')) {
+    return BEDROCK_SONNET_45_PLUS;
+  }
+  if (name.includes('claude-haiku-4-5') || name.includes('haiku-4-5') || name.includes('haiku-4.5')) {
+    return BEDROCK_HAIKU_45;
+  }
+  return null;
+}
+
 /**
  * Build pricing for non-Anthropic providers, which usually only publish an
  * input price, an output price, and an optional discounted "cached input" price.
@@ -193,17 +306,31 @@ const HAIKU_35: ModelPricing = {
  * @param outputPerM      Output price per 1M tokens (USD)
  * @param cachedInputPerM Cached/'cache hit' input price per 1M tokens (USD).
  *                        Defaults to 10% of the input price when omitted.
+ * @param cacheWritePerM  Cache-write price per 1M tokens (USD). Most providers
+ *                        do not expose a separate write rate, so it defaults to
+ *                        the ordinary input price.
  */
-function priced(inputPerM: number, outputPerM: number, cachedInputPerM?: number): ModelPricing {
+function priced(
+  inputPerM: number,
+  outputPerM: number,
+  cachedInputPerM?: number,
+  cacheWritePerM?: number,
+): ModelPricing {
   return {
     input_cost_per_token: inputPerM / MILL,
     output_cost_per_token: outputPerM / MILL,
-    // These providers do not charge extra to *write* a cache entry — a cache-write
-    // token is billed like a normal input token.
-    cache_creation_input_token_cost: inputPerM / MILL,
+    cache_creation_input_token_cost:
+      (cacheWritePerM != null ? cacheWritePerM : inputPerM) / MILL,
     cache_read_input_token_cost: (cachedInputPerM != null ? cachedInputPerM : inputPerM * 0.1) / MILL,
   };
 }
+
+// GPT-6 Astra Standard, short-context rates. Inputs above 272K receive a
+// request-wide long-context uplift, but the Codex aggregate index cannot prove
+// that per-request threshold, so the existing API-equivalent view deliberately
+// excludes it as an unavailable request-level surcharge.
+// https://developers.openai.com/api/docs/models/gpt-6-astra
+const GPT_6_ASTRA = priced(10, 50, 1, 12.5);
 
 // =====================================================================
 // Non-Claude reference pricing (USD per 1M tokens)
@@ -212,7 +339,11 @@ function priced(inputPerM: number, outputPerM: number, cachedInputPerM?: number)
 // — treat these as estimates and re-verify before relying on them.
 // =====================================================================
 const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
-  // --- OpenAI --- https://openai.com/api/pricing/
+  // --- OpenAI --- https://developers.openai.com/api/docs/pricing
+  'gpt-6-astra': GPT_6_ASTRA,
+  // Common proxy-qualified spelling; the official API model id remains the
+  // unprefixed `gpt-6-astra` above.
+  'openai/gpt-6-astra': GPT_6_ASTRA,
   // GPT-5.6 Codex tiers — verified 2026-08-22 against the official model
   // catalog. These exact entries are also used by the weekly API-equivalent
   // value audit; unknown Codex model labels are intentionally not inferred.
@@ -293,6 +424,10 @@ const NON_CLAUDE_PRICING: Record<string, ModelPricing> = {
 // so direct lookups stay fast; anything not listed is resolved by getModelPricing()'s
 // family-aware fallback below.
 const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Claude Fable 5.1 / Mythos 5.1 (2026-09) — reduced cache-read rate.
+  'claude-fable-5-1': FABLE_5_1,
+  'claude-mythos-5-1': FABLE_5_1,
+
   // Claude Fable 5 / Mythos 5 (2026-06) — frontier tier
   'claude-fable-5': FABLE_5,
   'claude-mythos-5': FABLE_5,
@@ -365,6 +500,9 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
 
   // --- Anthropic / Claude ---
   if (name.includes('fable') || name.includes('mythos')) {
+    if (/\b(?:fable|mythos)[._ -]+5[._ -]+1(?:\b|[._ -])/.test(name)) {
+      return { pricing: FABLE_5_1, family: 'Fable 5.1 (frontier tier)' };
+    }
     return { pricing: FABLE_5, family: 'Fable 5 (frontier tier)' };
   }
   if (name.includes('haiku')) {
@@ -387,6 +525,9 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
   }
 
   // --- Other providers ---
+  if (name.includes('gpt-6-astra')) {
+    return { pricing: GPT_6_ASTRA, family: 'OpenAI GPT-6 Astra' };
+  }
   if (name.includes('gpt') || /(^|[^a-z])o[1-9]([^a-z]|$)/.test(name)) {
     return { pricing: NON_CLAUDE_PRICING['gpt-5'], family: 'OpenAI GPT' };
   }
@@ -448,6 +589,17 @@ function resolveModelPricing(modelName: string | undefined): ModelPricing | null
   // pricing applies.
   modelName = modelName.replace(/\[[^\]]*\]\s*$/, '');
 
+  // A Bedrock route cannot be inferred reliably from the model label alone:
+  // Claude Code commonly records just "claude-sonnet-5". When the user
+  // explicitly selects Bedrock, its known Claude rates must therefore take
+  // precedence over both the generic Anthropic table and LiteLLM overrides.
+  if (pricingBackend === 'aws-bedrock-in-region') {
+    const bedrockPricing = getBedrockPricing(modelName);
+    if (bedrockPricing) {
+      return bedrockPricing;
+    }
+  }
+
   // Try different variation matches (similar to ccusage logic)
   const variations = [modelName, `anthropic/${modelName}`, `claude-3-5-${modelName}`, `claude-3-${modelName}`, `claude-${modelName}`];
 
@@ -491,6 +643,12 @@ export function getExactModelPricing(modelName: string | undefined): ModelPricin
     return null;
   }
   const base = modelName.replace(/\[[^\]]*\]\s*$/, '');
+  if (pricingBackend === 'aws-bedrock-in-region') {
+    const bedrockPricing = getBedrockPricing(base);
+    if (bedrockPricing) {
+      return bedrockPricing;
+    }
+  }
   const variations = [
     base,
     `anthropic/${base}`,

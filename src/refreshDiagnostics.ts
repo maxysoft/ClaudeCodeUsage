@@ -17,6 +17,7 @@ export interface RefreshDiagnostic extends LoadUsageDiagnostics {
   filesRemoved: number;
   watcherEvents: number;
   coalescedTriggers: number;
+  quotaWatcherMissingFilenameEvents: number;
   manifestMs: number;
   aggregateRenderMs: number;
   totalMs: number;
@@ -25,6 +26,30 @@ export interface RefreshDiagnostic extends LoadUsageDiagnostics {
 }
 
 const ms = (value: number): string => value.toFixed(1);
+
+const KNOWN_REFRESH_TRIGGERS = new Set<string>([
+  'startup',
+  'poll',
+  'credentials',
+  'watch',
+  'focus',
+  'workspace',
+  'settings',
+  'pricing',
+  'manual',
+]);
+const KNOWN_PROVIDER_OUTCOMES = new Set<string>([
+  'success',
+  'partial',
+  'unavailable',
+  'error',
+]);
+const KNOWN_BACKFILL_MODES = new Set<string>(['steady', 'historical', 'unknown']);
+const KNOWN_WORKER_MODES = new Set<string>(['background', 'foreground', 'unknown']);
+
+function safeEnum(value: unknown, allowed: ReadonlySet<string>): string {
+  return typeof value === 'string' && allowed.has(value) ? value : 'unknown';
+}
 
 const KNOWN_CODEX_QUALITY_FLAGS = new Set([
   'counter-regression',
@@ -49,17 +74,23 @@ export function formatRefreshDiagnostic(value: RefreshDiagnostic): string {
     ? ''
     : `incremental(bodies=${value.bodyReads ?? 0} ` +
       `aggregate-mutations=${value.aggregateMutations ?? 0}) `;
-  return `refresh: trigger=${value.trigger} ` +
+  return `refresh: trigger=${safeEnum(value.trigger, KNOWN_REFRESH_TRIGGERS)} ` +
     `files(discovered=${value.filesDiscovered} changed=${value.filesChanged} ` +
     `reused=${value.filesReused} removed=${value.filesRemoved} failed=${value.filesFailed}) ` +
     `io(bytes=${value.bytesRead} lines=${value.linesParsed}) ${incremental}` +
-    `events(watcher=${value.watcherEvents} coalesced=${value.coalescedTriggers}) ` +
+    `events(watcher=${value.watcherEvents} coalesced=${value.coalescedTriggers} ` +
+    `quota-unnamed=${value.quotaWatcherMissingFilenameEvents}) ` +
     `ms(manifest=${ms(value.manifestMs)} read-parse=${ms(value.readParseMs)} ` +
     `aggregate-render=${ms(value.aggregateRenderMs)} total=${ms(value.totalMs)})`;
 }
 
 export interface CodexIndexDiagnostic {
+  trigger: RefreshTrigger;
   outcome: ProviderSourceOutcome;
+  watcherEvents: number;
+  coalescedTriggers: number;
+  backfillMode: 'steady' | 'historical' | 'unknown';
+  workerMode: 'background' | 'foreground' | 'unknown';
   indexedFiles: number;
   totalFiles: number;
   indexedBytes: number;
@@ -96,8 +127,14 @@ export function formatCodexIndexDiagnostic(value: CodexIndexDiagnostic): string 
     value.indexRecovery === 'unsupported-schema'
       ? value.indexRecovery
       : 'none';
+  const trigger = safeEnum(value.trigger, KNOWN_REFRESH_TRIGGERS);
+  const outcome = safeEnum(value.outcome, KNOWN_PROVIDER_OUTCOMES);
+  const backfillMode = safeEnum(value.backfillMode, KNOWN_BACKFILL_MODES);
+  const workerMode = safeEnum(value.workerMode, KNOWN_WORKER_MODES);
   return (
-    `codex-index outcome=${value.outcome} ` +
+    `codex-index trigger=${trigger} outcome=${outcome} ` +
+    `mode(backfill=${backfillMode} worker=${workerMode}) ` +
+    `events(watcher=${value.watcherEvents} coalesced=${value.coalescedTriggers}) ` +
     `files=${value.indexedFiles}/${value.totalFiles} ` +
     `bytes=${value.indexedBytes}/${value.totalBytes} ` +
     `periodBytes=${value.periodMigratedBytes}/${value.periodTotalBytes} ` +

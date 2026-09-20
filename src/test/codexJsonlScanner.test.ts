@@ -76,6 +76,54 @@ test('does not return or report an incomplete sensitive line fragment', async ()
   assert.doesNotMatch(JSON.stringify(progress), /private prompt body/);
 });
 
+test('acceptFinalLine receives a CR-stripped complete JSON value at EOF', async () => {
+  const completeJsonLine = JSON.stringify({ ok: true });
+  const body = Buffer.from(`${completeJsonLine}\r`, 'utf8');
+  const seen: string[] = [];
+
+  const result = await scanCodexJsonlLines(
+    entryFor(body),
+    memoryReader(body, [5]),
+    { offset: 0, discardingOversizedLine: false },
+    body.length,
+    (line) => seen.push(line),
+    undefined,
+    CODEX_MAX_JSONL_LINE_BYTES,
+    (line) => {
+      assert.equal(line, completeJsonLine);
+      JSON.parse(line);
+      return true;
+    },
+  );
+
+  assert.deepEqual(seen, [completeJsonLine]);
+  assert.equal(result.finalLineAccepted, true);
+  assert.equal(result.cursor.offset, body.length);
+});
+
+test('acceptFinalLine leaves a rejected EOF fragment behind the safe cursor', async () => {
+  const body = Buffer.from('{"ok":', 'utf8');
+  const seen: string[] = [];
+
+  const result = await scanCodexJsonlLines(
+    entryFor(body),
+    memoryReader(body, [2]),
+    { offset: 0, discardingOversizedLine: false },
+    body.length,
+    (line) => seen.push(line),
+    undefined,
+    CODEX_MAX_JSONL_LINE_BYTES,
+    (line) => {
+      assert.throws(() => JSON.parse(line));
+      return false;
+    },
+  );
+
+  assert.deepEqual(seen, []);
+  assert.equal(result.finalLineAccepted, false);
+  assert.equal(result.cursor.offset, 0);
+});
+
 test('discards an oversized line across scans and resumes after its newline', async () => {
   const oversized = Buffer.alloc(CODEX_MAX_JSONL_LINE_BYTES + 1, 0x78);
   const completeJsonLine = '{"ok":true}';

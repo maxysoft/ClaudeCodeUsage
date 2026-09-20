@@ -23,7 +23,13 @@ import {
   normalizeQuotaWindows,
   visibleQuotaWindows
 } from './quotaWindows';
-import { CodexStatusMetric, formatCodexStatus } from './codexStatus';
+import {
+  CodexStatusMetric,
+  codexQuotaWarningPercent,
+  codexQuotaWindowLabel,
+  formatCodexStatus,
+  visibleCodexQuotaWindows,
+} from './codexStatus';
 import { CodexUsageScopeView } from './providers/codex/codexUsage';
 import { ProviderLimitSnapshot } from './providers/providerTypes';
 
@@ -103,7 +109,7 @@ export class StatusBarManager {
         );
       } else {
         this.statusBarItem.text = 'CX —';
-        this.statusBarItem.tooltip = I18n.t.providers.codex.noRecentTask;
+        this.statusBarItem.tooltip = I18n.t.providers.codex.noDailyData;
         this.statusBarItem.backgroundColor = undefined;
         this.quotaItem.hide();
         this.applyCostVisibility();
@@ -148,6 +154,9 @@ export class StatusBarManager {
     if (!showContext) {
       this.contextItem.hide();
     }
+    if (!usageLimitTracking) {
+      this.quotaItem.hide();
+    }
     // Re-apply the first item — it may need to become an icon-only entry point.
     this.applyCostVisibility();
     if (this.provider === 'codex' && this.lastCodex) {
@@ -160,17 +169,19 @@ export class StatusBarManager {
   }
 
   /** Show / hide the first status-bar item per the showCost setting. When cost
-   * is off, the item normally hides — UNLESS the quota and context items are
-   * also off by setting, in which case there would be NO clickable way back
-   * into the dashboard. In that all-off case we keep it as an icon-only entry
-   * point. Every method that sets the item's text calls this, so it reappears
-   * (or collapses to the entry icon) as soon as a setting changes. */
+   * is off, the item normally hides — UNLESS quota and context are unavailable
+   * for the selected provider/settings, in which case there would be NO
+   * clickable way back into the dashboard. In that all-off case we keep it as
+   * an icon-only entry point. Every method that sets the item's text calls
+   * this, so it reappears (or collapses to the entry icon) as soon as a setting
+   * changes. */
   private applyCostVisibility(): void {
     if (this.showCost) {
       this.statusBarItem.show();
       return;
     }
-    if (!this.showContext && !this.usageLimitTracking) {
+    const hasContextEntry = this.provider === 'claude' && this.showContext;
+    if (!hasContextEntry && !this.usageLimitTracking) {
       // Sole remaining entry point: an icon that opens the dashboard.
       this.statusBarItem.text = '$(graph)';
       this.statusBarItem.tooltip = I18n.t.popup.title;
@@ -336,6 +347,10 @@ export class StatusBarManager {
     if (this.provider === 'codex') {
       return;
     }
+    if (!this.usageLimitTracking) {
+      this.quotaItem.hide();
+      return;
+    }
     // Normalize first: the API exposes quota windows two ways and only the
     // generic `limits` array still carries the per-model caps. See
     // quotaWindows.ts. liveQuotaWindows then drops or zeroes anything whose
@@ -387,13 +402,21 @@ export class StatusBarManager {
     metric: CodexStatusMetric,
     limit: ProviderLimitSnapshot | null,
   ): void {
-    const formatted = formatCodexStatus(scope, metric, limit);
+    const now = Date.now();
+    const quotaOptions = { quotaFiveHourOnly: this.quotaFiveHourOnly };
+    const formatted = formatCodexStatus(
+      scope,
+      metric,
+      limit,
+      now,
+      quotaOptions,
+    );
     const copy = I18n.t.providers.codex;
     this.isLoading = false;
     this.statusBarItem.text = formatted.text;
     this.statusBarItem.backgroundColor = undefined;
     const md = new vscode.MarkdownString();
-    md.appendMarkdown(`**${copy.title} — ${copy.lastTask}**\n\n`);
+    md.appendMarkdown(`**${copy.title} — ${I18n.t.popup.today}**\n\n`);
     if (scope.indexedSubtotal) {
       md.appendMarkdown(`_${copy.indexedSubtotal} — ${copy.indexingInProgress}_\n\n`);
     }
@@ -406,10 +429,17 @@ export class StatusBarManager {
     this.statusBarItem.tooltip = md;
     this.applyCostVisibility();
 
-    if (formatted.limitText) {
+    if (
+      this.usageLimitTracking &&
+      formatted.limitText &&
+      formatted.limit &&
+      limit
+    ) {
       this.quotaItem.text = `$(dashboard) ${formatted.limitText}`;
-      this.quotaItem.tooltip = `${copy.accountSnapshotLastObserved} — ${formatted.limitText}`;
-      this.quotaItem.backgroundColor = undefined;
+      this.quotaItem.tooltip = this.createCodexQuotaTooltip(limit, now);
+      this.quotaItem.backgroundColor = this.fillBackground(
+        fillLevel(codexQuotaWarningPercent(limit, now, quotaOptions), QUOTA_FILL_THRESHOLDS),
+      );
       this.quotaItem.show();
     } else {
       this.quotaItem.hide();
@@ -540,12 +570,70 @@ export class StatusBarManager {
     return md;
   }
 
-  /** Credit amounts always carry two decimals (they are real money, unlike the
-   * estimated token costs elsewhere, which follow the user's decimalPlaces).
-   * I18n.formatCurrency is USD-only, so any other currency prints its code
-   * rather than a wrong "$". */
+  /** Codex exposes the same window facts through its local provider adapter.
+   * Render them with the exact table, progress bar, reset-cell, and threshold
+   * vocabulary used by Claude so switching providers does not change the
+   * interaction model. */
+  private createCodexQuotaTooltip(limit: ProviderLimitSnapshot, now: number): vscode.MarkdownString {
+    const t = I18n.t.popup;
+    const copy = I18n.t.providers.codex;
+    const live = visibleCodexQuotaWindows(limit, now, {
+      quotaFiveHourOnly: this.quotaFiveHourOnly,
+    });
+    const md = new vscode.MarkdownString();
+    md.supportThemeIcons = true;
+    md.supportHtml = true;
+    md.appendMarkdown(`**${copy.usageLimits}**\n\n`);
+    md.appendMarkdown(`<table>\n`);
+    md.appendMarkdown(
+      `<tr><th align="left">${t.quotaWindow}</th>` +
+      `<th></th><th align="right">${t.share}</th>` +
+      `<th align="right">${t.resets}</th></tr>\n`,
+    );
+    for (const window of live) {
+      const pct = Math.max(0, Math.min(100, window.usedPercent));
+      const label = window.windowMinutes === 5 * 60
+        ? t.quota5h
+        : window.windowMinutes === 7 * 24 * 60
+          ? t.quotaWeekly
+          : codexQuotaWindowLabel(window.windowMinutes, window.label);
+      const reset = window.resetsAt === undefined
+        ? '—'
+        : formatResetCell(new Date(window.resetsAt).toISOString(), {
+            format: this.resetCountdownFormat,
+            now,
+          });
+      md.appendMarkdown(this.quotaRowHtml(
+        this.escapeTooltipHtml(label),
+        `${Math.round(pct)}%`,
+        pct,
+        reset,
+      ));
+    }
+    md.appendMarkdown(`</table>\n\n`);
+    md.appendMarkdown(`*${copy.localLogNotLive}*`);
+    for (const note of copy.accountSnapshotLastObserved.split(' · ')) {
+      md.appendMarkdown(`  \n*${note}*`);
+    }
+    return md;
+  }
+
+  /** Provider labels can originate in local structured observations. Escape
+   * them before inserting them into the HTML-enabled Markdown tooltip. */
+  private escapeTooltipHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** Credit amounts always carry two decimals and remain in the provider's
+   * actual currency. Unlike estimated token costs, they never use the user's
+   * manual display conversion. */
   private formatCreditAmount(amount: number, currency: string): string {
-    return currency === 'USD' ? I18n.formatCurrency(amount, 2) : `${amount.toFixed(2)} ${currency}`;
+    return currency === 'USD' ? I18n.formatUsdBaseline(amount, 2) : `${amount.toFixed(2)} ${currency}`;
   }
 
   /** Tooltip label for a window. Scoped rows are named by the API ("Fable"), so

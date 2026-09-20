@@ -366,3 +366,43 @@ export function parentlessNonRootTitleFixture(): CodexProviderSnapshot {
   snapshot.total = sum(snapshot.files);
   return snapshot;
 }
+
+export function highCardinalityProjectSnapshotFixture(
+  projectCount: number,
+): CodexProviderSnapshot {
+  const snapshot = snapshotFixture();
+  const startedAt = Date.parse('2026-07-20T08:00:00.000Z');
+  const files = Array.from({ length: projectCount }, (_, index) => {
+    const sessionKey = `session:high-cardinality-${index}`;
+    return aggregate({
+      sessionKey,
+      parentSessionKey: index > 0
+        ? `session:high-cardinality-${index - 1}`
+        : undefined,
+      role: index === 0 ? 'root' : 'subagent',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+      end: new Date(startedAt + index * 1_000).toISOString(),
+      input: 1,
+      cached: 0,
+      output: 1,
+      reasoning: 0,
+      projectKey: `project:high-cardinality-${index}`,
+      sessionTitle: `High-cardinality thread ${index}`,
+      projectName: `High-cardinality project ${index}`,
+      projectDirectoryName: `project-${index}`,
+    });
+  });
+
+  snapshot.files = files;
+  snapshot.total = sum(files);
+  snapshot.coverage.indexedFiles = projectCount;
+  snapshot.coverage.totalFiles = projectCount;
+  snapshot.coverage.indexedBytes = projectCount;
+  snapshot.coverage.totalBytes = projectCount;
+  snapshot.coverage.complete = true;
+  snapshot.coverage.period.last7Days.complete = true;
+  snapshot.coverage.period.last30Days.complete = true;
+  snapshot.coverage.period.allTime.complete = true;
+  return snapshot;
+}

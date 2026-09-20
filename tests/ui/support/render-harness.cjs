@@ -32,6 +32,7 @@ const { I18n } = require('../../../out/i18n.js');
 const { SETTINGS } = require('../../../out/settings.js');
 const { buildCodexUsageView } = require('../../../out/providers/codex/codexUsage.js');
 const { buildScopedCodexInsights } = require('../../../out/providers/codex/codexInsights.js');
+const { buildProjectUsageMatrixSnapshot } = require('../../../out/projectUsageMatrix.js');
 const {
   CODEX_WEBVIEW_NOW,
   codexWebviewFixture,
@@ -41,6 +42,9 @@ const {
   rootedTaskBeyondRecentRowCapFixture,
   rootlessCrossProjectCycleFixture,
 } = require('../../../out/test/codexFixtures.js');
+const {
+  buildAdviceEffectivenessFixture,
+} = require('./advice-effectiveness-fixture.cjs');
 
 Module._load = originalLoad;
 
@@ -53,7 +57,6 @@ const THEMES = {
     '--vscode-font-size:13px;' +
     '--vscode-editor-font-family:Menlo,Monaco,"Courier New",monospace;' +
     '--vscode-editor-background:#ffffff;' +
-    '--vscode-editor-foreground:#000000;' +
     '--vscode-foreground:#616161;' +
     '--vscode-descriptionForeground:#717171;' +
     '--vscode-errorForeground:#A1260D;' +
@@ -99,7 +102,6 @@ const THEMES = {
     '--vscode-font-size:13px;' +
     '--vscode-editor-font-family:Menlo,Monaco,"Courier New",monospace;' +
     '--vscode-editor-background:#1e1e1e;' +
-    '--vscode-editor-foreground:#D4D4D4;' +
     '--vscode-foreground:#CCCCCC;' +
     '--vscode-descriptionForeground:rgba(204,204,204,0.7);' +
     '--vscode-errorForeground:#F48771;' +
@@ -142,18 +144,63 @@ const THEMES = {
     '}*,*::before,*::after{animation:none!important;transition:none!important}',
 };
 
-function settingsStore(autoRefresh = false, weeklyValue = true) {
+function settingsStore({
+  autoRefresh = false,
+  weeklyValue = true,
+  shareStudio = true,
+  adviceEffectiveness = false,
+  adviceOptimizer = false,
+  displayCurrency = 'USD',
+  projectMatrix = true,
+} = {}) {
   const values = new Map(SETTINGS.map((definition) => [definition.key, definition.default]));
   values.set('codex.optimization.enabled', true);
   values.set('dashboardAutoRefresh', autoRefresh);
   values.set('showWeeklyEquivalentValue', weeklyValue);
+  values.set('enableShareCard', shareStudio);
+  values.set('advice.effectiveness.enabled', adviceEffectiveness);
+  values.set('advice.optimizer.enabled', adviceOptimizer);
+  values.set('displayCurrency', displayCurrency);
+  values.set('showProjectUsageMatrix', projectMatrix);
   return {
     get: (key) => values.get(key),
     snapshot: () => SETTINGS.map((definition) => ({
       ...definition,
       value: values.get(definition.key),
-      isDefault: true,
+      isDefault: values.get(definition.key) === definition.default,
     })),
+  };
+}
+
+function claudeProjectUsageMatrix() {
+  const points = [];
+  for (let project = 1; project <= 16; project += 1) {
+    for (let offset = 0; offset < 10; offset += 1) {
+      const day = new Date(Date.UTC(2026, 6, 20 - offset * 3 - (project % 3)))
+        .toISOString().slice(0, 10);
+      points.push({
+        projectKey: `claude:project-${String(project).padStart(2, '0')}`,
+        projectName: `Research Project ${String(project).padStart(2, '0')}`,
+        day,
+        tokens: project * 100_000 + offset * 13_000,
+        coverage: 'complete',
+      });
+    }
+  }
+  return buildProjectUsageMatrixSnapshot('claude', points, {
+    asOfDay: '2026-07-20',
+    timeZone: 'Asia/Hong_Kong',
+    coverage: 'complete',
+  });
+}
+
+function memoryGlobalState() {
+  const values = new Map();
+  return {
+    get: (key) => values.get(key),
+    update: async (key, value) => {
+      values.set(key, structuredClone(value));
+    },
   };
 }
 
@@ -193,11 +240,41 @@ function claudeUsage(multiplier = 1) {
   };
 }
 
-function addClaudeData(provider, fixture = 'default') {
+function addClaudeData(provider, { fixture = 'default', enableContent = false } = {}) {
   const today = claudeUsage();
   const now = new Date(CODEX_WEBVIEW_NOW);
   const completedWeeklyFixture = fixture === 'weekly-claude-completed';
   const completedResetAt = CODEX_WEBVIEW_NOW - 24 * 60 * 60_000;
+  const combinedHeatmapRecords = fixture === 'combined-heatmap'
+    ? [
+        {
+          timestamp: '2026-07-19T10:00:00.000Z',
+          _sessionId: 'privacy-safe-share-fixture-a',
+          message: {
+            model: 'claude-sonnet-4-5-20250929',
+            usage: {
+              input_tokens: 120_000,
+              output_tokens: 30_000,
+              cache_creation_input_tokens: 40_000,
+              cache_read_input_tokens: 310_000,
+            },
+          },
+        },
+        {
+          timestamp: '2026-07-20T08:00:00.000Z',
+          _sessionId: 'privacy-safe-share-fixture-b',
+          message: {
+            model: 'claude-sonnet-4-5-20250929',
+            usage: {
+              input_tokens: 180_000,
+              output_tokens: 45_000,
+              cache_creation_input_tokens: 55_000,
+              cache_read_input_tokens: 420_000,
+            },
+          },
+        },
+      ]
+    : [];
   const weeklyRecords = completedWeeklyFixture
     ? [{
         timestamp: new Date(completedResetAt - 2 * 60 * 60_000).toISOString(),
@@ -211,6 +288,25 @@ function addClaudeData(provider, fixture = 'default') {
           },
         },
       }]
+    : combinedHeatmapRecords;
+  const sessionBreakdown = fixture === 'session-timezone-boundaries'
+    ? [
+        ['honolulu-today', 'Honolulu today', '2026-07-20T10:00:00.000Z'],
+        ['honolulu-yesterday', 'Honolulu yesterday', '2026-07-19T10:00:00.000Z'],
+        ['week-inside', 'Seven-day boundary inside', '2026-07-14T10:00:00.000Z'],
+        ['week-outside', 'Seven-day boundary outside', '2026-07-14T08:00:00.000Z'],
+        ['month-inside', 'Thirty-day boundary inside', '2026-06-21T10:00:00.000Z'],
+        ['month-outside', 'Thirty-day boundary outside', '2026-06-21T08:00:00.000Z'],
+      ].map(([sessionId, title, timestamp]) => ({
+        sessionId,
+        title,
+        projectName: 'Timezone fixture',
+        projectPath: '/tmp/timezone-fixture',
+        startTime: new Date(timestamp),
+        endTime: new Date(Date.parse(timestamp) + 30 * 60_000),
+        data: claudeUsage(),
+        peakContextTokens: 180_000,
+      }))
     : [];
   provider.updateData(
     { ...today, sessionStart: new Date(now.getTime() - 3_600_000), sessionEnd: now },
@@ -238,6 +334,27 @@ function addClaudeData(provider, fixture = 'default') {
     undefined,
     undefined,
     weeklyRecords,
+    sessionBreakdown,
+    [],
+    enableContent
+      ? {
+          categories: [],
+          toolResultBreakdown: [],
+          totalEstimatedTokens: 0,
+          recentPrompts: [],
+          thinkingBySession: {},
+          thinkingByDay: {},
+          skillUses: [],
+        }
+      : null,
+    [],
+    [],
+    [],
+    {
+      '2026-07-19': [{ hour: '09:00', data: claudeUsage(0.4) }],
+      '2026-07-20': [{ hour: '18:00', data: claudeUsage(0.6) }],
+    },
+    claudeProjectUsageMatrix(),
   );
   if (completedWeeklyFixture) {
     provider.updateWeeklyQuotaHistory([{
@@ -299,9 +416,34 @@ function withoutInputSnapshot(snapshot) {
   };
 }
 
-exports.renderHarness = function renderHarness({ provider: selectedProvider = 'codex', locale = 'en', theme = 'light', fixture = 'default', autoRefresh = false, weeklyValue = true } = {}) {
+function withoutHourlyRowsForCoveredDay(snapshot, day) {
+  for (const file of snapshot.files) {
+    if (!file.today?.days) continue;
+    delete file.today.days[day];
+    if (file.today.day === day) file.today.hours = {};
+  }
+  return snapshot;
+}
+
+exports.renderHarness = async function renderHarness({
+  provider: selectedProvider = 'codex',
+  locale = 'en',
+  theme = 'light',
+  fixture = 'default',
+  autoRefresh = false,
+  weeklyValue = true,
+  shareStudio = true,
+  projectMatrix = true,
+  adviceFeedback = 'none',
+  timeZone = 'Asia/Hong_Kong',
+  codexMonth = '',
+} = {}) {
   I18n.setLanguage(locale);
-  I18n.setTimezone('Asia/Hong_Kong');
+  I18n.setTimezone(timeZone);
+  I18n.setDecimalPlaces(2);
+  const localCurrencyFixture = fixture === 'local-currency';
+  const displayCurrency = localCurrencyFixture ? 'EUR' : 'USD';
+  I18n.setCurrencyDisplay(displayCurrency);
   vscodeHost.window.activeColorTheme.kind = theme === 'dark' ? 2 : 1;
   const originalNow = Date.now;
   try {
@@ -326,18 +468,91 @@ exports.renderHarness = function renderHarness({ provider: selectedProvider = 'c
         }
       : fixture === 'zero-input'
         ? withoutInputSnapshot(baseSnapshot)
+        : fixture === 'covered-day-without-hourly-rows'
+          ? withoutHourlyRowsForCoveredDay(baseSnapshot, '2026-07-19')
         : baseSnapshot;
     const view = buildCodexUsageView(snapshot, CODEX_WEBVIEW_NOW);
-    const provider = new UsageWebviewProvider({});
+    const provider = new UsageWebviewProvider({ globalState: memoryGlobalState() });
+    // The real extension loads globalState asynchronously before enabling any
+    // consent or feedback control. Let that same path settle in the harness.
+    await new Promise((resolve) => setImmediate(resolve));
     const persistedDetailsFixture = fixture === 'persisted-details';
-    provider.settings = settingsStore(autoRefresh, weeklyValue);
-    addClaudeData(provider, fixture);
+    const adviceEffectivenessFixture = fixture === 'advice-effectiveness'
+      || fixture === 'advice-effectiveness-snoozed';
+    const adviceSnoozedFixture = fixture === 'advice-effectiveness-snoozed';
+    const adviceOptimizerFixture = fixture === 'advice-optimizer';
+    const adviceContentFixture = adviceEffectivenessFixture
+      || adviceOptimizerFixture
+      || fixture === 'advice-effectiveness-disabled';
+    provider.settings = settingsStore({
+      autoRefresh,
+      weeklyValue,
+      shareStudio,
+      adviceEffectiveness: adviceEffectivenessFixture,
+      adviceOptimizer: adviceOptimizerFixture,
+      displayCurrency,
+      projectMatrix,
+    });
+    addClaudeData(provider, { fixture, enableContent: adviceContentFixture });
+    if (adviceEffectivenessFixture) {
+      provider.updateAdviceEffectivenessData(
+        buildAdviceEffectivenessFixture({ locale }).states,
+      );
+      if (adviceSnoozedFixture) {
+        provider.adviceLocalState = {
+          ...provider.adviceLocalState,
+          suppression: [{
+            provider: 'claude',
+            surface: 'advice',
+            recommendationId: 'recommendation-claude-clear-between-tasks',
+            updatedAtEpochMs: CODEX_WEBVIEW_NOW,
+            snoozedUntilEpochMs: CODEX_WEBVIEW_NOW + 7 * 24 * 60 * 60_000,
+          }],
+        };
+      }
+    }
+    if (adviceOptimizerFixture) {
+      provider.optimizerState = {
+        draft: 'HOST_ONLY_OPTIMIZER_DRAFT',
+        resolve: false,
+        distil: false,
+        aesthetic: false,
+        prompt: 'Paste-ready optimizer result',
+        settings: 'Effort: high',
+        adviceId: 'advice-optimizer-0123456789abcdef01234567',
+      };
+    }
+    if (adviceFeedback !== 'none') {
+      provider.adviceLocalState = {
+        ...provider.adviceLocalState,
+        featureMode: 'enabled',
+        feedback: [{
+          adviceId: adviceFeedback === 'optimizer-helpful'
+            ? 'advice-optimizer-0123456789abcdef01234567'
+            : 'advice-claude-ui-fixture',
+          recommendationId: adviceFeedback === 'optimizer-helpful'
+            ? 'recommendation-optimizer-result-v1'
+            : 'recommendation-claude-clear-between-tasks',
+          rating: 'helpful',
+          applied: 'not-applied',
+          appliedAtEpochMs: null,
+          updatedAtEpochMs: CODEX_WEBVIEW_NOW,
+        }],
+      };
+    }
     provider.updateProviderData(
       view,
       buildScopedCodexInsights(view),
       { claude: true, codex: true },
     );
     provider.currentProvider = selectedProvider;
+
+    if (/^\d{4}-\d{2}$/.test(codexMonth)) {
+      const rows = view.allTimeDaily
+        .filter((row) => row.day.startsWith(codexMonth + '-'))
+        .sort((left, right) => left.day.localeCompare(right.day));
+      return provider.renderCodexMonthDailyDetail(codexMonth, rows);
+    }
 
     const html = provider.getWebviewContent();
     const fixtureHtml = persistedDetailsFixture

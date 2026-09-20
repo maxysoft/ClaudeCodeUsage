@@ -11,6 +11,30 @@ function repoFile(relativePath: string): string {
   return readFileSync(resolve(REPO_ROOT, relativePath), 'utf8');
 }
 
+function privacySafePngChunkTypes(relativePath: string): string[] {
+  const bytes = readFileSync(resolve(REPO_ROOT, relativePath));
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${relativePath} must contain PNG bytes, not only use a .png suffix`,
+  );
+  const types: string[] = [];
+  let offset = 8;
+  while (offset + 12 <= bytes.length) {
+    const payloadLength = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    const nextOffset = offset + 12 + payloadLength;
+    assert.ok(nextOffset <= bytes.length, `${relativePath} has a truncated ${type} chunk`);
+    types.push(type);
+    offset = nextOffset;
+    if (type === 'IEND') {
+      break;
+    }
+  }
+  assert.equal(types[types.length - 1], 'IEND', `${relativePath} must end with IEND`);
+  return types;
+}
+
 type WorkflowStepValue = {
   readonly value: string;
   readonly line: number;
@@ -58,7 +82,7 @@ function assertExactVscePin(commands: readonly WorkflowStepValue[]): void {
   );
   assert.ok(tokens.length > 0, 'workflow must invoke VSCE');
   for (const token of tokens) {
-    assert.equal(token, '@vscode/vsce@3.9.1', `unexpected VSCE invocation ${token}`);
+    assert.equal(token, '@vscode/vsce@3.9.2', `unexpected VSCE invocation ${token}`);
   }
 }
 
@@ -202,12 +226,14 @@ function functionDeclarations(file: ts.SourceFile): ReadonlyMap<string, ts.Funct
 
 function sanitizedDtoViolations(file: ts.SourceFile): string[] {
   const declarations = functionDeclarations(file);
-  const trustedLabelSanitizerBindings = new Set<string>();
+  const trustedSanitizerBindings = new Set<string>();
   for (const statement of file.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== './codexMetadataLabel' ||
+      !['./codexMetadataLabel', './codexQuotaHistory'].includes(
+        statement.moduleSpecifier.text,
+      ) ||
       !statement.importClause ||
       statement.importClause.isTypeOnly ||
       !statement.importClause.namedBindings ||
@@ -217,8 +243,14 @@ function sanitizedDtoViolations(file: ts.SourceFile): string[] {
     }
     for (const specifier of statement.importClause.namedBindings.elements) {
       const exportedName = specifier.propertyName?.text ?? specifier.name.text;
-      if (!specifier.isTypeOnly && exportedName === 'sanitizeCodexMetadataLabel') {
-        trustedLabelSanitizerBindings.add(specifier.name.text);
+      if (
+        !specifier.isTypeOnly &&
+        (
+          exportedName === 'sanitizeCodexMetadataLabel' ||
+          exportedName === 'sanitizeCodexQuotaHistory'
+        )
+      ) {
+        trustedSanitizerBindings.add(specifier.name.text);
       }
     }
   }
@@ -250,7 +282,7 @@ function sanitizedDtoViolations(file: ts.SourceFile): string[] {
     if (ts.isIdentifier(call.expression)) {
       return call.expression.text === 'resolveTimeZone' ||
         call.expression.text === 'dayKeyInZone' ||
-        (trustedLabelSanitizerBindings.has(call.expression.text) &&
+        (trustedSanitizerBindings.has(call.expression.text) &&
           !shadowedBindings.has(call.expression.text));
     }
     if (!ts.isPropertyAccessExpression(call.expression)) {
@@ -1415,6 +1447,76 @@ test('all seven README editions explain Codex Beta in their own language', () =>
   }
 });
 
+test('v2.3 README editions share release evidence and local-data boundaries', () => {
+  const readmes = [
+    'README.md',
+    'README-en.md',
+    'README-zh-CN.md',
+    'README-zh-TW.md',
+    'README-ja.md',
+    'README-ko.md',
+    'README-id.md',
+  ];
+  const releaseImages = [
+    'images/v2.3.1/claude-today-zh-CN-dark.png',
+    'images/v2.3.1/codex-overview-zh-CN-dark.png',
+    'images/v2.3.1/codex-weekly-estimate-en-dark.png',
+    'images/v2.3.1/compare-heatmap-en-light.png',
+    'images/v2.3.2/project-activity-matrix-en-dark.png',
+  ];
+  for (const image of releaseImages) {
+    assert.ok(
+      existsSync(resolve(REPO_ROOT, image)),
+      `release evidence is missing ${image}`,
+    );
+    const chunkTypes = privacySafePngChunkTypes(image);
+    for (const metadataChunk of ['eXIf', 'iTXt', 'tEXt', 'zTXt']) {
+      assert.equal(
+        chunkTypes.includes(metadataChunk),
+        false,
+        `${image} retains unnecessary ${metadataChunk} metadata`,
+      );
+    }
+  }
+  for (const readme of readmes) {
+    const body = repoFile(readme);
+    assert.match(body, /2\.3\.1/, `${readme} is missing the release section`);
+    assert.doesNotMatch(
+      body,
+      /^##[^\n]*2\.3\.2[^\n]*$/m,
+      `${readme} must keep What's new at minor-version granularity`,
+    );
+    assert.match(body, /LOCAL-DATA(?:\.zh-CN)?\.md/, `${readme} is missing the local-data inventory`);
+    for (const image of releaseImages) {
+      assert.ok(body.includes(image), `${readme} is missing ${image}`);
+    }
+    assert.doesNotMatch(
+      body,
+      /local candidate|本地候选|本機候選|ローカル候補|로컬 후보|Kandidat lokal/i,
+      `${readme} still labels v2.3.1 as a local candidate`,
+    );
+  }
+
+  const packageJson = JSON.parse(repoFile('package.json')) as { version: string };
+  const packageLock = JSON.parse(repoFile('package-lock.json')) as {
+    version: string;
+    packages: Record<string, { version?: string }>;
+  };
+  // This fork versions in the source tree (the auto-tag job derives the release
+  // tag from package.json), so the upstream "stays unstamped at 2.1.1" rule is
+  // replaced by the invariant that actually matters here: manifest and lockfile
+  // agree, and the publish workflow refuses a tag that disagrees with them.
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages['']?.version, packageJson.version);
+  assert.match(
+    repoFile('.github/workflows/publish.yml'),
+    /Tag v\$TAG does not match package\.json version \$VER/,
+  );
+  assert.match(repoFile('LOCAL-DATA.md'), /OAuth access or refresh tokens/);
+  assert.match(repoFile('LOCAL-DATA.zh-CN.md'), /OAuth access\/refresh token/);
+});
+
 test('Marketplace metadata presents Claude and Codex local usage support', () => {
   const packageJson = JSON.parse(repoFile('package.json')) as {
     description: string;
@@ -1454,9 +1556,36 @@ test('changelog documents the current release and its upstream alignment', () =>
   assert.match(changelog, /aligned with `jack21\/ClaudeCodeUsage`/);
 });
 
-test('changelog records the upstream v2.3.0 alignment', () => {
+test('changelog records the upstream v2.3.3 alignment', () => {
   const changelog = repoFile('CHANGELOG.md');
-  assert.match(changelog, /2\.3\.0 \/ `eca4e43`/);
+  assert.match(changelog, /2\.3\.3 \/ `b83e7d6`/);
+});
+
+test('changelog preserves v2.3 release order and keeps named candidate fixes out of v2.3.2', () => {
+  const changelog = repoFile('CHANGELOG.md');
+  assert.match(changelog, /^## \[2\.3\.3\] — Unreleased$/m);
+  assert.match(changelog, /^## \[2\.3\.2\] — 2026-09-12$/m);
+  assert.match(changelog, /^## \[2\.3\.1\] — 2026-09-08$/m);
+  assert.match(changelog, /^## \[2\.3\.0\] — 2026-08-28$/m);
+
+  const candidateStart = changelog.indexOf('## [2.3.3]');
+  const releasedStart = changelog.indexOf('## [2.3.2]');
+  const previousReleaseStart = changelog.indexOf('## [2.3.1]');
+  const candidateSection = changelog.slice(candidateStart, releasedStart);
+  const releasedSection = changelog.slice(releasedStart, previousReleaseStart);
+  for (const candidateFix of [
+    'Smoother live Webview refreshes',
+    'Stable unchanged Compare refreshes',
+    'Bounded Codex project aggregation',
+    'Single-flight Codex refresh lifecycle',
+    'Quota status contract',
+    'Claude calendar rollover',
+    'Bounded credentials-watcher recovery',
+    'Exact bounded Claude content analysis',
+  ]) {
+    assert.match(candidateSection, new RegExp(candidateFix));
+    assert.doesNotMatch(releasedSection, new RegExp(candidateFix));
+  }
 });
 
 test('release announcements are exact-version and user-disableable', () => {
@@ -1464,6 +1593,8 @@ test('release announcements are exact-version and user-disableable', () => {
   const settings = repoFile('src/settings.ts');
 
   assert.match(extension, /'2\.3\.0'/);
+  assert.match(extension, /'2\.3\.1'/);
+  assert.match(extension, /'2\.3\.2'/);
   assert.doesNotMatch(extension, /'2\.2'\s*:/);
   assert.match(settings, /key:\s*'releaseAnnouncements'/);
   assert.match(settings, /default:\s*true/);
@@ -1568,7 +1699,7 @@ test('CI has separate Node, browser, and package release gates', () => {
   assert.match(workflow, /PLAYWRIGHT_BROWSERS_PATH:\s*\/ms-playwright/);
   assert.match(workflow, /needs:\s*\[test, ui\]/);
   assert.ok(runValues.includes('npm run test:ui'));
-  const packageAt = runValues.indexOf('npx -y @vscode/vsce@3.9.1 package --out /tmp/claude-code-usage-ci.vsix');
+  const packageAt = runValues.indexOf('npx -y @vscode/vsce@3.9.2 package --out /tmp/claude-code-usage-ci.vsix');
   const verifyAt = runValues.indexOf('node .github/scripts/verify-vsix.mjs /tmp/claude-code-usage-ci.vsix');
   assert.ok(packageAt >= 0 && verifyAt > packageAt, 'smoke VSIX verification must follow packaging');
   assertExactVscePin(runs);

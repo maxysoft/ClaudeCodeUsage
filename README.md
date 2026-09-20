@@ -42,7 +42,51 @@ the same data.
 
 ## Screenshots
 
-### Status bar
+### v2.3 Claude, Codex and Compare
+
+The five v2.3 images below are reproducible captures of the production dashboard
+renderer with synthetic fixtures and VS Code Light+/Dark+ theme variables, not
+personal usage or billing evidence. Native VSIX installation is verified separately.
+
+![Claude Today in Simplified Chinese, dark theme](images/v2.3.1/claude-today-zh-CN-dark.png)
+
+*Today and Last 30 days share the configured calendar timezone. CLI usage is
+counted only when normal persistent sessions leave usage-bearing local logs;
+calls made without session persistence cannot be reconstructed.*
+
+![Codex overview in Simplified Chinese, dark theme](images/v2.3.1/codex-overview-zh-CN-dark.png)
+
+*The corrected Codex overview uses one configured-timezone calendar model for
+Today, Last 30 days, months, models, effort, and all-time totals.*
+
+![Codex weekly allowance estimate in English, dark theme](images/v2.3.1/codex-weekly-estimate-en-dark.png)
+
+*Observed quota windows retain reset evidence locally. A valid used fraction can
+produce labelled total and unused subscription-durability estimates, including
+for the current window. Approximate evidence remains visible with low confidence.
+Period details start collapsed; expand them to inspect the numeric evidence.*
+
+![Combined Claude and Codex heatmap in English, light theme](images/v2.3.1/compare-heatmap-en-light.png)
+
+*Compare combines provider daily activity without double-counting Codex cached
+input or reasoning. Its preview-first share studio offers an Academic Violet
+default, curated/custom colors, deterministic local SVG, and privacy-safe
+Markdown. It is enabled by default and can be hidden with the single sharing
+workspace setting. Card settings sit below the preview; intensity can use quantile,
+logarithmic, or linear scaling. The metric is activity volume, not productivity or billing.*
+
+![Project activity matrix in English, dark theme](images/v2.3.2/project-activity-matrix-en-dark.png)
+
+*Projects now adds a Token-only 30/90-day project × day heatmap and stacked
+daily trend for both providers. Exact tooltips, explicit coverage, bounded rows,
+and an Other-projects tail keep the view auditable without rereading source logs.*
+
+### Claude status bar
+
+Codex uses a compact **Today token usage** item and a separate **remaining quota**
+item: observed 36% weekly utilisation displays `wk 64%`. The hover card retains
+utilisation progress bars, reset times, and wrapped explanations. Local Codex
+quota is last-observed evidence, not a live account balance.
 
 ![Status bar](images/v2-status-bar-en.png)
 
@@ -72,14 +116,24 @@ tool results (by tool) vs. assistant output / thinking. This is the lever
 for optimising your usage. Scoped to the last 30 days
 (`advice.promptWindowDays`).*
 
-### AI advice — a coaching report from your real usage
+### AI advice — evidence first, sending optional
 
-AI advice writes you a **Markdown document**, so it reads better as text than as
-a screenshot. Set a key (`advice.apiKey`), click **Get AI advice** (the ✨ button
-or the card on the Content tab), pick a scope (all projects, or one), and it sends
-your usage aggregates + a sample of *your own* prompts to your model and opens a
-prioritised report. Bring your own key — Anthropic (`/v1/messages`) by default, or
-any OpenAI-compatible endpoint.
+v2.3 keeps one readable path from a local observation to its
+evidence, recommendation, action, feedback, and guarded result. It is off by
+default. Local evidence appears before any model is involved; **Helpful**, **Not
+helpful**, and **Applied** stay on this device. Once enough reliable, similar
+before/after tasks exist, the card reports the frozen comparison result;
+otherwise it says that the evidence is insufficient.
+
+Each recommendation can be snoozed for a bounded period; it leaves the default
+summary and returns after expiry or when you choose to show it again.
+
+AI personalisation is a separate choice. Aggregate-only is the default and
+prompt samples remain off until separately allowed. The extension prepares the
+complete request once and shows its exact JSON, byte count, and SHA-256. Preview
+sends nothing; **Send this exact request** is a second explicit action, using the
+same canonical bytes and your own configured key/endpoint. Claude Code OAuth
+credentials are never used as a generative backend.
 
 A flavour of what it returns (illustrative):
 
@@ -100,13 +154,19 @@ Paste a rough, half-formed request; get back one clean, **paste-ready** prompt
 (plain text, no Markdown) plus a recommended reasoning effort / thinking / model
 shown as chips. Three optional toggles refine it (flag vague references · condense
 long pastes · suggest a style direction). Experimental, off by default; **only the
-text you paste is sent** — never your files or the terminal — behind a one-time
-consent prompt.
+text you paste is included** — never your files or the terminal. It now uses the
+same full-request preview and separate explicit Send action as AI advice.
 
 ---
 
 ## What's new in 2.3
 
+- **Refined throughout the v2.3 line** — GPT-6 Astra and Fable 5.1 model
+  metadata, optional AWS Bedrock pricing, a fixed-reference display-currency
+  selector, a Token-only 30/90-day project activity matrix, complete
+  month/day/hour drill-downs, state-preserving refresh, accessible charts, and
+  lower watcher/title-index overhead. Patch-level
+  details stay in the changelog and GitHub Releases.
 - **Codex Beta, enabled by default** — usage records are discovered only from
   `sessions/**/*.jsonl` and `archived_sessions/**/*.jsonl`; credential,
   database, and unknown files stay excluded. Separately, the extension streams
@@ -129,8 +189,9 @@ consent prompt.
   API-equivalent cost while token composition stays separately visible. Only
   exact known-model prices contribute; unknown models remain unpriced and every
   row keeps pricing coverage visible. The schema-3-compatible hourly sidecar
-  processes only canonical files already known to contain today, is checkpointed
-  and resumable, and does not force a full-history reindex.
+  keeps sparse buckets for the rolling last 30 days, is checkpointed and
+  resumable, evicts day 31, and serves date expansion with zero JSONL reads on
+  click. Codex monthly charts and tables list months oldest-first.
 - **Request-level token attribution** — valid `last_token_usage` components are
   preferred, while its `total_tokens` remains an active-context measurement,
   not request usage. A full numeric total-plus-last signature suppresses only
@@ -142,22 +203,31 @@ consent prompt.
   newest valid official reset observation anchors one sequence of unique,
   non-overlapping weekly periods, and each usage event belongs to exactly one
   period; without a usable observation, usage-only rows fall back to
-  Monday-to-Monday UTC calendar weeks. Any overlapping, non-aligned future reset
-  is a conflict even if its series name differs; it cannot create a second current
-  period, and period ranges are shown separately from reset times. Codex usage is
+  Monday-to-Monday UTC calendar weeks. A genuinely different quota series with
+  an overlapping, non-aligned future reset is a conflict; same-series observations
+  remain one series and may be shown as a low-confidence approximation. It cannot
+  create a second current period, and period ranges are shown separately from reset times. Codex usage is
   stored in daily slices: when one crosses an official intraday reset, its tokens
   are still counted once, the affected period is labelled a boundary
-  approximation, and only used equivalent is shown. This display rule neither
-  changes the index schema nor triggers a rebuild. Codex historical periods are
-  always used-value-only. Only the newest current period may infer a total when
-  the reset is unambiguous and indexed usage can be attributed to one observation
-  source; current unused value is still withheld. Multi-sign-in usage that cannot
-  be attributed reliably also remains used-only, without inventing an account
-  split. Current official API rates are applied consistently across history. This
-  is a proxy, not a bill or an official subscription price. The panel is enabled
-  by default and can be hidden in Settings with `showWeeklyEquivalentValue`.
+  approximation. Codex's account-wide `codex` observations can decorate both
+  historical and current buckets. If an observed reset drifts from the seven-day
+  grid, the sample is mapped to the display period containing its observation
+  time; file-source uncertainty, reset drift, and daily boundary crossings lower
+  confidence and are labelled as approximate. File keys are not account
+  identities, so eligible local files in one home are included together. A
+  current period still uses the latest real observation for a low-confidence
+  blended estimate when local quota series overlap. Ambiguous completed periods,
+  or periods without a usable observation, remain usage-only rather than
+  inventing an account split. Any coherent
+  observed window—including the current one—can show total and unused durability
+  estimates; attribution or boundary uncertainty lowers confidence instead of
+  silently replacing the values with dashes.
+  This display rule neither changes the index schema nor triggers a rebuild.
+  Current official API rates are applied consistently across history. This is a
+  proxy, not a bill or an official subscription price. The panel is enabled by
+  default and can be hidden in Settings with `showWeeklyEquivalentValue`.
 - **One dashboard render stack** — switching to Codex keeps the established
-  Today / Month / All time / Sessions / Projects / Content / Settings structure,
+  Today / Last 30 days / All time / Sessions / Projects / Content / Settings structure,
   relabelled where Codex semantics differ. The same render functions, HTML
   classes, charts, tables, spacing, and responsive rules are used for both
   providers. Claude and Codex time-series charts stay width-aligned while dense
@@ -283,20 +353,19 @@ consent prompt.
   cap actually named by Anthropic, such as `fable 17%`; migrated from the
   original model-specific contribution in PR #38 by
   [@wheelbarrel00](https://github.com/wheelbarrel00).
-- **AI advice 2.0** — bring your own key: **Anthropic** (`/v1/messages`) by
-  default, or any OpenAI-compatible endpoint (`advice.apiFormat`). Fed with the
-  new signals (runs, cache hit rates, attribution, thinking share); optional
-  `advice.userContext` adds a "Personalised for this project" section;
-  `advice.promptWindowDays` (default 30) sets the sampling window. Transport
-  hardened: timeout, retry, curl fallback. *(A keyless "subscription" backend
-  was prototyped but isn't shipped — Anthropic blocks calling the API with the
-  Claude Code OAuth token; it may return if that changes.)*
+- **AI advice 2.0** — bring your own key for Anthropic or an OpenAI-compatible
+  endpoint (`advice.apiFormat`). The v2.3 line places local evidence and an exact full-
+  request preview before the separate Send action. Aggregate-only is the
+  default; prompt samples and `advice.userContext` require independent prompt-
+  personalisation consent and appear verbatim in the preview. The keyless
+  Claude Code subscription backend is not shipped and is unreachable.
 - **Usage Optimizer** (experimental, `advice.optimizer.enabled`, default off) —
   a Content-tab card where you paste a rough request and get back one tightened
   prompt as **plain text** (paste-ready, no Markdown) plus a recommended effort
   / thinking / model. Three optional lenses (flag ambiguous references ·
   condense long pastes · suggest a style direction). **Only the text you paste
-  is sent**, behind a one-time consent prompt.
+  is included**, and the full provider request must be previewed and explicitly
+  sent.
 - **Context-window indicator** (experimental, off by default) — opt in via
   Settings to show the current session's context fill in the status bar. A "~"
   marks a guessed window; set `contextWindowOverride` for proxied/custom models.
@@ -311,8 +380,9 @@ consent prompt.
   by [@Dobidop](https://github.com/Dobidop).
 - **Four new tabs**: Sessions, Projects, Content, Branches — all sortable.
 - **Token-composition stacked chart** with Y-axis and reference lines.
-- **AI advice command** (DeepSeek V4 Pro default, `reasoning_effort=max`)
-  with a demo-mode fallback when no API key is configured.
+- **AI advice command** — now routes to the unified local-evidence surface; a
+  missing API key leaves the request unsent instead of opening a separate demo
+  or transport path.
 - **Multi-vendor pricing**: Opus 4.x, Sonnet 4.x, Haiku 4.5 (verified
   against Anthropic's public pricing); reference rates for proxied setups
   (OpenAI, Gemini, DeepSeek, Kimi, GLM, Qwen) with family-aware fallback.
@@ -357,7 +427,7 @@ for **`Claude Code Usage`**:
 | `language` | `"auto"` | UI language: `auto` / `en` / `de-DE` / `zh-TW` / `zh-CN` / `ja` / `ko` / `pt-BR` / `id`. |
 | `dataDirectory` | `""` | Custom Claude data dir; empty = auto-detect. |
 | `codex.dataDirectory` | `""` | Custom Codex home; empty = `CODEX_HOME` or `~/.codex`. |
-| `advice.apiKey` | `""` | API key for AI advice + the Usage Optimizer (empty = advice opens a demo instead). |
+| `advice.apiKey` | `""` | Bring-your-own key for AI advice + the Usage Optimizer; empty means no request can be sent. |
 
 Everything else — refresh interval, status-bar items, number/date formatting,
 project grouping, content analysis, and all the AI advice / Optimizer options —
@@ -402,6 +472,17 @@ authoritative.
 
 ## Privacy
 
+The complete user-facing inventory, retention rules, clearing behavior, and
+remote boundaries are in [Local data and privacy](LOCAL-DATA.md) ([简体中文](LOCAL-DATA.zh-CN.md)).
+
+| Data | Stored locally | Remote behavior | Clear path |
+|---|---|---|---|
+| Claude/Codex source logs | Provider-owned and read-only; never copied wholesale | None by default | Managed by the provider tools, not deleted by this extension |
+| Codex derived index | Bounded pseudonymous numeric/structural aggregates | None | Rebuild or clear derived index |
+| Quota observations | Bounded anonymous window facts; no raw account ID | Claude quota fetch only when enabled; Codex evidence stays local | Clear by provider/account epoch or all |
+| UI/share preferences | Tab/filter state plus optional title/range and GitHub destination strings | Publish only after exact explicit confirmation | Reset UI or sharing preferences independently |
+| Advice data/key | Bounded aggregate evidence; key only in SecretStorage | Exact previewed request only after separate Send | Clear advice data and key independently |
+
 - All **Claude** token / cost / session analysis runs locally by reading your
   `~/.claude/projects/**/*.jsonl` files.
 - Codex usage records are discovered only from `sessions/**/*.jsonl` and
@@ -420,13 +501,25 @@ authoritative.
 - The quota indicator calls **`api.anthropic.com/api/oauth/usage`** using
   Claude Code's existing OAuth token. No additional credentials are sent.
 - **AI advice** and the **Usage Optimizer** are the only features that call a
-  model — and only when *you* trigger them. AI advice sends an aggregate
-  summary of your usage plus a sample of your recent prompts; the Optimizer
-  sends **only the text you paste into it** (never your files or the terminal),
-  behind a one-time consent prompt. Both send to the endpoint in `advice.apiUrl`
-  with your own `advice.apiKey` (Anthropic `/v1/messages` by default, or any
-  OpenAI-compatible endpoint). **Bring your own key**; nothing is shipped with
-  the extension.
+  model — and only after *you* preview and explicitly send a prepared request.
+  Advice defaults to allowlisted aggregates; prompt samples and optional user
+  context require separate consent. The Optimizer includes **only the text you
+  paste into it** (never your files or terminal). Both use the exact previewed
+  bytes, the endpoint in `advice.apiUrl`, and your own `advice.apiKey`.
+  **Bring your own key**; no key or generative OAuth credential is shipped.
+
+### Known limits
+
+- A reset absent from an official response or local structured event cannot be
+  reconstructed; day-only evidence lowers confidence.
+- One Codex home may contain several sign-ins. The current period may therefore
+  show a low-confidence blended estimate from the latest real observation;
+  ambiguous completed periods remain used-only rather than inventing an account split.
+- API-equivalent values depend on current known API prices and visible pricing
+  coverage. They are not bills or subscription prices.
+- Source-log retention belongs to Claude Code and Codex. Uninstall may leave
+  host-managed extension storage behind, so the explicit clear controls are the
+  reliable deletion route.
 
 ---
 
@@ -436,6 +529,13 @@ authoritative.
 - Make sure Claude Code is installed and you have used it at least once.
 - Check the `dataDirectory` setting; auto-detection looks at
   `~/.claude/projects` and `~/.config/claude/projects`.
+
+**One-shot Claude CLI activity is missing**
+- Calls made with `--no-session-persistence` can leave a prompt-history entry
+  but no project transcript and no token `usage` fields. The extension does not
+  invent token or cost totals from prompt history. Run future audited calls
+  without that flag if they should appear; past unpersisted token usage cannot
+  be reconstructed locally.
 
 **Quota row shows `5h:--% wk:--%`**
 - Claude Code's OAuth token is missing or expired. Log in to the active Claude
@@ -448,10 +548,10 @@ authoritative.
   `https://api.deepseek.com/chat/completions`. The extension auto-strips
   `/v1` if present.
 
-**`Get AI Usage Advice` shows demo instead of real advice**
-- AI advice needs a key. With no key under `claudeCodeUsage.advice.apiKey`, the
-  command opens a hand-written demo (filename-marked `…-DEMO-…`, with a prominent
-  banner) instead of calling any API. Add a key in Settings to get real advice.
+**`Send this exact request` is unavailable**
+- Enable the default-off advice-effectiveness setting, allow aggregate data,
+  and configure your own `claudeCodeUsage.advice.apiKey`. Previewing is always
+  local; without a key the request remains unsent.
 
 **High CPU or sluggish refresh on a large history (Linux included)**
 - V2.2.1 removes the hidden 8-second active polling override and bounds the

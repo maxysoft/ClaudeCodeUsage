@@ -203,7 +203,11 @@ export async function readEarliestTimestamp(
 
 export async function sortUsageFilesByEarliestTimestamp(
   entries: readonly UsageFileFingerprint[],
-): Promise<{ files: string[]; bytesRead: number }> {
+): Promise<{
+  files: string[];
+  bytesRead: number;
+  timestampMsByPath: ReadonlyMap<string, number>;
+}> {
   const stamped = await mapWithConcurrency(entries, 8, async (entry) => {
     try {
       return {
@@ -233,5 +237,6 @@ export async function sortUsageFilesByEarliestTimestamp(
   return {
     files: stamped.map((item) => item.file),
     bytesRead: stamped.reduce((sum, item) => sum + item.bytesRead, 0),
+    timestampMsByPath: new Map(stamped.map((item) => [item.file, item.timestampMs])),
   };
 }
