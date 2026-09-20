@@ -641,3 +641,36 @@ test('content analysis keeps framework injection out of user prompt samples and 
     assert.equal(serialized.includes(privateText), false);
   }
 });
+
+test('a sinceTs scope honours the exact boundary instant, not its civil day', () => {
+  // The weekly billing window opens mid-day (resets_at − 7d). Snapping that to
+  // its civil day made the "Usage tracking" card include records the This Week
+  // tab's own total excluded, so the card and the headline disagreed.
+  const weekStart = Date.parse('2026-09-15T14:00:00Z');
+  const turn = (iso: string, outputTokens: number): ClaudeUsageRecord => ({
+    timestamp: iso,
+    message: {
+      model: 'claude-opus-4-8',
+      usage: { input_tokens: 0, output_tokens: outputTokens },
+    },
+    _sessionId: 's1',
+  });
+  const records = [
+    turn('2026-09-15T12:00:00Z', 1_000_000), // same civil day, BEFORE the boundary
+    turn('2026-09-15T15:00:00Z', 1_000_000), // after the boundary
+    turn('2026-09-18T09:00:00Z', 1_000_000),
+  ];
+
+  const tabTotal = ClaudeDataLoader.getThisWeekData(records, new Date(weekStart)).totalCost;
+  const card = ClaudeDataLoader.getUsageAttribution(records, null, {
+    kind: 'week',
+    sinceTs: weekStart,
+  });
+
+  // Opus output is $25/MTok, so each turn is $25: two turns are in the window.
+  assert.ok(Math.abs(tabTotal - 50) < 1e-6, `tab expected ~50, got ${tabTotal}`);
+  assert.ok(
+    Math.abs(card.totalCost - tabTotal) < 1e-6,
+    `card (${card.totalCost}) must equal the tab total (${tabTotal})`
+  );
+});

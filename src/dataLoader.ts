@@ -2684,19 +2684,15 @@ export class ClaudeDataLoader {
     const timeZone = I18n.getTimezone();
     const configuredToday = dayKeyInZone(now, timeZone);
     // `sinceTs` anchors a scope to a real boundary (the quota week start, the
-    // first of the calendar month) instead of a rolling window; the day keys
-    // from that boundary to today keep the same timezone semantics as the
-    // rolling scopes below. 'all' has no lower bound.
-    const dayKeysSince = (sinceTs: number): Set<string> | undefined => {
-      const startKey = dayKeyInZone(new Date(sinceTs), timeZone);
-      const spanMs = Date.parse(`${configuredToday}T00:00:00Z`) - Date.parse(`${startKey}T00:00:00Z`);
-      if (!Number.isFinite(spanMs)) {
-        return undefined;
-      }
-      return new Set(rollingDayKeysFromDayKey(configuredToday, Math.floor(spanMs / 86_400_000) + 1));
-    };
+    // first of the calendar month) instead of a rolling window. It is an EXACT
+    // instant, not a day: the weekly billing window opens mid-day, so snapping
+    // it to its civil day would pull in up to 24h of records that the tab's own
+    // total (getThisWeekData, a `>= weekStart` timestamp filter) excludes — the
+    // card and the headline would then disagree. Rolling scopes below stay
+    // day-keyed. 'all' has no lower bound.
+    const scopeSinceTs = scope.sinceTs;
     const scopeDayKeys =
-      scope.sinceTs !== undefined ? dayKeysSince(scope.sinceTs)
+      scopeSinceTs !== undefined ? undefined
       : scope.kind === 'day' ? new Set([configuredToday])
       : scope.kind === 'week' ? new Set(rollingDayKeysFromDayKey(configuredToday, 7))
       : scope.kind === 'month' ? new Set(rollingDayKeysFromDayKey(configuredToday, 30))
@@ -2716,6 +2712,9 @@ export class ClaudeDataLoader {
       const t = Date.parse(r.timestamp);
       if (isNaN(t)) {
         return false;
+      }
+      if (scopeSinceTs !== undefined) {
+        return t >= scopeSinceTs;
       }
       return scopeDayKeys?.has(dayKeyInZone(new Date(t), timeZone)) ?? true;
     });
@@ -2740,9 +2739,14 @@ export class ClaudeDataLoader {
         uses = uses.filter((u) => sessionIds.has(u.sessionId));
       } else {
         uses = uses.filter((u) => {
-          const currentZoneDay = u.ts > 0 && Number.isFinite(u.ts)
-            ? dayKeyInZone(new Date(u.ts), timeZone)
-            : u.day;
+          const hasTs = u.ts > 0 && Number.isFinite(u.ts);
+          if (scopeSinceTs !== undefined) {
+            // Match the record filter exactly. Without a usable timestamp, fall
+            // back to the boundary's civil day so a same-day invocation is not
+            // dropped outright.
+            return hasTs ? u.ts >= scopeSinceTs : u.day >= dayKeyInZone(new Date(scopeSinceTs), timeZone);
+          }
+          const currentZoneDay = hasTs ? dayKeyInZone(new Date(u.ts), timeZone) : u.day;
           return scopeDayKeys?.has(currentZoneDay) === true;
         });
       }

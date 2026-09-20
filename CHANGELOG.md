@@ -6,6 +6,10 @@ upstream merge: 2.3.3 / `b83e7d6`). Format follows [Keep a Changelog](https://ke
 
 ## [2.14.0] — 2026-09-20
 
+### Fixed (fork-specific)
+
+- **"Usage tracking" card matched the wrong window on the This Week and This Month tabs** — upstream's v2.3.3 attribution refactor moved scoping to timezone day keys, which snapped the fork's exact boundary (`resets_at − 7 days`, almost always mid-day) to the start of its civil day. The card then counted up to 24 hours of usage that the tab's own headline and per-day breakdown excluded, so the two disagreed. The boundary is honoured as an exact instant again, for both records and skill invocations, and a regression test now asserts the card equals the tab total.
+
 ### Added (merged from upstream v2.3.1 – v2.3.3)
 
 - **Project activity matrix** — a per-project view of the last 90 days showing which projects consumed the budget, on the Projects tab.
@@ -706,6 +710,10 @@ This fork is aligned with `jack21/ClaudeCodeUsage` v2.1.1 (`e52634c`) — every 
   stamps package metadata from the reviewed `v2.3.1` release tag.
 
 ## [2.3.0] — 2026-08-28
+
+Upstream release merged into this fork as [2.11.0](#2110--2026-09-05); see that
+entry for the fork-side summary. The heading is kept so the upstream release
+order stays intact.
 
 ## [2.2.0] — 2026-07-07
 
