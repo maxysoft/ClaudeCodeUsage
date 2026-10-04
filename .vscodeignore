@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .audit/**
+.code-review-graph/**
 .claude/**
 .agents/**
 .codex/**

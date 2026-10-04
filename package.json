@@ -2,7 +2,7 @@
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
   "description": "Monitor Claude Code and Codex token usage, costs and quota in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.15.0",
+  "version": "2.15.1",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",

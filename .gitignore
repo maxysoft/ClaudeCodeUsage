@@ -34,7 +34,9 @@ docs/
 
 # Agent-local state and in-repository worktrees are never source artifacts.
 # .audit/ holds review and handoff notes: working material, not shipped source.
+# .code-review-graph/ is the local knowledge-graph database (tens of MB).
 .audit/
+.code-review-graph/
 .claude/
 .agents/
 .codex/

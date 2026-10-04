@@ -4,7 +4,15 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
-## [2.15.0] — 2026-10-04
+## [2.15.1] — 2026-10-04
+
+### Added (fork-specific)
+
+- **UI coverage for the "This Week" tab** — the tab had none: the Playwright harness never supplied the billing window's reset instant, so the reset banner, the week usage-tracking card and the entire `week-` drilldown path were unreachable from the suite. That blind spot is how several regressions reached releases with a green run. Four specs now assert the data, not the markup: the window and its charts render, week drilldown ids stay namespaced apart from the 30-day tab's for a shared date, expanding a week day opens that tab's own row and leaves the 30-day row closed, and Codex never shows the Claude-only tab.
+
+### Changed (fork-specific)
+
+- **CI runs on Node 26** — the release and test workflows pinned Node 20 and 22; both now use 26, verified against Node 26.10.0.
 
 ### Fixed (review follow-up)
 
@@ -17,13 +25,13 @@ upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://ke
 - **The week fixture keys its day in the dashboard's timezone** — it used UTC, which agreed only because the fixture clock is midday.
 
 
-### Added (fork-specific)
+### Upstream alignment
 
-- **UI coverage for the "This Week" tab** — the tab had none: the Playwright harness never supplied the billing window's reset instant, so the reset banner, the week usage-tracking card and the entire `week-` drilldown path were unreachable from the suite. That blind spot is how several regressions reached releases with a green run. Four specs now assert the data, not the markup: the window and its charts render, week drilldown ids stay namespaced apart from the 30-day tab's for a shared date, expanding a week day opens that tab's own row and leaves the 30-day row closed, and Codex never shows the Claude-only tab.
+Unchanged from 2.15.0 — aligned with `jack21/ClaudeCodeUsage` v2.4.0 (`298b2e1`).
 
-### Changed (fork-specific)
+---
 
-- **CI runs on Node 26** — the release and test workflows pinned Node 20 and 22; both now use 26, verified against Node 26.10.0.
+## [2.15.0] — 2026-10-04
 
 ### Fixed (fork-specific)
 
