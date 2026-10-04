@@ -346,6 +346,9 @@ export interface ExtensionConfig {
   codexDataDirectory: string;
   codexFileWatchSeconds: number;
   codexOptimizationEnabled: boolean;
+  // Fork-exclusive. The key itself is never part of this object: it is read
+  // straight from SecretStorage at the call site that needs it.
+  openRouterEnabled: boolean;
   statusBarProvider: 'auto' | 'claude' | 'codex';
   codexStatusMetric: 'fresh' | 'processed' | 'output';
   language: string;

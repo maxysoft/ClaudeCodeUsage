@@ -349,7 +349,9 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
   extension.webviewProvider = {
     clearAdviceLocalData: async () => { adviceClearCalls += 1; return true; },
     clearSharingRuntimeState: () => undefined,
+    updateOpenRouterData: () => undefined,
   };
+  extension.openRouterHistory = [];
   extension.claudeWeeklyQuotaHistory = [];
   extension.cache = {
     usageLimits: null,

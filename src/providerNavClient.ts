@@ -3,7 +3,7 @@ export function getProviderNavClientScript(): string {
   return `(function() {
   var tablist = document.querySelector('.provider-tabs[role="tablist"]');
   if (!tablist) { return; }
-  var providerValues = ['claude', 'codex', 'compare'];
+  var providerValues = ['claude', 'codex', 'compare', 'openrouter'];
 
   function tabs() {
     return Array.prototype.slice.call(tablist.querySelectorAll('[role="tab"][data-provider-target]'));

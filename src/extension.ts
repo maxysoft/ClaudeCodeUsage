@@ -97,6 +97,19 @@ import {
   loadCodexIndex,
 } from './providers/codex/codexIndex';
 import { acquireCodexIndexLease } from './providers/codex/codexIndexLease';
+import {
+  fetchOpenRouterCredits,
+  OpenRouterCredits,
+  OpenRouterErrorCode,
+} from './providers/openrouter/openRouterClient';
+import {
+  appendOpenRouterObservation,
+  normalizeOpenRouterHistory,
+  openRouterDailySpend,
+  OpenRouterDashboardView,
+  OpenRouterObservation,
+  OPEN_ROUTER_HISTORY_STATE_KEY,
+} from './providers/openrouter/openRouterHistory';
 import { weeklyQuotaObservationsFromCodexHistory } from './providers/codex/codexQuotaHistory';
 import { resolveCodexHome } from './providers/codex/codexManifest';
 import { buildCodexUsageView, CodexUsageView } from './providers/codex/codexUsage';
@@ -234,6 +247,8 @@ const QUOTA_P5_MIGRATION_KEY = 'ccu.quota.migratedCodexIndex.v2';
 const LEGACY_QUOTA_PREFIX = 'ccu.usageLimits.';
 const LEGACY_WEEKLY_PREFIX = 'ccu.weeklyQuotaHistory.v1.';
 const LOCAL_DATA_QUOTA_SCOPE_TTL_MS = 5 * 60_000;
+// ms. Lifetime credit totals move slowly and the endpoint is rate-limited.
+const OPEN_ROUTER_CREDITS_TTL_MS = 120_000;
 const WATCHER_FAILURE_STREAK_RESET_MS = 5 * 60_000;
 const LOCAL_DATA_EXACT_GLOBAL_STATE_KEYS = [
   ...new Set([
@@ -473,6 +488,12 @@ export class ClaudeCodeUsageExtension {
     usageLimitsLastUpdate: Date;
     usageLimitsBackoffUntil: Date;
     usageLimitsFailStreak: number;
+    openRouterCredits: OpenRouterCredits | null;
+    openRouterError: OpenRouterErrorCode | null;
+    openRouterObservedAt: number | null;
+    openRouterLastUpdate: Date;
+    openRouterBackoffUntil: Date;
+    openRouterFailStreak: number;
   } = {
     records: [],
     contentAnalysis: null,
@@ -483,8 +504,16 @@ export class ClaudeCodeUsageExtension {
     usageLimits: null,
     usageLimitsLastUpdate: new Date(0),
     usageLimitsBackoffUntil: new Date(0),
-    usageLimitsFailStreak: 0
+    usageLimitsFailStreak: 0,
+    openRouterCredits: null,
+    openRouterError: null,
+    openRouterObservedAt: null,
+    openRouterLastUpdate: new Date(0),
+    openRouterBackoffUntil: new Date(0),
+    openRouterFailStreak: 0
   };
+
+  private openRouterHistory: OpenRouterObservation[] = [];
 
   private outputChannel: vscode.OutputChannel;
   // Epoch ms of the last observed .jsonl change. It only tunes quota-cache TTL;
@@ -609,6 +638,9 @@ export class ClaudeCodeUsageExtension {
       this.queueInitializationWrite(() => this.saveCodexBackgroundState());
     }
     this.webviewProvider = new UsageWebviewProvider(context);
+    this.openRouterHistory = normalizeOpenRouterHistory(
+      context.globalState.get<unknown>(OPEN_ROUTER_HISTORY_STATE_KEY),
+    );
     const existingQuotaSalt = context.globalState.get<string>(
       'ccu.quota.fingerprintSalt.v1',
     );
@@ -1747,6 +1779,12 @@ export class ClaudeCodeUsageExtension {
       this.claudeWeeklyQuotaHistory = [];
       this.cache.usageLimits = null;
       this.cache.usageLimitsLastUpdate = new Date(0);
+      this.openRouterHistory = [];
+      this.cache.openRouterCredits = null;
+      this.cache.openRouterError = null;
+      this.cache.openRouterObservedAt = null;
+      this.cache.openRouterLastUpdate = new Date(0);
+      this.webviewProvider.updateOpenRouterData(null);
       this.weekMemo = null;
       this.cache.records = [];
       this.cache.contentAnalysis = null;
@@ -2185,6 +2223,7 @@ export class ClaudeCodeUsageExtension {
       codexFileWatchSeconds:
         Number(s.get<string>('codex.fileWatchSeconds') ?? '30') || 0,
       codexOptimizationEnabled: s.get<boolean>('codex.optimization.enabled'),
+      openRouterEnabled: s.get<boolean>('openrouter.enabled'),
       statusBarProvider: s.get<'auto' | 'claude' | 'codex'>('statusBarProvider'),
       codexStatusMetric: s.get<'fresh' | 'processed' | 'output'>(
         'codex.statusMetric',
@@ -4430,6 +4469,73 @@ export class ClaudeCodeUsageExtension {
     if (!this.disposed) this.syncProviderUiSafely('poll');
   }
 
+  private publishOpenRouterView(enabled: boolean, keyConfigured: boolean): void {
+    const view: OpenRouterDashboardView = {
+      enabled,
+      keyConfigured,
+      credits: this.cache.openRouterCredits,
+      error: this.cache.openRouterError,
+      observedAt: this.cache.openRouterObservedAt,
+      observationCount: this.openRouterHistory.length,
+      daily: openRouterDailySpend(this.openRouterHistory, I18n.getTimezone()),
+      trackingSince: this.openRouterHistory[0]?.observedAt ?? null,
+    };
+    this.webviewProvider.updateOpenRouterData(view);
+  }
+
+  /**
+   * Fork-exclusive OpenRouter credit snapshot. OpenRouter has no historical
+   * usage endpoint, so the per-day series can only be differenced from readings
+   * this extension records itself. Nothing here touches a Claude or Codex
+   * aggregate, and the key never leaves SecretStorage or this call.
+   */
+  private async refreshOpenRouterCredits(config: ExtensionConfig): Promise<void> {
+    if (this.disposed || this.localDataClearedRequiresReload) return;
+    const enabled = config.openRouterEnabled;
+    const apiKey = enabled ? (this.settings.get<string>('openrouter.apiKey') ?? '').trim() : '';
+    if (!enabled || !apiKey) {
+      this.cache.openRouterError = null;
+      this.publishOpenRouterView(enabled, Boolean(apiKey));
+      return;
+    }
+    const now = Date.now();
+    if (
+      now < this.cache.openRouterBackoffUntil.getTime() ||
+      now - this.cache.openRouterLastUpdate.getTime() < OPEN_ROUTER_CREDITS_TTL_MS
+    ) {
+      this.publishOpenRouterView(true, true);
+      return;
+    }
+    this.cache.openRouterLastUpdate = new Date(now);
+    const result = await fetchOpenRouterCredits(apiKey);
+    if (this.disposed || this.localDataClearedRequiresReload) return;
+    if (!result.ok) {
+      this.cache.openRouterError = result.error;
+      this.cache.openRouterFailStreak += 1;
+      this.cache.openRouterBackoffUntil = new Date(
+        Date.now() + quotaFailureBackoffMs(this.cache.openRouterFailStreak),
+      );
+      this.publishOpenRouterView(true, true);
+      return;
+    }
+    const observedAt = Date.now();
+    this.cache.openRouterError = null;
+    this.cache.openRouterFailStreak = 0;
+    this.cache.openRouterBackoffUntil = new Date(0);
+    this.cache.openRouterCredits = result.credits;
+    this.cache.openRouterObservedAt = observedAt;
+    const next = appendOpenRouterObservation(this.openRouterHistory, {
+      observedAt,
+      totalCredits: result.credits.totalCredits,
+      totalUsage: result.credits.totalUsage,
+    });
+    if (next !== this.openRouterHistory) {
+      this.openRouterHistory = next;
+      await this.context.globalState.update(OPEN_ROUTER_HISTORY_STATE_KEY, next);
+    }
+    this.publishOpenRouterView(true, true);
+  }
+
   private async maybeFetchUsageLimits(config: ExtensionConfig): Promise<ClaudeApiUsageResponse | null> {
     if (
       this.disposed ||
@@ -4678,6 +4784,8 @@ export class ClaudeCodeUsageExtension {
 
       // Account quota is independent from local JSONL. Do not let a slow OAuth
       // request delay the local usage refresh.
+      void this.refreshOpenRouterCredits(config).catch(() => undefined);
+
       void this.maybeFetchUsageLimits(config).then((limits) => {
         if (!current()) return;
         this.statusBar.updateQuota(limits);

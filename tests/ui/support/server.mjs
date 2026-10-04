@@ -24,6 +24,7 @@ const server = createServer(async (request, response) => {
     const locale = locales.has(requestedLocale) ? requestedLocale : 'en';
     const requestedProvider = url.searchParams.get('provider');
     const provider = requestedProvider === 'claude' || requestedProvider === 'compare'
+      || requestedProvider === 'openrouter'
       ? requestedProvider
       : 'codex';
     const theme = url.searchParams.get('theme') === 'dark' ? 'dark' : 'light';
@@ -46,6 +47,11 @@ const server = createServer(async (request, response) => {
       'combined-heatmap',
       'session-timezone-boundaries',
       'local-currency',
+      'openrouter-tracked',
+      'openrouter-disabled',
+      'openrouter-no-key',
+      'openrouter-forbidden',
+      'openrouter-no-observations',
     ].includes(requestedFixture)
       ? requestedFixture
       : 'default';

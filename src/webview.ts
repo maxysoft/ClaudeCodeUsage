@@ -34,6 +34,10 @@ import {
   SharingCommandIntentLedger,
   SharingTemplate,
 } from './sharingCommandIntent';
+import {
+  OpenRouterDashboardView,
+  OpenRouterDaySpend,
+} from './providers/openrouter/openRouterHistory';
 import { parseConversation } from './conversationLog';
 import { renderConversationViewer } from './conversationViewerHtml';
 import { formatUsageDate, shortUsageDate } from './usageDateLabels';
@@ -973,7 +977,9 @@ export class UsageWebviewProvider {
   private error: string | null = null;
   private dataDirectory: string | null = null;
   private currentTab: string = 'today';
-  private currentProvider: 'claude' | 'codex' | 'compare' = 'claude';
+  private currentProvider: 'claude' | 'codex' | 'compare' | 'openrouter' = 'claude';
+  // Fork-exclusive. Never merged into any Claude or Codex aggregate.
+  private openRouterView: OpenRouterDashboardView | null = null;
   private sharingTemplate: SharingTemplate = 'combinedHeatmap';
   private sharingWorkspaceRequested = false;
   private readonly sharingCommandIntents = new SharingCommandIntentLedger();
@@ -2047,7 +2053,7 @@ export class UsageWebviewProvider {
   show(tab?: string): void {
     if (tab) {
       this.currentTab = tab;
-      if (tab === 'settings' && this.currentProvider === 'compare') {
+      if (tab === 'settings' && (this.currentProvider === 'compare' || this.currentProvider === 'openrouter')) {
         this.currentProvider = this.providerAvailability.claude ? 'claude' : 'codex';
       }
     }
@@ -2397,9 +2403,10 @@ export class UsageWebviewProvider {
             (requested === 'codex' && this.providerAvailability.codex) ||
             (requested === 'compare' &&
               this.providerAvailability.claude &&
-              this.providerAvailability.codexData);
+              this.providerAvailability.codexData) ||
+            (requested === 'openrouter' && this.openRouterTabVisible());
           if (allowed) {
-            this.currentProvider = requested as 'claude' | 'codex' | 'compare';
+            this.currentProvider = requested as 'claude' | 'codex' | 'compare' | 'openrouter';
             const sharedTabs = ['today', 'month', 'all', 'sessions', 'projects', 'content', 'settings'];
             const allowedTabs = requested === 'claude'
               ? [...sharedTabs, 'branches', 'workflows']
@@ -2732,7 +2739,8 @@ export class UsageWebviewProvider {
       (this.currentProvider === 'claude' && !providerAvailability.claude) ||
       (this.currentProvider === 'codex' && !providerAvailability.codex) ||
       (this.currentProvider === 'compare' &&
-        (!providerAvailability.claude || !this.providerAvailability.codexData))
+        (!providerAvailability.claude || !this.providerAvailability.codexData)) ||
+      (this.currentProvider === 'openrouter' && !this.openRouterTabVisible())
     ) {
       this.currentProvider = defaultDashboardProvider(
         providerAvailability.claude,
@@ -2742,6 +2750,26 @@ export class UsageWebviewProvider {
     if (this.panel) {
       this.updateWebview();
     }
+  }
+
+  /** Fork-exclusive OpenRouter page input. A separate setter keeps `updateData`'s
+   * positional contract — and every call site that depends on it — unchanged. */
+  updateOpenRouterData(view: OpenRouterDashboardView | null): void {
+    this.openRouterView = view;
+    if (this.currentProvider === 'openrouter' && !this.openRouterTabVisible()) {
+      this.currentProvider = defaultDashboardProvider(
+        this.providerAvailability.claude,
+        this.providerAvailability.codex,
+      );
+    }
+    if (this.panel) {
+      this.updateWebview();
+    }
+  }
+
+  private openRouterTabVisible(): boolean {
+    const view = this.openRouterView;
+    return Boolean(view && (view.enabled || view.observationCount > 0));
   }
 
   updateCodexProgress(progress: CodexRenderProgress): void {
@@ -2889,7 +2917,7 @@ export class UsageWebviewProvider {
   private lastHtml: string = '';
 
   private dashboardLivePatchFor(html: string): DashboardLivePatch | undefined {
-    if (this.currentProvider === 'compare') return undefined;
+    if (this.currentProvider === 'compare' || this.currentProvider === 'openrouter') return undefined;
     const panelHtml = markedContent(html, LIVE_PATCH_PANEL_START, LIVE_PATCH_PANEL_END);
     if (panelHtml === undefined) return undefined;
     const panelNeutral = replaceMarkedContent(
@@ -2996,6 +3024,9 @@ export class UsageWebviewProvider {
   }
 
   private getWebviewContent(): string {
+    if (this.currentProvider === 'openrouter') {
+      return this.getOpenRouterContent();
+    }
     // Data/privacy controls must remain reachable even when neither provider
     // has logs yet or a refresh is in progress.
     if (this.currentTab === 'settings' && this.currentProvider !== 'compare') {
@@ -3096,7 +3127,7 @@ export class UsageWebviewProvider {
 
   private renderProviderTabs(): string {
     const button = (
-      provider: 'claude' | 'codex' | 'compare',
+      provider: 'claude' | 'codex' | 'compare' | 'openrouter',
       label: string,
     ): string => {
       const selected = this.currentProvider === provider;
@@ -3112,6 +3143,9 @@ export class UsageWebviewProvider {
     }
     if (this.providerAvailability.claude && this.providerAvailability.codexData) {
       html += button('compare', labels.compare);
+    }
+    if (this.openRouterTabVisible()) {
+      html += button('openrouter', I18n.openRouter.tabLabel);
     }
     return html + '</nav>';
   }
@@ -3375,6 +3409,118 @@ export class UsageWebviewProvider {
       summaryGrid + '</section>' + weeklyPanels;
   }
 
+  /** Fork-exclusive OpenRouter page: its own tab, its own data, and no path
+   * into any Claude or Codex aggregate. */
+  private getOpenRouterContent(): string {
+    const title = I18n.openRouter.panelTitle;
+    return `
+      <!DOCTYPE html>
+      <html lang="${this.escapeHtml(I18n.getLocale())}">
+      <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+        <title>${this.escapeHtml(title)}</title>
+        <style>${this.getStyles()}</style>
+      </head>
+      <body class="${this.setting<boolean>('dashboardAutoRefresh', true) ? '' : 'auto-off'}">
+        <div class="container">
+          <header><h1>${this.escapeHtml(title)}</h1><div class="actions"><button onclick="refresh()" class="btn-secondary">↻ ${this.escapeHtml(I18n.t.popup.refresh)}</button><button onclick="showProvider('claude', 'settings')" class="btn-secondary">⚙ ${this.escapeHtml(I18n.t.popup.settings)}</button></div></header>
+          ${this.renderProviderTabs()}
+          <div id="provider-panel" role="tabpanel" aria-labelledby="provider-tab-${this.currentProvider}">
+            ${this.cachedDataPanel('openrouter', 'openrouter', () => this.renderOpenRouterData())}
+          </div>
+        </div>
+        <script>${this.getScript()}</script>
+      </body>
+      </html>`;
+  }
+
+  private openRouterEmptyState(message: string): string {
+    return '<div class="no-data" role="status" aria-live="polite" data-openrouter-empty>' +
+      '<p>' + this.escapeHtml(message) + '</p></div>';
+  }
+
+  private renderOpenRouterData(): string {
+    const copy = I18n.openRouter;
+    const view = this.openRouterView;
+    const disclosure = '<p class="model-details" data-openrouter-disclosure>' +
+      this.escapeHtml(copy.disclosure) + '</p>';
+
+    if (!view || (!view.enabled && view.observationCount === 0)) {
+      return this.openRouterEmptyState(copy.trackingDisabled) + disclosure;
+    }
+    const notices: string[] = [];
+    if (!view.enabled) notices.push(copy.trackingDisabled);
+    else if (!view.keyConfigured) notices.push(copy.missingKey);
+    else if (view.error === 'forbidden-not-management-key') notices.push(copy.notManagementKey);
+    else if (view.error === 'unauthorized') notices.push(copy.unauthorized);
+    else if (view.error === 'network') notices.push(copy.networkError);
+    else if (view.error === 'malformed') notices.push(copy.malformedError);
+    else if (view.observationCount === 0) notices.push(copy.noObservations);
+
+    const noticeHtml = notices.map((notice) => this.openRouterEmptyState(notice)).join('');
+    if (!view.credits) {
+      return noticeHtml + disclosure;
+    }
+
+    const remaining = view.credits.totalCredits - view.credits.totalUsage;
+    const summary = '<section class="usage-summary"><div class="summary-grid">' +
+      '<div class="summary-item"><div class="label">' + this.escapeHtml(copy.creditsUsed) +
+      '</div><div class="value cost" data-openrouter-used>' +
+      this.escapeHtml(I18n.formatCurrency(view.credits.totalUsage)) + '</div></div>' +
+      '<div class="summary-item"><div class="label">' + this.escapeHtml(copy.creditsRemaining) +
+      '</div><div class="value cost" data-openrouter-remaining>' +
+      this.escapeHtml(I18n.formatCurrency(remaining)) + '</div></div>' +
+      '</div>' +
+      (view.observedAt
+        ? '<p class="model-details">' + this.escapeHtml(copy.lastObserved) + ': ' +
+          this.escapeHtml(this.formatDateTime(new Date(view.observedAt))) + '</p>'
+        : '') +
+      '</section>';
+
+    return noticeHtml + summary + this.renderOpenRouterSpendChart(view.daily) + disclosure;
+  }
+
+  /** Observed per-day spend on the shared hourly-chart CSS contract, so the
+   * page adds no stylesheet and no client script of its own. */
+  private renderOpenRouterSpendChart(daily: OpenRouterDaySpend[]): string {
+    const copy = I18n.openRouter;
+    if (daily.length === 0) {
+      return '<div class="daily-breakdown"><h3>' + this.escapeHtml(copy.observedSpend) + '</h3>' +
+        '<div class="no-chart-data" role="status">' + this.escapeHtml(copy.noChartData) +
+        '</div></div>';
+    }
+    const maxSpend = Math.max(...daily.map((row) => row.spendUsd), 0);
+    const maxHeight = 120;
+    const bars = daily.map((row) => {
+      const height = maxSpend > 0 ? (row.spendUsd / maxSpend) * maxHeight : 0;
+      const label = I18n.formatCurrency(row.spendUsd) +
+        (row.discontinuity ? ' · ' + copy.discontinuityNote : '');
+      return '<div class="hc-col" data-openrouter-day="' + this.escapeHtml(row.day) + '"' +
+        (row.discontinuity ? ' data-openrouter-discontinuity="true"' : '') + '>' +
+        '<div class="hc-barval">' + this.escapeHtml(I18n.formatCurrency(row.spendUsd)) + '</div>' +
+        '<div class="chart-bar cost-bar" style="height: ' + height + 'px;" title="' +
+        this.escapeHtml(label) + '"></div></div>';
+    }).join('');
+    const labels = daily
+      .map((row) => '<div class="hc-xlabel">' + this.escapeHtml(shortUsageDate(row.day)) + '</div>')
+      .join('');
+    const discontinuity = daily.some((row) => row.discontinuity)
+      ? '<p class="model-details" data-openrouter-discontinuity-note>' +
+        this.escapeHtml(copy.discontinuityNote) + '</p>'
+      : '';
+    return '<div class="daily-breakdown"><h3>' + this.escapeHtml(copy.observedSpend) + '</h3>' +
+      '<div class="hc-wrap"><div class="hc-yaxis">' +
+      '<span class="hc-yval">' + this.escapeHtml(I18n.formatCurrency(maxSpend)) + '</span>' +
+      '<span class="hc-yval">' + this.escapeHtml(I18n.formatCurrency(maxSpend / 2)) + '</span>' +
+      '<span class="hc-yval">' + this.escapeHtml(I18n.formatCurrency(0)) + '</span></div>' +
+      '<div class="hc-main"><div class="hc-scroll" tabindex="0">' +
+      '<div class="hc-plot"><div class="hc-grid hc-grid-top"></div>' +
+      '<div class="hc-grid hc-grid-mid"></div><div class="hc-bars">' + bars + '</div></div>' +
+      '<div class="hc-xlabels">' + labels + '</div></div></div></div>' +
+      discontinuity + '</div>';
+  }
+
   private getAlternateProviderContent(): string {
     const title = I18n.t.providers.codex.compareTitle;
     return `
@@ -3401,6 +3547,9 @@ export class UsageWebviewProvider {
   }
 
   private getMainContent(): string {
+    if (this.currentProvider === 'openrouter') {
+      return this.getOpenRouterContent();
+    }
     if (this.currentProvider === 'compare') {
       return this.getAlternateProviderContent();
     }
@@ -3550,9 +3699,15 @@ export class UsageWebviewProvider {
     );
   }
 
-  private cachedDataPanel(name: string, provider: SettingProvider, render: () => string): string {
+  private cachedDataPanel(
+    name: string,
+    provider: SettingProvider | 'openrouter',
+    render: () => string,
+  ): string {
     const now = new Date(Date.now());
-    const refs: unknown[] = provider === 'codex'
+    const refs: unknown[] = provider === 'openrouter'
+      ? [this.openRouterView]
+      : provider === 'codex'
       ? [this.codexView, this.codexInsights,
           this.codexView ? this.codexLoading && Boolean(this.codexProgress) : this.codexLoading]
       : [this.currentSessionData, this.todayData, this.rolling30DayData, this.allTimeData,

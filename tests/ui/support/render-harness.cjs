@@ -62,6 +62,9 @@ const {
   rootlessCrossProjectCycleFixture,
 } = require('../../../out/test/codexFixtures.js');
 const {
+  openRouterDailySpend,
+} = require('../../../out/providers/openrouter/openRouterHistory.js');
+const {
   buildAdviceEffectivenessFixture,
 } = require('./advice-effectiveness-fixture.cjs');
 
@@ -222,6 +225,41 @@ function claudeProjectUsageMatrix() {
     timeZone: 'Asia/Hong_Kong',
     coverage: 'complete',
   });
+}
+
+/** Readings this extension recorded itself: OpenRouter has no history endpoint,
+ * so the fixture is a credit series, never a billed statement. The last two
+ * share a civil day and the third drops the lifetime total, which is what the
+ * clamped-decrease path must survive in the UI. */
+function openRouterObservations() {
+  const day = 24 * 60 * 60_000;
+  return [
+    { observedAt: CODEX_WEBVIEW_NOW - 4 * day, totalCredits: 100, totalUsage: 20 },
+    { observedAt: CODEX_WEBVIEW_NOW - 3 * day, totalCredits: 100, totalUsage: 24.5 },
+    { observedAt: CODEX_WEBVIEW_NOW - 2 * day, totalCredits: 180, totalUsage: 4 },
+    { observedAt: CODEX_WEBVIEW_NOW - day, totalCredits: 180, totalUsage: 9.25 },
+    { observedAt: CODEX_WEBVIEW_NOW - day + 3_600_000, totalCredits: 180, totalUsage: 11 },
+  ];
+}
+
+function openRouterFixtureView(fixture, timeZone) {
+  if (!fixture.startsWith('openrouter-')) return null;
+  const observations = fixture === 'openrouter-no-observations' ? [] : openRouterObservations();
+  const latest = observations[observations.length - 1] ?? null;
+  const forbidden = fixture === 'openrouter-forbidden';
+  const missingKey = fixture === 'openrouter-no-key';
+  return {
+    enabled: fixture !== 'openrouter-disabled',
+    keyConfigured: !missingKey,
+    credits: forbidden || missingKey || !latest
+      ? null
+      : { totalCredits: latest.totalCredits, totalUsage: latest.totalUsage },
+    error: forbidden ? 'forbidden-not-management-key' : null,
+    observedAt: latest?.observedAt ?? null,
+    observationCount: observations.length,
+    daily: openRouterDailySpend(observations, timeZone),
+    trackingSince: observations[0]?.observedAt ?? null,
+  };
 }
 
 function memoryGlobalState() {
@@ -612,6 +650,7 @@ exports.renderHarness = async function renderHarness({
         ? { claude: true, codex: false, codexData: false }
         : { claude: true, codex: true },
     );
+    provider.updateOpenRouterData(openRouterFixtureView(fixture, timeZone));
     provider.currentProvider = selectedProvider;
 
     if (/^\d{4}-\d{2}$/.test(codexMonth)) {

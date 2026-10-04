@@ -22,6 +22,175 @@ export const DASHBOARD_FEEDBACK_TRANSLATIONS: Record<SupportedLanguage, {
   id: { refreshFailed: 'Pembaruan gagal · menampilkan data terakhir yang terverifikasi.', lastSuccess: 'Pembaruan terakhir yang berhasil', waiting: 'Menunggu percobaan ulang', paused: 'Dijeda', stalled: 'Tidak ada kemajuan · menunggu percobaan ulang', logsComplete: 'Log utama telah diindeks', previewDirty: 'Perbarui pratinjau sebelum mengekspor.', resetPreservesKey: 'Reset mempertahankan kunci API. Hapus secara terpisah.', destination: 'Tujuan', protocol: 'Format API', model: 'Model', invalidEndpoint: 'Periksa format API, URL, dan model di Pengaturan. Permintaan belum dikirim.' },
 };
 
+/** Fork-exclusive OpenRouter provider page. OpenRouter publishes lifetime
+ * credit totals only, so every string here describes a locally observed series
+ * rather than a billed statement. */
+export interface OpenRouterTranslations {
+  tabLabel: string;
+  panelTitle: string;
+  creditsUsed: string;
+  creditsRemaining: string;
+  observedSpend: string;
+  lastObserved: string;
+  disclosure: string;
+  trackingDisabled: string;
+  missingKey: string;
+  notManagementKey: string;
+  unauthorized: string;
+  networkError: string;
+  malformedError: string;
+  noObservations: string;
+  noChartData: string;
+  discontinuityNote: string;
+}
+
+export const OPEN_ROUTER_TRANSLATIONS: Record<SupportedLanguage, OpenRouterTranslations> = {
+  en: {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter credits',
+    creditsUsed: 'Credits used (lifetime)',
+    creditsRemaining: 'Credits remaining',
+    observedSpend: 'Observed spend per day',
+    lastObserved: 'Last reading',
+    disclosure: 'OpenRouter reports lifetime totals only. This series starts when you enabled tracking and cannot be back-filled; days without a reading are absent.',
+    trackingDisabled: 'OpenRouter tracking is off. Turn on "Enable OpenRouter credit tracking" under Settings → Providers.',
+    missingKey: 'No OpenRouter key is stored. Add one under Settings → Providers; it is kept in VS Code SecretStorage.',
+    notManagementKey: 'This key cannot read credits; OpenRouter requires a management key. Create one in your OpenRouter account settings, then store it under Settings → Providers.',
+    unauthorized: 'OpenRouter rejected the stored key. Replace it under Settings → Providers.',
+    networkError: 'OpenRouter could not be reached. The next refresh retries automatically.',
+    malformedError: 'OpenRouter returned an unexpected credits response. Nothing was recorded.',
+    noObservations: 'No readings yet. The first credit snapshot is recorded on the next refresh.',
+    noChartData: 'At least two readings are needed before a daily figure can be derived.',
+    discontinuityNote: 'Marked days contain a decrease in the lifetime total (an account reset or a credit purchase); their spend is a lower bound.',
+  },
+  'de-DE': {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter-Guthaben',
+    creditsUsed: 'Verbrauchtes Guthaben (gesamt)',
+    creditsRemaining: 'Verbleibendes Guthaben',
+    observedSpend: 'Beobachtete Ausgaben pro Tag',
+    lastObserved: 'Letzte Messung',
+    disclosure: 'OpenRouter liefert nur Gesamtsummen. Diese Reihe beginnt mit der Aktivierung der Erfassung und lässt sich nicht rückwirkend ergänzen; Tage ohne Messung fehlen.',
+    trackingDisabled: 'Die OpenRouter-Erfassung ist aus. Aktivieren Sie "Enable OpenRouter credit tracking" unter Einstellungen → Anbieter.',
+    missingKey: 'Es ist kein OpenRouter-Schlüssel hinterlegt. Fügen Sie einen unter Einstellungen → Anbieter hinzu; er liegt im VS Code SecretStorage.',
+    notManagementKey: 'Dieser Schlüssel darf das Guthaben nicht lesen; OpenRouter verlangt einen Management-Schlüssel. Erstellen Sie einen in Ihren OpenRouter-Kontoeinstellungen und hinterlegen Sie ihn unter Einstellungen → Anbieter.',
+    unauthorized: 'OpenRouter hat den hinterlegten Schlüssel abgelehnt. Ersetzen Sie ihn unter Einstellungen → Anbieter.',
+    networkError: 'OpenRouter war nicht erreichbar. Die nächste Aktualisierung versucht es erneut.',
+    malformedError: 'OpenRouter hat eine unerwartete Guthaben-Antwort geliefert. Es wurde nichts gespeichert.',
+    noObservations: 'Noch keine Messung. Die erste Guthaben-Momentaufnahme entsteht bei der nächsten Aktualisierung.',
+    noChartData: 'Für einen Tageswert sind mindestens zwei Messungen nötig.',
+    discontinuityNote: 'Markierte Tage enthalten einen Rückgang der Gesamtsumme (Konto-Reset oder Guthabenkauf); ihre Ausgaben sind eine Untergrenze.',
+  },
+  'zh-TW': {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter 額度',
+    creditsUsed: '已用額度（累計）',
+    creditsRemaining: '剩餘額度',
+    observedSpend: '每日觀測花費',
+    lastObserved: '上次讀數',
+    disclosure: 'OpenRouter 只提供累計總量。此序列自您啟用追蹤起開始，無法回補；沒有讀數的日期不會出現。',
+    trackingDisabled: 'OpenRouter 追蹤已關閉。請在設定 → 供應商中開啟「Enable OpenRouter credit tracking」。',
+    missingKey: '尚未儲存 OpenRouter 金鑰。請在設定 → 供應商中新增；金鑰存放於 VS Code SecretStorage。',
+    notManagementKey: '此金鑰無法讀取額度；OpenRouter 需要管理金鑰。請在 OpenRouter 帳號設定中建立，再於設定 → 供應商中儲存。',
+    unauthorized: 'OpenRouter 拒絕了已儲存的金鑰。請在設定 → 供應商中更換。',
+    networkError: '無法連線 OpenRouter。下次更新會自動重試。',
+    malformedError: 'OpenRouter 回傳了非預期的額度內容，未記錄任何資料。',
+    noObservations: '尚無讀數。下次更新時會記錄第一筆額度快照。',
+    noChartData: '至少需要兩筆讀數才能推導每日數值。',
+    discontinuityNote: '標記的日期含累計總量下降（帳號重設或購買額度），其花費為下限值。',
+  },
+  'zh-CN': {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter 额度',
+    creditsUsed: '已用额度（累计）',
+    creditsRemaining: '剩余额度',
+    observedSpend: '每日观测花费',
+    lastObserved: '上次读数',
+    disclosure: 'OpenRouter 仅提供累计总量。该序列自您启用跟踪时开始，无法回补；没有读数的日期不会出现。',
+    trackingDisabled: 'OpenRouter 跟踪已关闭。请在设置 → 供应商中开启“Enable OpenRouter credit tracking”。',
+    missingKey: '尚未保存 OpenRouter 密钥。请在设置 → 供应商中添加；密钥存放于 VS Code SecretStorage。',
+    notManagementKey: '该密钥无法读取额度；OpenRouter 需要管理密钥。请在 OpenRouter 账号设置中创建，再于设置 → 供应商中保存。',
+    unauthorized: 'OpenRouter 拒绝了已保存的密钥。请在设置 → 供应商中更换。',
+    networkError: '无法连接 OpenRouter。下次刷新会自动重试。',
+    malformedError: 'OpenRouter 返回了非预期的额度内容，未记录任何数据。',
+    noObservations: '尚无读数。下次刷新时会记录第一条额度快照。',
+    noChartData: '至少需要两条读数才能推导每日数值。',
+    discontinuityNote: '标记的日期含累计总量下降（账号重置或购买额度），其花费为下限值。',
+  },
+  ja: {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter クレジット',
+    creditsUsed: '使用済みクレジット（累計）',
+    creditsRemaining: '残りクレジット',
+    observedSpend: '日次の観測支出',
+    lastObserved: '最新の取得',
+    disclosure: 'OpenRouter は累計値のみを返します。この系列は追跡を有効にした時点から始まり、過去分は補完できません。取得のない日は表示されません。',
+    trackingDisabled: 'OpenRouter の追跡はオフです。設定 → プロバイダーで「Enable OpenRouter credit tracking」を有効にしてください。',
+    missingKey: 'OpenRouter のキーが保存されていません。設定 → プロバイダーで追加してください。キーは VS Code SecretStorage に保管されます。',
+    notManagementKey: 'このキーではクレジットを読み取れません。OpenRouter は管理キーを必要とします。OpenRouter のアカウント設定で作成し、設定 → プロバイダーに保存してください。',
+    unauthorized: 'OpenRouter が保存済みのキーを拒否しました。設定 → プロバイダーで差し替えてください。',
+    networkError: 'OpenRouter に接続できませんでした。次回の更新で自動的に再試行します。',
+    malformedError: 'OpenRouter が想定外のクレジット応答を返しました。何も記録していません。',
+    noObservations: 'まだ取得がありません。次回の更新で最初のクレジットスナップショットを記録します。',
+    noChartData: '日次の値を導くには少なくとも 2 回の取得が必要です。',
+    discontinuityNote: '印の付いた日は累計値の減少（アカウントのリセットまたはクレジット購入）を含み、支出は下限値です。',
+  },
+  ko: {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'OpenRouter 크레딧',
+    creditsUsed: '사용한 크레딧(누적)',
+    creditsRemaining: '남은 크레딧',
+    observedSpend: '일별 관측 지출',
+    lastObserved: '마지막 측정',
+    disclosure: 'OpenRouter는 누적 합계만 제공합니다. 이 계열은 추적을 켠 시점부터 시작되며 소급 보완할 수 없습니다. 측정이 없는 날짜는 표시되지 않습니다.',
+    trackingDisabled: 'OpenRouter 추적이 꺼져 있습니다. 설정 → 공급자에서 "Enable OpenRouter credit tracking"을 켜세요.',
+    missingKey: '저장된 OpenRouter 키가 없습니다. 설정 → 공급자에서 추가하세요. 키는 VS Code SecretStorage에 보관됩니다.',
+    notManagementKey: '이 키로는 크레딧을 읽을 수 없습니다. OpenRouter는 관리 키를 요구합니다. OpenRouter 계정 설정에서 만든 뒤 설정 → 공급자에 저장하세요.',
+    unauthorized: 'OpenRouter가 저장된 키를 거부했습니다. 설정 → 공급자에서 교체하세요.',
+    networkError: 'OpenRouter에 연결할 수 없습니다. 다음 새로 고침에서 자동으로 재시도합니다.',
+    malformedError: 'OpenRouter가 예상치 못한 크레딧 응답을 반환했습니다. 아무것도 기록하지 않았습니다.',
+    noObservations: '아직 측정이 없습니다. 다음 새로 고침에서 첫 크레딧 스냅샷을 기록합니다.',
+    noChartData: '일별 수치를 도출하려면 최소 두 번의 측정이 필요합니다.',
+    discontinuityNote: '표시된 날짜에는 누적 합계 감소(계정 초기화 또는 크레딧 구매)가 포함되어 지출은 하한값입니다.',
+  },
+  'pt-BR': {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'Créditos do OpenRouter',
+    creditsUsed: 'Créditos usados (acumulado)',
+    creditsRemaining: 'Créditos restantes',
+    observedSpend: 'Gasto observado por dia',
+    lastObserved: 'Última leitura',
+    disclosure: 'O OpenRouter informa apenas totais acumulados. Esta série começa quando você ativou o rastreamento e não pode ser preenchida retroativamente; dias sem leitura não aparecem.',
+    trackingDisabled: 'O rastreamento do OpenRouter está desligado. Ative "Enable OpenRouter credit tracking" em Configurações → Provedores.',
+    missingKey: 'Nenhuma chave do OpenRouter armazenada. Adicione uma em Configurações → Provedores; ela fica no VS Code SecretStorage.',
+    notManagementKey: 'Esta chave não pode ler créditos; o OpenRouter exige uma chave de gerenciamento. Crie uma nas configurações da sua conta OpenRouter e guarde-a em Configurações → Provedores.',
+    unauthorized: 'O OpenRouter rejeitou a chave armazenada. Substitua-a em Configurações → Provedores.',
+    networkError: 'Não foi possível alcançar o OpenRouter. A próxima atualização tenta de novo automaticamente.',
+    malformedError: 'O OpenRouter devolveu uma resposta de créditos inesperada. Nada foi registrado.',
+    noObservations: 'Ainda sem leituras. O primeiro instantâneo de créditos é registrado na próxima atualização.',
+    noChartData: 'São necessárias pelo menos duas leituras para derivar um valor diário.',
+    discontinuityNote: 'Os dias marcados contêm uma queda do total acumulado (reinício de conta ou compra de créditos); o gasto é um limite inferior.',
+  },
+  id: {
+    tabLabel: 'OpenRouter',
+    panelTitle: 'Kredit OpenRouter',
+    creditsUsed: 'Kredit terpakai (kumulatif)',
+    creditsRemaining: 'Sisa kredit',
+    observedSpend: 'Pengeluaran teramati per hari',
+    lastObserved: 'Pembacaan terakhir',
+    disclosure: 'OpenRouter hanya melaporkan total kumulatif. Deret ini dimulai saat Anda mengaktifkan pelacakan dan tidak dapat diisi mundur; hari tanpa pembacaan tidak muncul.',
+    trackingDisabled: 'Pelacakan OpenRouter nonaktif. Aktifkan "Enable OpenRouter credit tracking" di Pengaturan → Penyedia.',
+    missingKey: 'Belum ada kunci OpenRouter tersimpan. Tambahkan di Pengaturan → Penyedia; kunci disimpan di VS Code SecretStorage.',
+    notManagementKey: 'Kunci ini tidak dapat membaca kredit; OpenRouter memerlukan kunci manajemen. Buat satu di pengaturan akun OpenRouter Anda, lalu simpan di Pengaturan → Penyedia.',
+    unauthorized: 'OpenRouter menolak kunci yang tersimpan. Ganti di Pengaturan → Penyedia.',
+    networkError: 'OpenRouter tidak dapat dihubungi. Pembaruan berikutnya mencoba lagi otomatis.',
+    malformedError: 'OpenRouter mengembalikan respons kredit yang tidak terduga. Tidak ada yang dicatat.',
+    noObservations: 'Belum ada pembacaan. Snapshot kredit pertama dicatat pada pembaruan berikutnya.',
+    noChartData: 'Diperlukan minimal dua pembacaan sebelum angka harian dapat diturunkan.',
+    discontinuityNote: 'Hari bertanda memuat penurunan total kumulatif (reset akun atau pembelian kredit); pengeluarannya adalah batas bawah.',
+  },
+};
+
 export interface ProviderTranslations {
   claude: string;
   codexBeta: string;
@@ -4338,6 +4507,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: 'Benutzerdefiniertes Codex-Datenverzeichnis', help: 'Leer = CODEX_HOME, dann ~/.codex. Authentifizierungsdateien werden nie gelesen.' },
     'codex.fileWatchSeconds': { label: 'Codex-Live-Aktualisierungsverzögerung', help: 'Ruhe-Debounce nach lokalen Codex-JSONL-Änderungen. Aus deaktiviert die Überwachung.' },
     'codex.optimization.enabled': { label: 'Codex-Verhaltensoptimierung anzeigen', help: 'Lokale, deterministische Codex-Verhaltensmetriken und Empfehlungen anzeigen.' },
+    'openrouter.enabled': { label: 'OpenRouter-Guthabenerfassung aktivieren', help: 'Standardmäßig aus. Zeichnet nur auf diesem Rechner eigene Guthaben-Momentaufnahmen auf; OpenRouter bietet keine rückwirkende Nutzungshistorie.' },
+    'openrouter.apiKey': { label: 'OpenRouter-Management-Schlüssel', help: 'Nötig zum Lesen von /api/v1/credits; ein gewöhnlicher Inferenz-Schlüssel wird mit 403 abgelehnt. Liegt im VS Code SecretStorage und wird nie an das Dashboard gesendet.' },
     'statusBarProvider': { label: 'Statusleisten-Anbieter', help: 'Auto bevorzugt Claude, wenn beide Anbieter Daten haben.' },
     'codex.statusMetric': { label: 'Codex-Statusmetrik', help: 'Heute verarbeitete Token (Standard), Nutzung ohne Cache oder Ausgabe-Token.' },
     'timezone': { label: 'Zeitzone für Daten', help: 'Gängige Zone oder UTC-Offset (jeder Offset abgedeckt) oder Systemstandard. Labels zeigen den aktuellen UTC-Offset.' },
@@ -4390,6 +4561,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: '自訂 Codex 資料目錄', help: '留空時使用 CODEX_HOME，再使用 ~/.codex；不會讀取認證檔案。' },
     'codex.fileWatchSeconds': { label: 'Codex 即時重新整理延遲', help: '本機 Codex JSONL 變更後的靜默防抖；關閉即停用監看。' },
     'codex.optimization.enabled': { label: '顯示 Codex 行為最佳化', help: '顯示本機、確定性的 Codex 行為指標與建議。' },
+    'openrouter.enabled': { label: '啟用 OpenRouter 額度追蹤', help: '預設關閉。僅在本機記錄自有的額度快照；OpenRouter 不提供可回補的使用歷史。' },
+    'openrouter.apiKey': { label: 'OpenRouter 管理金鑰', help: '讀取 /api/v1/credits 所必需；一般推論金鑰會收到 403。存放於 VS Code SecretStorage，絕不送往儀表板。' },
     'statusBarProvider': { label: '狀態列供應商', help: '兩個供應商都有資料時，自動模式優先顯示 Claude。' },
     'codex.statusMetric': { label: 'Codex 狀態列指標', help: '今日已處理 Token（預設）、未快取用量或輸出 Token。' },
     'timezone': { label: '日期時區', help: '常用時區或 UTC 偏移（涵蓋所有偏移），或系統預設。標籤顯示目前的 UTC 偏移。' },
@@ -4442,6 +4615,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: '自定义 Codex 数据目录', help: '留空时使用 CODEX_HOME，再使用 ~/.codex；不会读取认证文件。' },
     'codex.fileWatchSeconds': { label: 'Codex 实时刷新延迟', help: '本地 Codex JSONL 变更后的静默防抖；关闭即停用监视。' },
     'codex.optimization.enabled': { label: '显示 Codex 行为优化', help: '显示本地、确定性的 Codex 行为指标与建议。' },
+    'openrouter.enabled': { label: '启用 OpenRouter 额度跟踪', help: '默认关闭。仅在本机记录自有的额度快照；OpenRouter 不提供可回补的使用历史。' },
+    'openrouter.apiKey': { label: 'OpenRouter 管理密钥', help: '读取 /api/v1/credits 所必需；普通推理密钥会收到 403。存放于 VS Code SecretStorage，绝不发送到仪表板。' },
     'statusBarProvider': { label: '状态栏供应商', help: '两个供应商都有数据时，自动模式优先显示 Claude。' },
     'codex.statusMetric': { label: 'Codex 状态栏指标', help: '今日已处理 Token（默认）、未缓存用量或输出 Token。' },
     'timezone': { label: '日期时区', help: '常用时区或 UTC 偏移（涵盖所有偏移），或系统默认。标签显示当前的 UTC 偏移。' },
@@ -4494,6 +4669,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: 'カスタム Codex データディレクトリ', help: '空欄の場合は CODEX_HOME、次に ~/.codex。認証ファイルは読みません。' },
     'codex.fileWatchSeconds': { label: 'Codex ライブ更新遅延', help: 'ローカル Codex JSONL 変更後の静かなデバウンス。オフで監視を無効化します。' },
     'codex.optimization.enabled': { label: 'Codex の行動最適化を表示', help: 'ローカルで決定論的な Codex の行動指標と提案を表示します。' },
+    'openrouter.enabled': { label: 'OpenRouter クレジット追跡を有効化', help: '既定はオフ。このマシン自身のクレジットスナップショットだけを記録します。OpenRouter は遡及できる利用履歴を提供しません。' },
+    'openrouter.apiKey': { label: 'OpenRouter 管理キー', help: '/api/v1/credits の読み取りに必要です。通常の推論キーは 403 で拒否されます。VS Code SecretStorage に保管され、ダッシュボードには送信されません。' },
     'statusBarProvider': { label: 'ステータスバーのプロバイダー', help: '両方にデータがある場合、自動は Claude を優先します。' },
     'codex.statusMetric': { label: 'Codex ステータスメトリック', help: '今日の処理済みトークン（既定）、非キャッシュ使用量、または出力トークン。' },
     'timezone': { label: '日付のタイムゾーン', help: '一般的なゾーンまたは UTC オフセット（全オフセット対応）、あるいはシステム既定。ラベルは現在の UTC オフセットを表示。' },
@@ -4546,6 +4723,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: '사용자 지정 Codex 데이터 디렉터리', help: '비우면 CODEX_HOME, 그다음 ~/.codex를 사용하며 인증 파일은 읽지 않습니다.' },
     'codex.fileWatchSeconds': { label: 'Codex 실시간 새로고침 지연', help: '로컬 Codex JSONL 변경 후 조용한 디바운스입니다. 끄면 감시를 중지합니다.' },
     'codex.optimization.enabled': { label: 'Codex 행동 최적화 표시', help: '로컬의 결정론적 Codex 행동 지표와 권장 사항을 표시합니다.' },
+    'openrouter.enabled': { label: 'OpenRouter 크레딧 추적 사용', help: '기본값은 꺼짐. 이 컴퓨터가 직접 기록한 크레딧 스냅샷만 남깁니다. OpenRouter는 소급 가능한 사용 내역을 제공하지 않습니다.' },
+    'openrouter.apiKey': { label: 'OpenRouter 관리 키', help: '/api/v1/credits 읽기에 필요합니다. 일반 추론 키는 403으로 거부됩니다. VS Code SecretStorage에 보관되며 대시보드로 전송되지 않습니다.' },
     'statusBarProvider': { label: '상태 표시줄 공급자', help: '두 공급자 모두 데이터가 있으면 자동은 Claude를 우선합니다.' },
     'codex.statusMetric': { label: 'Codex 상태 지표', help: '오늘 처리된 토큰(기본값), 캐시되지 않은 사용량 또는 출력 토큰.' },
     'timezone': { label: '날짜 시간대', help: '일반 지역 또는 UTC 오프셋(모든 오프셋 지원), 또는 시스템 기본값. 라벨에 현재 UTC 오프셋 표시.' },
@@ -4598,6 +4777,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: 'Diretório de dados Codex personalizado', help: 'Vazio = CODEX_HOME, depois ~/.codex. Arquivos de autenticação nunca são lidos.' },
     'codex.fileWatchSeconds': { label: 'Atraso da atualização ao vivo do Codex', help: 'Debounce silencioso após mudanças locais em JSONL do Codex. Desligado desativa a observação.' },
     'codex.optimization.enabled': { label: 'Mostrar otimização de comportamento do Codex', help: 'Mostra métricas e recomendações locais e determinísticas de comportamento do Codex.' },
+    'openrouter.enabled': { label: 'Ativar rastreamento de créditos do OpenRouter', help: 'Desligado por padrão. Registra apenas os instantâneos de crédito desta máquina; o OpenRouter não expõe histórico de uso para preencher retroativamente.' },
+    'openrouter.apiKey': { label: 'Chave de gerenciamento do OpenRouter', help: 'Necessária para ler /api/v1/credits; uma chave de inferência comum é recusada com 403. Fica no VS Code SecretStorage e nunca é enviada ao painel.' },
     'statusBarProvider': { label: 'Provedor da barra de status', help: 'Auto prioriza Claude quando ambos têm dados.' },
     'codex.statusMetric': { label: 'Métrica de status do Codex', help: 'Tokens processados hoje (padrão), uso sem cache ou tokens de saída.' },
     'timezone': { label: 'Fuso horário das datas', help: 'Zona comum ou deslocamento UTC (todos cobertos), ou padrão do sistema. Os rótulos mostram o deslocamento UTC atual.' },
@@ -4651,6 +4832,8 @@ const SETTINGS_I18N: Partial<Record<SupportedLanguage, Record<string, { label: s
     'codex.dataDirectory': { label: 'Direktori data Codex kustom', help: 'Kosong = CODEX_HOME, lalu ~/.codex. Berkas autentikasi tidak pernah dibaca.' },
     'codex.fileWatchSeconds': { label: 'Jeda penyegaran langsung Codex', help: 'Debounce tenang setelah perubahan JSONL Codex lokal. Mati menonaktifkan pemantauan.' },
     'codex.optimization.enabled': { label: 'Tampilkan optimasi perilaku Codex', help: 'Tampilkan metrik dan rekomendasi perilaku Codex yang lokal dan deterministik.' },
+    'openrouter.enabled': { label: 'Aktifkan pelacakan kredit OpenRouter', help: 'Nonaktif secara bawaan. Mencatat snapshot kredit milik mesin ini saja; OpenRouter tidak menyediakan riwayat penggunaan untuk diisi mundur.' },
+    'openrouter.apiKey': { label: 'Kunci manajemen OpenRouter', help: 'Diperlukan untuk membaca /api/v1/credits; kunci inferensi biasa ditolak dengan 403. Disimpan di VS Code SecretStorage dan tidak pernah dikirim ke dasbor.' },
     'statusBarProvider': { label: 'Penyedia status bar', help: 'Otomatis memprioritaskan Claude saat keduanya memiliki data.' },
     'codex.statusMetric': { label: 'Metrik status Codex', help: 'Token diproses hari ini (bawaan), penggunaan tanpa cache, atau token output.' },
     'timezone': { label: 'Zona waktu untuk tanggal', help: 'Pilih zona umum atau offset UTC (semua offset tersedia), atau default sistem. Label menampilkan offset UTC saat ini.' },
@@ -4812,6 +4995,10 @@ export class I18n {
 
   static get t(): Translations {
     return translations[this.currentLanguage];
+  }
+
+  static get openRouter(): OpenRouterTranslations {
+    return OPEN_ROUTER_TRANSLATIONS[this.currentLanguage];
   }
 
   static get sharingWorkspace(): SharingWorkspaceTranslations {
