@@ -460,7 +460,7 @@ drill-down. See [CHANGELOG.md](CHANGELOG.md) for patch-by-patch details.
   in place; VS Code's own Settings keeps the language and provider data
   directories. The advice API key is entered in the dashboard and stored in
   SecretStorage, not Settings Sync. Header buttons
-  trimmed to ✨ AI advice and ⚙ Settings (both jump to their tab); the
+  trimmed to AI advice and ⚙ Settings (both jump to their tab); the
   auto-refresh toggle moved into Settings (a manual ↻ appears when paused).
   If you hide the cost, quota *and* context items, the status bar keeps a small
   icon as a way back into the dashboard.

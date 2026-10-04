@@ -35,6 +35,7 @@ const server = createServer(async (request, response) => {
       'persisted-details',
       'weekly-usage-only',
       'weekly-claude-completed',
+      'week-records',
       'unknown-models',
       'zero-input',
       'covered-day-without-hourly-rows',

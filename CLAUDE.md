@@ -65,6 +65,7 @@ See `CHANGELOG.md` for the version this fork is currently aligned with upstream.
 
 **IMPORTANT**: When updating README.md, you MUST simultaneously update all language versions
 (see `AGENTS.md` for the authoritative list, currently `README.md`, `README-en.md`,
-`README-zh-TW.md`, `README-zh-CN.md`, `README-ja.md`, `README-ko.md`, and `README-id.md`).
+`README-zh-TW.md`, `README-zh-CN.md`, `README-ja.md`, `README-ko.md`, `README-id.md`,
+`README-de-DE.md`, and `README-pt-BR.md`).
 This ensures consistency across all documentation and maintains the multi-language support
 that users expect.

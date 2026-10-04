@@ -6,7 +6,17 @@ upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://ke
 
 ## [2.15.0] — 2026-10-04
 
+### Added (fork-specific)
+
+- **UI coverage for the "This Week" tab** — the tab had none: the Playwright harness never supplied the billing window's reset instant, so the reset banner, the week usage-tracking card and the entire `week-` drilldown path were unreachable from the suite. That blind spot is how several regressions reached releases with a green run. Four specs now assert the data, not the markup: the window and its charts render, week drilldown ids stay namespaced apart from the 30-day tab's for a shared date, expanding a week day opens that tab's own row and leaves the 30-day row closed, and Codex never shows the Claude-only tab.
+
+### Changed (fork-specific)
+
+- **CI runs on Node 26** — the release and test workflows pinned Node 20 and 22; both now use 26, verified against Node 26.10.0.
+
 ### Fixed (fork-specific)
+
+- **Repeated polls no longer re-render every Claude panel** — the weekly aggregate was rebuilt on each publish, and the dashboard compares panel inputs by identity, so a quota-tracked workspace invalidated all seven Claude panels on every poll even when nothing changed. It is memoised on the identity of the record array it was computed from, never a deep comparison, so a replaced or cleared corpus always recomputes; the memo is released with the Claude source.
 
 - **"This Week" data on the reused-snapshot publish path** — upstream's v2.4.0 performance work replaced the day-rollover republish with a republish on every unchanged refresh, driven by a reused dashboard snapshot. The weekly billing-window aggregate is not part of that snapshot (it exists only when the OAuth quota API reported a reset time), so it is now recomputed on that path as well, and the week aggregate and its reset instant travel with every `updateData` call — including the two new cold-failure paths upstream introduced.
 - **Per-panel render cache and the "This Week" tab** — the dashboard now memoises each tab's HTML against the data it was rendered from. The week aggregate and its reset instant are part of that cache identity, so a changed billing window re-renders the tab instead of serving the previous week's HTML.

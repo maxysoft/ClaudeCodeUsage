@@ -190,6 +190,15 @@ function settingsStore({
   };
 }
 
+// Four days after CODEX_WEBVIEW_NOW, so the countdown is always positive and
+// the fixture's daily rows fall inside the window.
+// Day -1 of the week-records fixture, in UTC, matching how the dashboard keys days.
+const WEEK_FIXTURE_EXPANDABLE_DAY = new Date(CODEX_WEBVIEW_NOW - 24 * 60 * 60_000)
+  .toISOString()
+  .slice(0, 10);
+
+const WEEK_RESETS_AT = new Date(CODEX_WEBVIEW_NOW + 4 * 24 * 60 * 60_000).toISOString();
+
 function claudeProjectUsageMatrix() {
   const points = [];
   for (let project = 1; project <= 16; project += 1) {
@@ -262,6 +271,25 @@ function addClaudeData(provider, { fixture = 'default', enableContent = false } 
   const today = claudeUsage();
   const now = new Date(CODEX_WEBVIEW_NOW);
   const completedWeeklyFixture = fixture === 'weekly-claude-completed';
+  // Records inside the WEEK_RESETS_AT window, so the This Week tab can render
+  // its daily breakdown and drilldown rows. The default fixture ships no
+  // records at all, which left that whole path untestable.
+  const weekRecordsFixture = fixture === 'week-records'
+    ? [1, 2, 3].map((day) => ({
+        timestamp: new Date(CODEX_WEBVIEW_NOW - day * 24 * 60 * 60_000).toISOString(),
+        _sessionId: `week-fixture-session-${day}`,
+        _skill: 'week-fixture-skill',
+        message: {
+          model: 'claude-sonnet-4-5-20250929',
+          usage: {
+            input_tokens: 10_000 * day,
+            output_tokens: 2_000 * day,
+            cache_creation_input_tokens: 1_000 * day,
+            cache_read_input_tokens: 40_000 * day,
+          },
+        },
+      }))
+    : [];
   const completedResetAt = CODEX_WEBVIEW_NOW - 24 * 60 * 60_000;
   const combinedHeatmapRecords = fixture === 'combined-heatmap'
     ? [
@@ -351,7 +379,7 @@ function addClaudeData(provider, { fixture = 'default', enableContent = false } 
     ],
     undefined,
     undefined,
-    weeklyRecords,
+    [...weeklyRecords, ...weekRecordsFixture],
     sessionBreakdown,
     [],
     enableContent
@@ -371,6 +399,11 @@ function addClaudeData(provider, { fixture = 'default', enableContent = false } 
     {
       '2026-07-19': [{ hour: '09:00', data: claudeUsage(0.4) }],
       '2026-07-20': [{ hour: '18:00', data: claudeUsage(0.6) }],
+      // A day inside the week-records window carries materialized hours, so the
+      // This Week tab has an expandable row and its drilldown stays testable.
+      ...(weekRecordsFixture.length > 0
+        ? { [WEEK_FIXTURE_EXPANDABLE_DAY]: [{ hour: '12:00', data: claudeUsage(0.5) }] }
+        : {}),
     },
     claudeProjectUsageMatrix(),
     [
@@ -378,6 +411,10 @@ function addClaudeData(provider, { fixture = 'default', enableContent = false } 
       { date: '2026-07-19', data: claudeUsage(0.4) },
       { date: '2026-07-20', data: claudeUsage(0.6) },
     ],
+    // Last positional: the weekly billing window's reset instant. Without it
+    // renderWeekData() skips its banner and the week usage card, leaving the
+    // whole week- drilldown path unreachable from the UI suite.
+    WEEK_RESETS_AT,
   );
   if (completedWeeklyFixture) {
     provider.updateWeeklyQuotaHistory([{

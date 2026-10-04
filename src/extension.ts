@@ -3590,6 +3590,7 @@ export class ClaudeCodeUsageExtension {
     this.statusBar.updateUsageData(null, null);
     this.statusBar.updateContext(null);
     this.statusBar.updateQuota(null);
+    this.weekMemo = null;
     this.tryProviderUiUpdate(() => this.webviewProvider.clearClaudeSource());
     this.tryProviderUiUpdate(() => this.webviewProvider.updateRefreshState?.('claude', { failed: false }));
     this.syncProviderUiSafely('settings');
@@ -4594,21 +4595,32 @@ export class ClaudeCodeUsageExtension {
    * Read through the normalizer: the legacy seven_day field still works today,
    * but newer API generations move the data into limits[].
    */
+  /** Week aggregate for the publish paths, memoised on the identity of the
+   * record array it was computed from. The webview compares panel inputs by
+   * identity, so returning a fresh UsageData on every poll re-rendered every
+   * Claude panel. Keying on the array itself (never a deep comparison) means a
+   * replaced or cleared corpus is a different array and always recomputes. */
+  private weekMemo: { records: ClaudeUsageRecord[]; resetsAt: string; data: UsageData } | null = null;
+
   private weekAggregate(
     records: ClaudeUsageRecord[],
   ): { data: UsageData | null; resetsAt: string | null } {
     const resetsAt = normalizeQuotaWindows(this.cache.usageLimits)
       .find((w) => w.kind === 'weekly_all')?.resetsAt;
     if (!resetsAt) {
+      this.weekMemo = null;
       return { data: null, resetsAt: null };
     }
-    return {
-      data: ClaudeDataLoader.getThisWeekData(
-        records,
-        new Date(new Date(resetsAt).getTime() - 7 * 24 * 60 * 60 * 1000),
-      ),
-      resetsAt,
-    };
+    const memo = this.weekMemo;
+    if (memo && memo.records === records && memo.resetsAt === resetsAt) {
+      return { data: memo.data, resetsAt };
+    }
+    const data = ClaudeDataLoader.getThisWeekData(
+      records,
+      new Date(new Date(resetsAt).getTime() - 7 * 24 * 60 * 60 * 1000),
+    );
+    this.weekMemo = { records, resetsAt, data };
+    return { data, resetsAt };
   }
 
   /** Compare the complete, time-aware render contract, not token totals alone.
