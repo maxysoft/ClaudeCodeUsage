@@ -133,6 +133,8 @@ test('source exclusions and clear-all allowlists cannot target provider logs or 
     ...LOCAL_DATA_GLOBAL_STATE_PREFIXES,
   ]);
   assert.ok(allowlistedState.size > 0);
+  assert.ok(allowlistedState.has('ccu.migrated.adviceDefaultFormat.v2.4.1'),
+    'the non-secret compatibility marker is included in confirmed clear-all');
   for (const key of allowlistedState) {
     assert.match(key, /^ccu\./);
     assert.doesNotMatch(key, /oauth|cookie|provider.?credential|provider.?log/i);
@@ -393,6 +395,11 @@ test('source policy keeps controls out of Settings while preserving safe command
     uiKeys.filter((key) => sharingKeys.includes(key)),
     [],
     'UI and sharing client allowlists must remain disjoint',
+  );
+  assert.doesNotMatch(webviewSource, /__ccuSharingSessionKeys|ccu\.sharing\.commandRevision/);
+  assert.doesNotMatch(
+    LOCAL_DATA_ACTION_TARGETS['reset-sharing-preferences'].join('\n'),
+    /ccu\.sharing\.commandRevision/,
   );
 
   const clearAll = sourceSlice(

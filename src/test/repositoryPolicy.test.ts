@@ -7,6 +7,11 @@ import * as ts from 'typescript';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 
+test('hotfix polling documentation retains the hourly Content boundary and cache release semantics', () => {
+  assert.match(repoFile('CHANGELOG.md'), /hourly hidden-panel refresh still computes Content attribution once/);
+  assert.match(repoFile('ARCHITECTURE.md'), /撤销来源和释放时清除旧引用/);
+});
+
 function repoFile(relativePath: string): string {
   return readFileSync(resolve(REPO_ROOT, relativePath), 'utf8');
 }
@@ -82,7 +87,7 @@ function assertExactVscePin(commands: readonly WorkflowStepValue[]): void {
   );
   assert.ok(tokens.length > 0, 'workflow must invoke VSCE');
   for (const token of tokens) {
-    assert.equal(token, '@vscode/vsce@3.9.2', `unexpected VSCE invocation ${token}`);
+    assert.equal(token, '@vscode/vsce@4.0.0', `unexpected VSCE invocation ${token}`);
   }
 }
 
@@ -1410,14 +1415,16 @@ test('git and VSIX ignores exclude private and development-only material', () =>
   }
 });
 
-test('all seven README files credit both development tools', () => {
+test('all nine README files credit both development tools', () => {
   const readmes = [
     'README.md',
     'README-en.md',
+    'README-de-DE.md',
     'README-zh-CN.md',
     'README-zh-TW.md',
     'README-ja.md',
     'README-ko.md',
+    'README-pt-BR.md',
     'README-id.md',
   ];
   for (const readme of readmes) {
@@ -1427,15 +1434,66 @@ test('all seven README files credit both development tools', () => {
   }
 });
 
-test('all seven README editions explain Codex Beta in their own language', () => {
+test('release history stays scannable and human contributors stay discoverable', () => {
+  for (const readme of ['README.md', 'README-en.md', 'README-zh-CN.md']) {
+    const body = repoFile(readme);
+    assert.match(body, /<details>\s*<summary>[^\n]*(?:2\.3|v2\.3)[^\n]*<\/summary>/,
+      `${readme} should collapse the older v2.3 history`);
+    assert.match(body, /<\/details>/, `${readme} should close its history disclosure`);
+    assert.match(body, /README\.md#credits|^## Credits$|^## 致谢$/m,
+      `${readme} should lead readers to contributor credits`);
+  }
+
+  const main = repoFile('README.md');
+  const credits = main.split(/^## Credits$/m)[1]?.split(/^## Changelog$/m)[0] ?? '';
+  assert.match(
+    credits,
+    /<details open>\s*<summary>Merged PR authors and examples of their contributions<\/summary>/,
+    'merged PR credits should be visible by default',
+  );
+  assert.doesNotMatch(credits, /first[- ]time contributor/i,
+    'Credits should not single out first-time contributors');
+  for (const login of [
+    'Carl723000', 'jack21', 'Dobidop', 'nickearnshaw', 'mxzinke',
+    'Alfiefe10', 'jackieyangjq', 'rsyuzyov', 'projectronic', 'zeyutang',
+    'chuccv', 'eduardogomezgvp', 'zhaoxiao9302', 'mkgaskin-ops',
+  ]) {
+    assert.ok(main.includes(`https://github.com/${login}`), `missing contributor ${login}`);
+  }
+
+  const drafter = repoFile('.github/release-drafter.yml');
+  assert.match(drafter, /change-template:\s*'[^']*\$TITLE[^']*\$NUMBER[^']*@\$AUTHOR[^']*'/);
+  assert.match(repoFile('CONTRIBUTING.md'), /@PR-author` \*\*on each change entry\*\*/i);
+});
+
+test('repository homepage leads with core usage views before optional sharing', () => {
+  const home = repoFile('README.md');
+  const features = home.indexOf('## Features at a glance');
+  const screenshots = home.indexOf('## Screenshots');
+  const status = home.indexOf('### Claude status bar');
+  const dashboard = home.indexOf('### Dashboard');
+  const sharing = home.indexOf('### Sharing workspace (optional)');
+  const release = home.indexOf("## What's new in 2.4");
+  assert.ok(features >= 0 && features < screenshots);
+  assert.ok(screenshots < status && status < dashboard);
+  assert.ok(dashboard < sharing && sharing < release,
+    'optional sharing preview should follow core usage screenshots');
+  assert.ok(home.indexOf('![v2.4 combined sharing workspace') > dashboard);
+  assert.doesNotMatch(home, /^## Current preview$/m,
+    'sharing should not be the homepage lead image');
+});
+
+test('all nine README files explain current Codex support without a Beta label', () => {
   const expectations: Record<string, RegExp[]> = {
-    'README.md': [/Codex Beta/, /processed/i, /uncached usage/i, /cached/i, /last-observed/i],
-    'README-en.md': [/Codex Beta/, /processed/i, /uncached usage/i, /cached/i, /last-observed/i],
-    'README-zh-CN.md': [/Codex Beta/, /已处理/, /未缓存用量/, /缓存/, /最后观测/],
-    'README-zh-TW.md': [/Codex Beta/, /已處理/, /未快取用量/, /快取/, /最後觀測/],
-    'README-ja.md': [/Codex Beta/, /処理済み/, /非キャッシュ使用量/, /キャッシュ/, /最終観測/],
-    'README-ko.md': [/Codex Beta/, /처리된/, /캐시되지 않은 사용량/, /캐시/, /마지막 관측/],
-    'README-id.md': [/Codex Beta/, /diproses/i, /penggunaan tanpa cache/i, /cache/i, /terakhir diamati/i],
+    'README.md': [/Codex/, /processed/i, /uncached usage/i, /cached/i, /last-observed/i],
+    'README-en.md': [/Codex/, /processed/i, /uncached usage/i, /cached/i, /last-observed/i],
+    'README-de-DE.md': [/Codex/, /verarbeitet/i, /nicht gecachte Nutzung/i, /gecachte/i, /letzte lokale Beobachtung/i],
+    'README-zh-CN.md': [/Codex/, /已处理/, /未缓存用量/, /缓存/, /最后观测/],
+    'README-zh-TW.md': [/Codex/, /已處理/, /未快取用量/, /快取/, /最後觀測/],
+    'README-ja.md': [/Codex/, /処理済み/, /非キャッシュ使用量/, /キャッシュ/, /最終観測/],
+    'README-ko.md': [/Codex/, /처리된/, /캐시되지 않은 사용량/, /캐시/, /마지막 관측/],
+    'README-pt-BR.md': [/Codex/, /processado/i, /uso sem cache/i, /cache/i, /última observação local/i],
+    'README-id.md': [/Codex/, /diproses/i, /penggunaan tanpa cache/i, /cache/i, /terakhir diamati/i],
   };
 
   for (const [readme, patterns] of Object.entries(expectations)) {
@@ -1443,8 +1501,19 @@ test('all seven README editions explain Codex Beta in their own language', () =>
     for (const pattern of patterns) {
       assert.match(body, pattern, `${readme} is missing ${pattern}`);
     }
+    assert.doesNotMatch(body.slice(0, 2_000), /Codex Beta/, `${readme} still presents Codex as Beta`);
     assert.doesNotMatch(body, /showOpusWeekly/, `${readme} still documents the retired setting key`);
   }
+});
+
+test('all provider tabs and settings present Codex without a Beta badge', () => {
+  const i18n = repoFile('src/i18n.ts');
+  const settings = repoFile('src/settings.ts');
+
+  assert.equal((i18n.match(/codexBeta: 'Codex'/g) ?? []).length, 8);
+  assert.doesNotMatch(i18n, /codexBeta: 'Codex Beta'/);
+  assert.match(settings, /label: 'Enable Codex'/);
+  assert.doesNotMatch(settings, /label: 'Enable Codex Beta'/);
 });
 
 test('v2.3 README editions share release evidence and local-data boundaries', () => {
@@ -1517,6 +1586,91 @@ test('v2.3 README editions share release evidence and local-data boundaries', ()
   assert.match(repoFile('LOCAL-DATA.zh-CN.md'), /OAuth access\/refresh token/);
 });
 
+test('v2.4 synthetic preview images are present and carry no text metadata', () => {
+  for (const image of [
+    'images/v2.4.0/compare-sharing-en-light.png',
+    'images/v2.4.0/claude-sharing-zh-CN-dark.png',
+    'images/v2.4.0/codex-month-zh-CN-dark.png',
+    'images/v2.4.0/narrow-sharing-de-DE-dark.png',
+  ]) {
+    assert.ok(existsSync(resolve(REPO_ROOT, image)), `missing synthetic preview ${image}`);
+    const chunkTypes = privacySafePngChunkTypes(image);
+    for (const metadataChunk of ['eXIf', 'iTXt', 'tEXt', 'zTXt']) {
+      assert.equal(chunkTypes.includes(metadataChunk), false, `${image} retains ${metadataChunk} metadata`);
+    }
+  }
+});
+
+test('v2.4 README editions describe one preview-first sharing workspace', () => {
+  const expectations: Record<string, RegExp[]> = {
+    'README.md': [
+      /^## What's new in 2\.4$/m,
+      /preview-first/i,
+      /Combined activity heatmap/,
+      /Claude Share Card/,
+      /Claude token\s+heatmap/,
+    ],
+    'README-en.md': [
+      /^## What's new in v2\.4$/m,
+      /preview-first/i,
+      /Combined activity heatmap/,
+      /Claude Share Card/,
+      /Claude token\s+heatmap/,
+    ],
+    'README-zh-CN.md': [
+      /^## 2\.4 新功能$/m,
+      /预览优先/,
+      /综合活动热力图/,
+      /Claude 分享卡/,
+      /Claude token\s+热力图/,
+    ],
+    'README-zh-TW.md': [
+      /^## v2\.4 新功能$/m,
+      /預覽優先/,
+      /綜合活動熱力圖/,
+      /Claude 分享卡/,
+      /Claude token\s+熱力圖/,
+    ],
+    'README-ja.md': [
+      /^## v2\.4 の新機能$/m,
+      /プレビュー/,
+      /統合アクティビティヒートマップ/,
+      /Claude Share Card/,
+      /Claude トークンヒートマップ/,
+    ],
+    'README-ko.md': [
+      /^## v2\.4 새로운 기능$/m,
+      /미리보기/,
+      /통합 활동 히트맵/,
+      /Claude 공유 카드/,
+      /Claude 토큰 히트맵/,
+    ],
+    'README-id.md': [
+      /^## Yang baru di v2\.4$/m,
+      /pratinjau/i,
+      /heatmap aktivitas gabungan/i,
+      /Claude Share Card/,
+      /heatmap token Claude/i,
+    ],
+  };
+
+  for (const [readme, patterns] of Object.entries(expectations)) {
+    const body = repoFile(readme);
+    for (const pattern of patterns) {
+      assert.match(body, pattern, `${readme} is missing ${pattern}`);
+    }
+    for (const publicId of ['exportShareCard', 'exportHeatmap', 'publishHeatmapToGitHub']) {
+      assert.ok(body.includes(publicId), `${readme} is missing compatibility command ${publicId}`);
+    }
+    assert.match(body, /enableShareCard/, `${readme} is missing the single visible sharing switch`);
+    assert.doesNotMatch(
+      body,
+      /^##[^\n]*2\.4\.\d[^\n]*$/m,
+      `${readme} must keep What's new at minor-version granularity`,
+    );
+  }
+});
+
 test('Marketplace metadata presents Claude and Codex local usage support', () => {
   const packageJson = JSON.parse(repoFile('package.json')) as {
     description: string;
@@ -1526,6 +1680,37 @@ test('Marketplace metadata presents Claude and Codex local usage support', () =>
   assert.ok(packageJson.keywords.includes('codex'));
   assert.ok(packageJson.keywords.includes('openai'));
   assert.ok(packageJson.keywords.includes('local-usage'));
+});
+
+test('every supported UI locale has a discoverable README edition', () => {
+  const packageJson = JSON.parse(repoFile('package.json')) as {
+    description: string;
+    keywords: string[];
+    contributes: { configuration: { properties: Record<string, { enum?: string[] }> } };
+  };
+  const locales = packageJson.contributes.configuration.properties['claudeCodeUsage.language'].enum
+    ?.filter((value) => value !== 'auto') ?? [];
+  assert.equal(locales.length, 8);
+  const home = repoFile('README.md');
+  for (const locale of locales) {
+    const filename = `README-${locale}.md`;
+    assert.ok(existsSync(resolve(REPO_ROOT, filename)), `${locale} has no README`);
+    assert.ok(home.includes(`](${filename})`), `Marketplace README does not link ${filename}`);
+    const body = repoFile(filename);
+    assert.match(body, /README\.md/, `${filename} cannot return to the main README`);
+    assert.match(body, /Codex/, `${filename} omits Codex`);
+    assert.match(body, /https:\/\/claude\.com\/claude-code/, `${filename} omits Claude Code credit`);
+    assert.match(body, /https:\/\/developers\.openai\.com\/codex\//, `${filename} omits Codex credit`);
+  }
+  for (const term of ['token', 'quota', 'status bar']) {
+    assert.match(packageJson.description, new RegExp(term, 'i'));
+  }
+  for (const keyword of ['codex-usage', 'token-usage', 'quota']) {
+    assert.ok(packageJson.keywords.includes(keyword), `Marketplace lacks ${keyword} tag`);
+  }
+  assert.ok(packageJson.keywords.length <= 30);
+  assert.ok(repoFile('README-en.md').split('\n').length > repoFile('README-de-DE.md').split('\n').length);
+  assert.ok(repoFile('README-zh-CN.md').split('\n').length > repoFile('README-pt-BR.md').split('\n').length);
 });
 
 test('pull request checklist names the actual eight UI locales', () => {
@@ -1538,7 +1723,7 @@ test('pull request checklist names the actual eight UI locales', () => {
   const template = repoFile('.github/PULL_REQUEST_TEMPLATE.md');
   assert.match(template, /all eight UI locales/);
   assert.doesNotMatch(template, /all seven languages/);
-  assert.match(template, /all seven README editions/);
+  assert.match(template, /all nine README files/);
 });
 
 // This fork keeps its own CHANGELOG.md (framed as "changes to this fork
@@ -1556,23 +1741,29 @@ test('changelog documents the current release and its upstream alignment', () =>
   assert.match(changelog, /aligned with `jack21\/ClaudeCodeUsage`/);
 });
 
-test('changelog records the upstream v2.3.3 alignment', () => {
+test('changelog records the upstream v2.4.0 alignment', () => {
   const changelog = repoFile('CHANGELOG.md');
-  assert.match(changelog, /2\.3\.3 \/ `b83e7d6`/);
+  assert.match(changelog, /2\.4\.0 \/ `298b2e1`/);
 });
 
-test('changelog preserves v2.3 release order and keeps named candidate fixes out of v2.3.2', () => {
+test('changelog separates unreleased changes from published v2.3.3 and v2.3.2 fixes', () => {
   const changelog = repoFile('CHANGELOG.md');
-  assert.match(changelog, /^## \[2\.3\.3\] — Unreleased$/m);
+  assert.match(changelog, /^## \[Unreleased\]$/m);
+  assert.match(changelog, /^## \[2\.3\.3\] — 2026-09-16$/m);
   assert.match(changelog, /^## \[2\.3\.2\] — 2026-09-12$/m);
   assert.match(changelog, /^## \[2\.3\.1\] — 2026-09-08$/m);
   assert.match(changelog, /^## \[2\.3\.0\] — 2026-08-28$/m);
 
-  const candidateStart = changelog.indexOf('## [2.3.3]');
+  const unreleasedStart = changelog.indexOf('## [Unreleased]');
+  const publishedStart = changelog.indexOf('## [2.3.3]');
   const releasedStart = changelog.indexOf('## [2.3.2]');
   const previousReleaseStart = changelog.indexOf('## [2.3.1]');
-  const candidateSection = changelog.slice(candidateStart, releasedStart);
+  const unreleasedSection = changelog.slice(unreleasedStart, publishedStart);
+  const publishedSection = changelog.slice(publishedStart, releasedStart);
   const releasedSection = changelog.slice(releasedStart, previousReleaseStart);
+  assert.match(unreleasedSection, /statusBarQuotaFormat/);
+  assert.match(unreleasedSection, /High CPU during indexing \(#99\)/);
+  assert.doesNotMatch(publishedSection, /statusBarQuotaFormat/);
   for (const candidateFix of [
     'Smoother live Webview refreshes',
     'Stable unchanged Compare refreshes',
@@ -1583,7 +1774,7 @@ test('changelog preserves v2.3 release order and keeps named candidate fixes out
     'Bounded credentials-watcher recovery',
     'Exact bounded Claude content analysis',
   ]) {
-    assert.match(candidateSection, new RegExp(candidateFix));
+    assert.match(publishedSection, new RegExp(candidateFix));
     assert.doesNotMatch(releasedSection, new RegExp(candidateFix));
   }
 });
@@ -1599,7 +1790,7 @@ test('release announcements are exact-version and user-disableable', () => {
   assert.match(settings, /key:\s*'releaseAnnouncements'/);
   assert.match(settings, /default:\s*true/);
 });
-test('Codex beta settings use safe provider-aware defaults', () => {
+test('Codex settings default to today processed tokens and preserve provider-aware controls', () => {
   const settings = repoFile('src/settings.ts');
   const webview = repoFile('src/webview.ts');
   const packageJson = repoFile('package.json');
@@ -1607,7 +1798,7 @@ test('Codex beta settings use safe provider-aware defaults', () => {
   assert.match(settings, /key:\s*'codex\.enabled'[\s\S]*?default:\s*true/);
   assert.match(settings, /key:\s*'codex\.fileWatchSeconds'[\s\S]*?default:\s*'30'/);
   assert.match(settings, /key:\s*'statusBarProvider'[\s\S]*?default:\s*'auto'/);
-  assert.match(settings, /key:\s*'codex\.statusMetric'[\s\S]*?default:\s*'fresh'/);
+  assert.match(settings, /key:\s*'codex\.statusMetric'[\s\S]*?default:\s*'processed'/);
   assert.match(settings, /key:\s*'codex\.optimization\.enabled'[\s\S]*?default:\s*true/);
   assert.match(webview, /'general'[\s\S]*?'providers'[\s\S]*?'features'/);
   assert.match(packageJson, /claudeCodeUsage\.codex\.dataDirectory/);
@@ -1699,7 +1890,7 @@ test('CI has separate Node, browser, and package release gates', () => {
   assert.match(workflow, /PLAYWRIGHT_BROWSERS_PATH:\s*\/ms-playwright/);
   assert.match(workflow, /needs:\s*\[test, ui\]/);
   assert.ok(runValues.includes('npm run test:ui'));
-  const packageAt = runValues.indexOf('npx -y @vscode/vsce@3.9.2 package --out /tmp/claude-code-usage-ci.vsix');
+  const packageAt = runValues.indexOf('npx -y @vscode/vsce@4.0.0 package --out /tmp/claude-code-usage-ci.vsix');
   const verifyAt = runValues.indexOf('node .github/scripts/verify-vsix.mjs /tmp/claude-code-usage-ci.vsix');
   assert.ok(packageAt >= 0 && verifyAt > packageAt, 'smoke VSIX verification must follow packaging');
   assertExactVscePin(runs);
@@ -1718,8 +1909,8 @@ test('CI has separate Node, browser, and package release gates', () => {
 test('CONTRIBUTING documents provider-aware privacy and three testing layers', () => {
   const guide = repoFile('CONTRIBUTING.md');
 
-  assert.match(guide, /Codex Beta is enabled by default and can be turned off in provider settings\./);
-  assert.doesNotMatch(guide, /(?:opt-in[\s\S]{0,80}Codex Beta|Codex Beta[\s\S]{0,80}opt-in)/i);
+  assert.match(guide, /Codex is enabled by default and can be turned off in provider settings\./);
+  assert.doesNotMatch(guide.slice(0, 1_500), /Codex Beta/);
   assert.doesNotMatch(guide, /Claude-only|Multi-provider monitoring[^\n]*out of scope/i);
   assert.match(guide, /Usage ingestion is read-only, and Codex data is never mutated\./);
   assert.match(guide, /Claude session actions are separately gated and disabled by default\./);

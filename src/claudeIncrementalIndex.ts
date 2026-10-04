@@ -11,8 +11,10 @@ import {
   AnalysisAcc,
   AnalysisBucket,
   AnalysisStructuralEvent,
+  analysisWindowCutoffMs,
   analyzeLine,
   ClaudeDataLoader,
+  compactUsageRecord,
   finalizeAnalysis,
   mergeAnalysisAcc,
   newAnalysisAcc,
@@ -26,7 +28,8 @@ import {
   rollingDayKeys,
 } from './dateKeys';
 import { I18n } from './i18n';
-import { isRetryDuplicatePrompt } from './promptDedup';
+import { detachedPromptPrefix, isRetryDuplicatePrompt } from './promptDedup';
+import { ownRecordValue, setRecordValue } from './ownRecord';
 import {
   buildProjectUsageMatrixSnapshot,
   ProjectUsageMatrixSnapshot,
@@ -187,6 +190,7 @@ interface DirtyGroups {
 }
 
 interface CopyOnWriteKeys {
+  aggregateBuckets: WeakSet<UsageData>;
   candidateMessages: Set<string>;
   candidateDirect: Set<string>;
   visibleSessions: Set<string>;
@@ -272,6 +276,9 @@ export interface ClaudeUsageAggregateSnapshot {
   allTime: UsageData;
   dailyForLast30Days: { date: string; data: UsageData }[];
   dailyForMonth: { date: string; data: UsageData }[];
+  /** All indexed local-calendar days. Kept host-side so month drill-downs can
+   * filter materialized aggregates instead of rescanning raw usage records. */
+  dailyForAllTime: { date: string; data: UsageData }[];
   monthlyForAllTime: { date: string; data: UsageData }[];
   hourlyForToday: { hour: string; data: UsageData }[];
   /** Sparse, already-materialized hours for active days in the rolling
@@ -302,7 +309,7 @@ export interface ClaudeUsageDashboardSnapshot extends ClaudeUsageAggregateSnapsh
 
 interface FilePlan {
   kind: 'append' | 'rebuild';
-  analysisReason?: 'source' | 'cutoff' | 'ownership' | 'full';
+  analysisReason?: 'source' | 'cutoff' | 'window' | 'ownership' | 'full';
   entry: UsageFileFingerprint;
   fileId: string;
   orderTimestampMs?: number;
@@ -375,6 +382,7 @@ function emptyDirtyGroups(): DirtyGroups {
 
 function emptyCopyOnWriteKeys(): CopyOnWriteKeys {
   return {
+    aggregateBuckets: new WeakSet(),
     candidateMessages: new Set(),
     candidateDirect: new Set(),
     visibleSessions: new Set(),
@@ -732,7 +740,7 @@ function materializeToolBuckets(
   target.tools = {};
   for (const [name, bucket] of [...totals].sort((left, right) =>
     compare(firstByName.get(left[0])!, firstByName.get(right[0])!))) {
-    target.tools[name] = bucket;
+    setRecordValue(target.tools, name, bucket);
   }
   for (const contributors of contributorsByName.values()) {
     contributors.sort((left, right) =>
@@ -901,14 +909,14 @@ function addBucketDelta(
   after: Readonly<Record<string, { tokens: number; chars: number; count: number }>>,
 ): void {
   for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    const prior = before[key] ?? { tokens: 0, chars: 0, count: 0 };
-    const next = after[key] ?? { tokens: 0, chars: 0, count: 0 };
-    const current = target[key] ?? { tokens: 0, chars: 0, count: 0 };
+    const prior = ownRecordValue(before, key) ?? { tokens: 0, chars: 0, count: 0 };
+    const next = ownRecordValue(after, key) ?? { tokens: 0, chars: 0, count: 0 };
+    const current = ownRecordValue(target, key) ?? { tokens: 0, chars: 0, count: 0 };
     current.tokens += next.tokens - prior.tokens;
     current.chars += next.chars - prior.chars;
     current.count += next.count - prior.count;
     if (current.tokens === 0 && current.chars === 0 && current.count === 0) delete target[key];
-    else target[key] = current;
+    else setRecordValue(target, key, current);
   }
 }
 
@@ -918,14 +926,14 @@ function addThinkingDelta(
   after: AnalysisAcc['thinkingBySession'],
 ): void {
   for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    const prior = before[key] ?? { thinking: 0, assistantTotal: 0 };
-    const next = after[key] ?? { thinking: 0, assistantTotal: 0 };
-    const current = target[key] ?? { thinking: 0, assistantTotal: 0 };
+    const prior = ownRecordValue(before, key) ?? { thinking: 0, assistantTotal: 0 };
+    const next = ownRecordValue(after, key) ?? { thinking: 0, assistantTotal: 0 };
+    const current = ownRecordValue(target, key) ?? { thinking: 0, assistantTotal: 0 };
     current.thinking += next.thinking - prior.thinking;
     current.assistantTotal += next.assistantTotal - prior.assistantTotal;
     if (next.hiddenThinking) current.hiddenThinking = true;
     if (current.thinking === 0 && current.assistantTotal === 0 && !current.hiddenThinking) delete target[key];
-    else target[key] = current;
+    else setRecordValue(target, key, current);
   }
 }
 
@@ -1248,7 +1256,14 @@ function rebaseFileAnalysisCutoff(
   const last = prior.analysisLastTimestampMs;
   if (cutoffMs < prior.analysis.cutoffMs) {
     if (first !== undefined && first < prior.analysis.cutoffMs) return null;
-  } else if (last !== undefined && last < cutoffMs && !prior.analysisHasUnboundedTimestamp) {
+  } else if (last !== undefined && last < cutoffMs && last >= prior.analysis.cutoffMs &&
+    !prior.analysisHasUnboundedTimestamp) {
+    // The last event has just left the window, so the contribution empties.
+    // A file whose last event was already outside the previous cutoff is empty
+    // already and falls through to the metadata-only rebase below: handing it
+    // fresh collections on every refresh made each such file look changed,
+    // which kept the append fast path off for good on any history older than
+    // the window.
     return {
       ...prior,
       path: entry.path,
@@ -1404,7 +1419,7 @@ async function parsePlan(
         const role = message?.role ?? parsed.type;
         if (agentInfo && base.agentTask === undefined && role === 'user') {
           const task = textFromUserContent(message?.content, ' ').replace(/\s+/g, ' ').trim();
-          if (task) base.agentTask = task.slice(0, 200);
+          if (task) base.agentTask = detachedPromptPrefix(task, 200);
         }
 
         if (!isSubagentFile && role === 'user' && !parsed.isMeta && !parsed.isSidechain &&
@@ -1416,7 +1431,7 @@ async function parsePlan(
               timestamp: parsed.timestamp,
               message: { usage: { input_tokens: 0, output_tokens: 0 } },
               _isUserPrompt: true,
-              _promptText: text.trim().slice(0, 4000),
+              _promptText: detachedPromptPrefix(text.trim(), 4000),
               _sessionId: sessionInfo.sessionId,
               _projectDirEncoded: sessionInfo.projectPath,
             };
@@ -1444,7 +1459,7 @@ async function parsePlan(
         }
 
         if (!validateUsageRecord(parsed)) return;
-        const record = parsed as unknown as ClaudeUsageRecord;
+        const record = compactUsageRecord(parsed as unknown as ClaudeUsageRecord);
         record._sessionId = sessionInfo.sessionId;
         record._projectDirEncoded = sessionInfo.projectPath;
         const cwd = parsed.cwd;
@@ -1461,6 +1476,12 @@ async function parsePlan(
         const plugin = parsed.attributionPlugin;
         record._skill = typeof skill === 'string' && skill.trim() ? skill : undefined;
         record._plugin = typeof plugin === 'string' && plugin.trim() ? plugin : undefined;
+        const mcpServer = parsed.attributionMcpServer;
+        const mcpTool = parsed.attributionMcpTool;
+        const effort = parsed.effort;
+        record._mcpServer = typeof mcpServer === 'string' && mcpServer.trim() ? mcpServer : undefined;
+        record._mcpTool = typeof mcpTool === 'string' && mcpTool.trim() ? mcpTool : undefined;
+        record._effort = typeof effort === 'string' && effort.trim() ? effort : undefined;
         if (agentInfo) {
           record._agentId = agentInfo.agentId;
           record._agentType = agentInfo.agentType;
@@ -1602,9 +1623,16 @@ function applyBucket(
   key: string | undefined,
   contribution: UsageData,
   sign: 1 | -1,
+  owned: WeakSet<UsageData>,
 ): void {
   if (!key) return;
-  const value = cloneUsageData(buckets.get(key) ?? emptyUsageData());
+  const previous = buckets.get(key);
+  // An aggregate belongs to this transaction after its first copy. Copying
+  // every model map again per record makes model-label churn quadratic; this
+  // keeps the old published snapshot immutable and copies each bucket once.
+  const value = previous && owned.has(previous) ? previous
+    : previous ? cloneUsageData(previous) : emptyUsageData();
+  owned.add(value);
   addUsageData(value, contribution, sign);
   if (usageIsZero(value)) buckets.delete(key);
   else buckets.set(key, value);
@@ -1621,16 +1649,17 @@ function applyConfiguredTimeAggregate(
   const dayHour = day && hour
     ? `${day}\0${hour}`
     : '';
-  applyBucket(index.aggregates.byDay, day, contribution, sign);
-  applyBucket(index.aggregates.byMonth, month, contribution, sign);
-  applyBucket(index.aggregates.byLocalDay, day, contribution, sign);
+  const owned = index.copyOnWrite.aggregateBuckets;
+  applyBucket(index.aggregates.byDay, day, contribution, sign, owned);
+  applyBucket(index.aggregates.byMonth, month, contribution, sign, owned);
+  applyBucket(index.aggregates.byLocalDay, day, contribution, sign, owned);
   if (day >= index.timeKeyers.hourWindowStartDay) {
-    applyBucket(index.aggregates.byLocalHour, dayHour, contribution, sign);
+    applyBucket(index.aggregates.byLocalHour, dayHour, contribution, sign, owned);
   }
   if (day >= index.timeKeyers.projectWindowStartDay) {
     const rawProject = record._projectPath || record._projectName || 'unknown';
     const project = ClaudeDataLoader.normalizePath(rawProject) || 'unknown';
-    applyBucket(index.aggregates.byProjectDay, `${project}\0${day}`, contribution, sign);
+    applyBucket(index.aggregates.byProjectDay, `${project}\0${day}`, contribution, sign, owned);
   }
 }
 
@@ -1640,10 +1669,11 @@ function applyAggregate(index: ClaudeUsageIndex, record: ClaudeUsageRecord, sign
   applyConfiguredTimeAggregate(index, record, contribution, sign);
   const project = record._projectPath || record._projectName || 'unknown';
   const branch = record._gitBranch && record._gitBranch.trim() ? record._gitBranch : '-';
-  applyBucket(index.aggregates.bySession, record._sessionId || 'unknown', contribution, sign);
-  applyBucket(index.aggregates.byProject, project.toLowerCase(), contribution, sign);
-  applyBucket(index.aggregates.byBranch, `${record._projectName || 'unknown'}\0${branch}`, contribution, sign);
-  applyBucket(index.aggregates.byWorkflow, record._workflowId, contribution, sign);
+  const owned = index.copyOnWrite.aggregateBuckets;
+  applyBucket(index.aggregates.bySession, record._sessionId || 'unknown', contribution, sign, owned);
+  applyBucket(index.aggregates.byProject, project.toLowerCase(), contribution, sign, owned);
+  applyBucket(index.aggregates.byBranch, `${record._projectName || 'unknown'}\0${branch}`, contribution, sign, owned);
+  applyBucket(index.aggregates.byWorkflow, record._workflowId, contribution, sign, owned);
 }
 
 function membershipKeys(index: ClaudeUsageIndex, record: ClaudeUsageRecord): {
@@ -2213,6 +2243,7 @@ function rollingHourlyRowsByDay(
     dayKeys.filter((day) => index.aggregates.byLocalDay.has(day)),
   );
   const buckets = new Map<string, Map<string, UsageData>>();
+  const owned = new WeakSet<UsageData>();
 
   for (const [key, data] of index.aggregates.byLocalHour) {
     const separator = key.indexOf('\0');
@@ -2249,6 +2280,7 @@ function rollingHourlyRowsByDay(
         keys.hour,
         ClaudeDataLoader.calculateUsageData([record]),
         1,
+        owned,
       );
     }
   }
@@ -2281,6 +2313,9 @@ export function claudeUsageAggregateSnapshot(
     .filter(([day]) => day.startsWith(configuredMonth))
     .map(([date, data]) => ({ date, data: cloneUsageData(data) }))
     .sort((left, right) => right.date.localeCompare(left.date));
+  const dailyForAllTime = [...index.aggregates.byLocalDay.entries()]
+    .map(([date, data]) => ({ date, data: cloneUsageData(data) }))
+    .sort((left, right) => right.date.localeCompare(left.date));
   const monthlyForAllTime = [...index.aggregates.byMonth.entries()]
     .map(([month, data]) => ({ date: `${month}-01`, data: cloneUsageData(data) }))
     .sort((left, right) => right.date.localeCompare(left.date));
@@ -2293,6 +2328,7 @@ export function claudeUsageAggregateSnapshot(
     allTime: cloneUsageData(index.aggregates.allTime),
     dailyForLast30Days,
     dailyForMonth,
+    dailyForAllTime,
     monthlyForAllTime,
     hourlyForToday,
     hourlyForLast30DaysByDay,
@@ -2446,10 +2482,10 @@ export async function updateClaudeUsageIndex(
   const nowMs = Date.now();
   const analysisAsOfDay = dayKeyInZone(new Date(nowMs), configuredTimeZone);
   const previousAnalysisRuntime = analysisRuntimeByIndex.get(previous);
-  // ClaudeDataLoader uses a continuously rolling millisecond cutoff. Keep the
-  // same contract here; timestamp frontiers below avoid reparsing when moving
-  // the cutoff cannot yet change any materialized contribution.
-  const analysisCutoffMs = nowMs - windowDays * 24 * 60 * 60 * 1000;
+  // Share ClaudeDataLoader's exact rolling cutoff. Timestamp frontiers below
+  // avoid reparsing between actual expiries without rounding or widening the
+  // established content-analysis window.
+  const analysisCutoffMs = analysisWindowCutoffMs(nowMs, windowDays);
   const manifest = options.manifest ?? await scanUsageManifest([root]);
   const currentEntries = [...manifest.entries.values()];
   const previousByPath = new Map([...previous.files.values()].map((file) => [file.path, file]));
@@ -2500,12 +2536,23 @@ export async function updateClaudeUsageIndex(
         continue;
       }
       if (needsAnalysisBody) {
+        // A file that only grew still has to be re-read in full when the window
+        // moved past one of its events: the stored aggregate counts that event,
+        // and a tail read cannot subtract it. The body is still an append, so
+        // the file keeps the UUIDs it owned and gains only new ones — the same
+        // shape as a plain append, and 'window' records that. Calling it
+        // 'source', as a mid-file edit, is what made this refresh re-read the
+        // whole corpus on ordinary window drift.
+        const grewOnly = !bodyUnchanged &&
+          entry.size > sameIdentity.fingerprint.size &&
+          await appendPrefixStillMatches(sameIdentity, entry) &&
+          await appendBoundaryStillMatches(sameIdentity, entry);
         analysisRebases.delete(fileId);
         analysisPayloadRebases.delete(fileId);
         plans.push({
           kind: 'rebuild',
-          analysisReason: bodyUnchanged && !timeZoneChanged && Boolean(sameIdentity.analysis)
-            ? 'cutoff'
+          analysisReason: !timeZoneChanged && Boolean(sameIdentity.analysis)
+            ? (bodyUnchanged ? 'cutoff' : (grewOnly ? 'window' : 'source'))
             : 'source',
           entry,
           fileId,
@@ -2523,9 +2570,14 @@ export async function updateClaudeUsageIndex(
       const plannedKind: FilePlan['kind'] = append && !rebaseChangedPayload
         ? 'append'
         : 'rebuild';
+      // An append whose file also lost an event to the window cannot be served
+      // from the stored aggregate — that aggregate still counts the expired
+      // event — so it has to be re-read in full. The body still only grew:
+      // 'window' records that, keeping it apart from a genuine mid-file edit.
+      const windowForcedRebuild = append && rebaseChangedPayload;
       plans.push({
         kind: plannedKind,
-        analysisReason: 'source',
+        analysisReason: windowForcedRebuild ? 'window' : 'source',
         entry,
         fileId,
         prior: append && rebasedAnalysis && !rebaseChangedPayload ? rebasedAnalysis : sameIdentity,
@@ -2593,14 +2645,43 @@ export async function updateClaudeUsageIndex(
   let forcedFullAnalysisRebuild = false;
   if (analyzeContent) {
     const sourcePlans = plans.filter((plan) => plan.analysisReason === 'source');
-    const soleSourcePlan = sourcePlans.length === 1 && plans.length === 1
-      ? sourcePlans[0]
-      : undefined;
+    // Several sessions appending between two refreshes is the ordinary case on a
+    // machine running more than one agent, not an edge case: with the fast path
+    // limited to a single changed file, such a machine never took it and every
+    // refresh re-read the whole history. Any number of pure tail appends is
+    // safe here; the per-file UUID ownership check below still guards order.
+    // A file that simply appeared is as safe as a tail append: its own body is
+    // read in full, and the established contributions are untouched. Every new
+    // session starts a new transcript, so treating this as an unsafe mutation
+    // cost a full rebuild many times a day.
+    const isTailAppend = (plan: FilePlan): boolean =>
+      plan.kind === 'append' && Boolean(plan.prior) && (plan.prior?.firstTimestampMs ?? 0) > 0;
+    const isNewFile = (plan: FilePlan): boolean =>
+      plan.kind === 'rebuild' && !plan.prior && !plan.replacedFileId;
+    // The window keeps drifting, so on a long history almost every refresh also
+    // carries a file whose oldest event has just fallen out of it. Such a file
+    // is re-read only to recompute its aggregate under the new cutoff — its
+    // body on disk is unchanged ('cutoff' is assigned only when bodyUnchanged),
+    // so it owns exactly the UUIDs it owned before and cannot preempt anyone.
+    // A verified append can cross that cutoff in the same file; it and other
+    // appends remain bounded to their changed bodies. UUID ownership preemption
+    // is checked after parsing, while dropped UUIDs are handed to the ownership
+    // restoration pass below.
+    //
+    // Requiring "appends and nothing else" therefore rejected the fast path on
+    // ordinary drift: measured on a 650-file history, 136 of 140 refreshes
+    // re-read every body — 1.4 GB, ~60 s — to serve one appended file.
+    // 'cutoff' — тело не менялось; 'window' — файл дописан и потерял событие
+    // за окном. Второй случай может нести новые UUID, поэтому его пропускает
+    // проверка владения после разбора, ниже.
+    const isWindowRebuild = (plan: FilePlan): boolean =>
+      plan.analysisReason === 'cutoff' || plan.analysisReason === 'window';
+    const appendOnlyPlans = plans.length > 0 &&
+      plans.every((plan) => isTailAppend(plan) || isNewFile(plan) || isWindowRebuild(plan));
     const safeTailAppend = Boolean(
-      soleSourcePlan?.kind === 'append' && soleSourcePlan.prior &&
+      appendOnlyPlans &&
       previousAnalysisRuntime && !timeZoneChanged &&
-      previous.windowDays === windowDays && analysisPayloadRebases.size === 0 &&
-      soleSourcePlan.prior.firstTimestampMs > 0,
+      previous.windowDays === windowDays,
     );
     const priorAnalysisCutoffMs = previousAnalysisRuntime?.cutoffMs ??
       (previous.analyzeContent ? previous.analysisCutoffMs : undefined);
@@ -2665,7 +2746,9 @@ export async function updateClaudeUsageIndex(
     analyzeContent && previousAnalysisRuntime && previous.contentAnalysis &&
     !forcedFullAnalysisRebuild && calibrationCutoffIsStable &&
     analysisPayloadRebases.size === 0 && deletions.length === 0 && moves.length === 0 &&
-    plans.every((plan) => plan.kind === 'append' && Boolean(plan.prior)),
+    plans.every((plan) =>
+      (plan.kind === 'append' && Boolean(plan.prior)) ||
+      (plan.kind === 'rebuild' && !plan.prior && !plan.replacedFileId)),
   );
 
   await options.beforeBodyReads?.();
@@ -2710,11 +2793,12 @@ export async function updateClaudeUsageIndex(
             for (const uuid of file.analysis?.seenUuids ?? []) analysisSeenUuids.add(uuid);
           }
         }
-        const rebuildPlans = plans.filter((plan) => plan.kind === 'rebuild');
-        if (rebuildPlans.length > 0) {
+        // The first file to carry a UUID owns it, so parsing has to follow the
+        // same order the full loader uses. With one plan the order is moot, but
+        // several changed files must be parsed in full-scan order — otherwise
+        // an expiring-window rebuild can claim a UUID before an earlier append.
+        if (plans.length > 1) {
           plans.sort((left, right) => {
-            if (left.kind !== right.kind) return left.kind === 'rebuild' ? -1 : 1;
-            if (left.kind === 'append') return 0;
             return (left.orderTimestampMs ?? 0) - (right.orderTimestampMs ?? 0) ||
               left.entry.discoveryIndex - right.entry.discoveryIndex;
           });
@@ -2743,21 +2827,47 @@ export async function updateClaudeUsageIndex(
     // collision changes the full loader's first owner, so retry the analysis as
     // one globally ordered rebuild. The first tail read remains bounded and is
     // the evidence used to choose the safe path.
-    if (fastAppendAnalysis && previousAnalysisRuntime && parsedPlans.length === 1 &&
-      parsedPlans[0].kind === 'append') {
-      const appended = parsedPlans[0];
-      const filePosition = previousAnalysisRuntime.filePositionById.get(appended.fileId) ?? -1;
-      let laterOwnerCollision = filePosition < 0;
-      for (const uuid of appended.analysisTouchedUuids) {
+    //
+    // A 'window' plan is an append too — the file only grew, it is re-read in
+    // full solely because its stored aggregate still counts an event that has
+    // since left the window. Its appended lines can carry UUIDs owned by a
+    // later file exactly like a plain append, so it is probed here as well;
+    // that probe is what allows it to skip the full rebuild in the first place.
+    const windowRebasedAppends = parsedPlans.some(
+      (plan) => plan.analysisReason === 'window',
+    );
+    if ((fastAppendAnalysis || windowRebasedAppends) &&
+      previousAnalysisRuntime && parsedPlans.length > 0) {
+      let laterOwnerCollision = false;
+      for (const appended of parsedPlans) {
         if (laterOwnerCollision) break;
-        const ownerFileId = previousAnalysisRuntime.firstUuidFileByUuid.get(uuid);
-        if (!ownerFileId || ownerFileId === appended.fileId) continue;
-        const ownerPosition = previousAnalysisRuntime.filePositionById.get(ownerFileId);
-        if (ownerPosition === undefined) {
+        if (appended.kind === 'rebuild' && !appended.prior) {
+          // A brand-new file owns only UUIDs nobody else has: anything else can
+          // move ownership, which the full loader resolves by scan order.
+          for (const uuid of appended.analysisTouchedUuids) {
+            if (previousAnalysisRuntime.firstUuidFileByUuid.has(uuid)) {
+              laterOwnerCollision = true;
+              break;
+            }
+          }
+          continue;
+        }
+        const filePosition = previousAnalysisRuntime.filePositionById.get(appended.fileId) ?? -1;
+        if (filePosition < 0) {
           laterOwnerCollision = true;
           break;
         }
-        laterOwnerCollision = ownerPosition > filePosition;
+        for (const uuid of appended.analysisTouchedUuids) {
+          if (laterOwnerCollision) break;
+          const ownerFileId = previousAnalysisRuntime.firstUuidFileByUuid.get(uuid);
+          if (!ownerFileId || ownerFileId === appended.fileId) continue;
+          const ownerPosition = previousAnalysisRuntime.filePositionById.get(ownerFileId);
+          if (ownerPosition === undefined) {
+            laterOwnerCollision = true;
+            break;
+          }
+          laterOwnerCollision = ownerPosition > filePosition;
+        }
       }
       if (laterOwnerCollision) {
         forcedFullAnalysisRebuild = true;
@@ -2895,18 +3005,43 @@ export async function updateClaudeUsageIndex(
     // calibration identities, and the already-bounded prompt/skill samples.
     const merged = cloneAnalysisAcc(previousAnalysisRuntime.merged);
     const appended = new Map<string, AnalysisAcc>();
+    const addedFileIds: string[] = [];
     for (const plan of parsedPlans) {
-      if (!plan.prior?.analysis || !plan.contribution.analysis) continue;
-      addAppendAnalysisDelta(merged, plan.prior.analysis, plan.contribution.analysis);
+      if (!plan.contribution.analysis) continue;
+      if (plan.prior?.analysis) {
+        addAppendAnalysisDelta(merged, plan.prior.analysis, plan.contribution.analysis);
+      } else {
+        // A file that just appeared has no prior contribution: its whole
+        // analysis is the delta.
+        addAppendAnalysisDelta(
+          merged,
+          newAnalysisAcc(analysisCutoffMs),
+          plan.contribution.analysis,
+        );
+        addedFileIds.push(plan.fileId);
+      }
       appended.set(plan.fileId, plan.contribution.analysis);
     }
-    const promptTail = refreshedPromptTail(previousAnalysisRuntime, appended);
+    // Ordering state is reused as is for pure appends — recomputing it would
+    // touch every historical file. New files have to take their place in the
+    // order, and that is metadata-only work: no body is re-read.
+    const orderedState: AnalysisRuntimeState = addedFileIds.length === 0
+      ? previousAnalysisRuntime
+      : (() => {
+        const orderedFileIds = analysisFilesInOrder(next).map((file) => file.fileId);
+        return {
+          ...previousAnalysisRuntime,
+          orderedFileIds,
+          filePositionById: new Map(orderedFileIds.map((fileId, at) => [fileId, at])),
+        };
+      })();
+    const promptTail = refreshedPromptTail(orderedState, appended);
     const touchedToolIds = new Set<string>();
     for (const plan of parsedPlans) {
       for (const toolId of plan.analysisTouchedToolIds) touchedToolIds.add(toolId);
     }
     const structural = refreshedStructuralRuntime(
-      previousAnalysisRuntime,
+      orderedState,
       merged,
       appended,
       touchedToolIds,
@@ -2924,7 +3059,22 @@ export async function updateClaudeUsageIndex(
       ? new Map(previousAnalysisRuntime.firstUuidFileByUuid)
       : previousAnalysisRuntime.firstUuidFileByUuid;
     if (firstUuidFileByUuid instanceof Map) {
-      for (const uuid of analysisUuidAdditions) {
+      // With more than one appended file, ownership belongs to the file that
+      // comes first in the established order — not to whichever plan happened
+      // to be parsed first.
+      const appendedByOrder = [...parsedPlans].sort((left, right) =>
+        (orderedState.filePositionById.get(left.fileId) ?? 0) -
+        (orderedState.filePositionById.get(right.fileId) ?? 0));
+      const unassigned = new Set(analysisUuidAdditions);
+      for (const plan of appendedByOrder) {
+        if (unassigned.size === 0) break;
+        for (const uuid of plan.analysisTouchedUuids) {
+          if (!unassigned.delete(uuid)) continue;
+          firstUuidFileByUuid.set(uuid, plan.fileId);
+        }
+      }
+      // A UUID no appended file claims still needs an owner, as before.
+      for (const uuid of unassigned) {
         firstUuidFileByUuid.set(uuid, parsedPlans[0]?.fileId ?? '');
       }
     }
@@ -2940,8 +3090,8 @@ export async function updateClaudeUsageIndex(
     const runtime: AnalysisRuntimeState = {
       asOfDay: analysisAsOfDay,
       cutoffMs: analysisCutoffMs,
-      orderedFileIds: previousAnalysisRuntime.orderedFileIds,
-      filePositionById: previousAnalysisRuntime.filePositionById,
+      orderedFileIds: orderedState.orderedFileIds,
+      filePositionById: orderedState.filePositionById,
       merged,
       promptTail,
       skillHead,

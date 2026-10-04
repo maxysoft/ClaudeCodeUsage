@@ -1,14 +1,17 @@
 # Claude Code Usage
 
-🌐 **Language**: [🏠 Main](README.md) | **English** | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md) | [Bahasa Indonesia](README-id.md)
+🌐 **Language**: [🏠 Main](README.md) | **English** | [Deutsch](README-de-DE.md) | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md) | [Português (Brasil)](README-pt-BR.md) | [Bahasa Indonesia](README-id.md)
 
 ---
 
-**The local Claude Code and Codex usage coach in your status bar.** Not a billing tool. Claude retains its cost and quota views; Codex Beta adds token and behaviour insights with Codex-native semantics.
+**Track Claude Code and OpenAI Codex token usage and quota locally in VS Code.**
+Open the dashboard from the status bar to explore cache, models, sessions,
+projects, and optional advice. [Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage).
+This is not a billing tool: Claude costs and Codex API-equivalent values are estimates.
 
-> **What it is:** a VS Code status-bar monitor that reads your local Claude Code conversation logs and shows **token-derived** usage and cost estimates — plus an optional AI advisor that suggests how to improve your prompts and reduce waste.
+> **What it is:** a VS Code status-bar monitor that reads local Claude Code and Codex usage logs, shows provider-appropriate token and quota views, and offers optional advice for reducing avoidable overhead.
 >
-> **What it is _not_:** a billing tool. All amounts are estimates based on public per-million-token rates. Refer to your Anthropic account for actual charges.
+> **What it is _not_:** a billing tool. Claude costs and Codex API-equivalent values are estimates, not subscription charges or invoices. Refer to the relevant provider account for billing truth.
 
 > Screenshots include English and Simplified Chinese. See the [main README](README.md) for the full feature reference.
 
@@ -48,6 +51,7 @@ These five v2.3 captures use the production renderer, synthetic fixtures, and VS
 ## Features
 
 - **Status bar** — today's cost, current-session cost, and real 5-hour / weekly quota (`5h:N% wk:N%`) read from Claude Code's own OAuth session. Zero configuration.
+- **Quota format** — choose Built-in (default), 5-hour only, or Weekly only in ⚙ Settings; Custom reveals the optional template field.
 - **Dashboard tabs** — Today / Last 30 Days / All Time, plus **Sessions / Projects / Content / Branches**, all sortable.
 - **Stacked cost-composition charts** with a Y-axis and reference lines — see at a glance how much of each day / month went to input, output, cache-write and cache-read.
 - **Content tab** — estimates which content consumes your tokens (your prompts vs. tool results vs. assistant output / thinking).
@@ -56,7 +60,79 @@ These five v2.3 captures use the production renderer, synthetic fixtures, and VS
 - **Multi-vendor pricing** — Opus 4.x / Sonnet 4.x / Haiku 4.5 verified against Anthropic's public pricing; reference rates for OpenAI / Gemini / DeepSeek / Kimi / GLM / Qwen with family-aware fallback. `Refresh Token Pricing` pulls live LiteLLM data.
 - **Personalisation** — language, timezone, decimal places, compact numbers, project grouping, dashboard auto-refresh toggle.
 
+## What's new in v2.4
+
+<details open>
+<summary>Current release: status bar, smoother scrolling, and one sharing workspace</summary>
+
+- **Bounded pricing diagnostics** — unknown-model warnings are deduplicated
+  and capped per Extension Host lifetime, addressing the warning flood in
+  [#122](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/122).
+  Already-expired analysis files
+  keep their empty contribution without disrupting live-tail refreshes.
+- **Current model prices** — dedicated Standard/cache rates for Opus 5.5,
+  Sonnet 5.5, GPT-6.1 Sol, GPT-6 Sol and GPT-6 Luna. Unknown Codex IDs remain
+  unpriced; fallback estimates do not become exact-price coverage.
+- **Defensive refreshes** — malformed model metadata cannot abort a whole index
+  or mutate shared prototypes. Aggregate buckets are copied once per update;
+  worker results and manual price refreshes have explicit capacity limits.
+- **Quieter updates and recovery** — auto-refresh pause applies to both pages,
+  not background collection or the status bar. Manual refresh still works;
+  failures retain verified data, and backfill/retry phases are clearly labelled.
+  Unchanged hidden panels and weekly aggregates reuse bounded caches.
+- **Exact previews and safe settings** — AI previews include the endpoint,
+  protocol and model without silently changing providers. Share Card export
+  writes the accepted SVG; edited controls require a new preview. Default reset
+  preserves the API key, and Codex directory recovery stays visible on both pages.
+- **Large-history refreshes** — unchanged Content attribution is cached while AI
+  controls stay live. Display settings reuse completed index work, and old index
+  results cannot overwrite refreshed prices.
+  Today attribution is cached by calendar day: unchanged minute-spaced polls
+  update countdowns without rescanning the full history within the hour. The
+  hourly hidden-panel refresh still recomputes Content attribution once.
+- **Upgrade safety** — unchanged polls keep accepted previews; changing Claude
+  directories clears old data even while updates are paused. Existing API keys
+  without an explicit protocol keep the prior Anthropic format. If preview
+  reports a mismatch, select the intended format and URL in Settings and preview
+  again before sending. New installs use the matching OpenAI-compatible default.
+- **Codex status and scrolling** — today's processed tokens are the default
+  compact metric, while weekly quota shows remaining capacity. Live panel
+  updates briefly defer during scrolling, with a bounded delay.
+- **One preview-first sharing workspace** — a full-width export preview now
+  comes first, with controls below it and one presentation selector for the
+  **Combined activity heatmap**, **Claude Share Card**, and **Claude token
+  heatmap**. The combined presentation requires real data from both providers;
+  both legacy presentations remain Claude-only.
+- **Compatibility without duplicate panels** — `exportShareCard`,
+  `exportHeatmap`, and `publishHeatmapToGitHub` remain available and open the
+  matching presentation. `enableShareCard` is still the single visible sharing
+  switch and defaults to on; retired `showHeatmap` state remains only for one
+  release of compatibility and bounded clearing.
+- **Strict local-artifact and provider boundaries** — selecting, previewing,
+  and local SVG/Markdown export use materialized aggregates only and make no
+  network request, GitHub sign-in, or profile/avatar/name lookup. Only the
+  separate Claude-heatmap **Publish to GitHub** action can connect; it remains
+  public-repository-only and confirms the exact target and create/overwrite
+  action before writing. Combined activity does not claim billing,
+  productivity, capability, or provider equivalence.
+
+![v2.4 combined sharing workspace, light theme](images/v2.4.0/compare-sharing-en-light.png)
+
+Production renderer, synthetic usage and VS Code theme variables; not an
+installed-VSIX or real-account screenshot.
+
+</details>
+
 ## What's new in v2.3
+
+The v2.3 series added Codex tracking, provider-aware comparisons, honest
+token accounting, weekly estimates, and month → day → hour drill-down.
+For patch-level detail, see [CHANGELOG.md](CHANGELOG.md).
+
+<details>
+<summary>Read the v2.3 technical details</summary>
+
+### Models and accounting
 
 - **Refined throughout the v2.3 line** — GPT-6 Astra and Fable 5.1 model
   metadata, optional AWS Bedrock pricing, a fixed-reference display-currency
@@ -76,6 +152,8 @@ These five v2.3 captures use the production renderer, synthetic fixtures, and VS
 - The persistent index stores machine-salted pseudonymous keys; numeric and structural aggregates; and sanitized project, directory, agent, model, effort, role, time, and quality metadata. It never stores raw IDs, full paths or repository URLs, thread titles, or conversation bodies.
 - The shared Settings tab shows only common and Codex-effective controls when Codex is selected. Codex collection and local Codex recommendations can be disabled independently; the background watcher delay is configurable (30 seconds by default, with Off and longer intervals available). A first-time index or incomplete legacy migration gets one bounded 64 GiB / 16,384-file-pass streaming ceiling; it does not reserve that amount of memory and remains cancellable and resumable. After convergence, background work returns to 128 MiB / 64 file passes and the always-visible Refresh action uses 2 GiB / 512 file passes. Unchanged warm refreshes still read zero usage-record JSONL body bytes.
 
+</details>
+
 ## Install
 
 Search for **`Claude Code Usage`** in the Extensions view (`Ctrl+Shift+X`), or:
@@ -88,14 +166,17 @@ Also on the [Open VSX Registry](https://open-vsx.org/extension/GrowthJack/claude
 
 ## Configuration
 
-Open Settings (`Ctrl+,`) and search for **`Claude Code Usage`**. All settings are optional. The most useful:
+Open the dashboard's ⚙ Settings tab for most options, including the BYOK API
+key, which is stored in SecretStorage and is not synced. VS Code Settings
+(`Ctrl+,`) retains only `language`, `dataDirectory`, and
+`codex.dataDirectory`. The most useful options are:
 
 - `language` — UI language (`auto` / `en` / `de-DE` / `zh-TW` / `zh-CN` / `ja` / `ko` / `pt-BR` / `id`).
 - `timezone` — IANA timezone for date display (e.g. `Asia/Hong_Kong`).
 - `usageLimitTracking` — show the real 5h / weekly quota indicator.
 - `showCost` / `showContext` — toggle the cost item and the context-window fill indicator (like `/context`) in the status bar.
 - Each of these status-bar items is opt-out — set `usageLimitTracking`, `showCost`, or `showContext` to `false` to hide just that one.
-- `advice.apiKey` — bring-your-own key shared by AI Advice and the Usage Optimizer (Anthropic or OpenAI-compatible endpoint).
+- `advice.apiKey` — enter your own key in the dashboard for AI Advice and the Usage Optimizer (Anthropic or OpenAI-compatible endpoint).
 - `pauseDashboardRefresh` — pause dashboard auto-refresh (also toggleable in the dashboard header).
 
 See the [full settings table in the main README](README.md#configuration).
@@ -157,7 +238,11 @@ sums the rows. The extension does not multiply its total to match that cache.
 
 ## Credits
 
-Forked from [`ClaudeCodeUsage/ClaudeCodeUsage`](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage). MIT-licensed. Community contributions credited in [CHANGELOG.md](CHANGELOG.md). Many code changes drafted with [Claude Code](https://claude.com/claude-code).
+Created by [@jack21](https://github.com/jack21), maintained by
+[@Carl723000](https://github.com/Carl723000), and improved by PR authors and
+issue reporters. See the [full contributor credits](README.md#credits), which
+distinguish merged work from proposals. Future release notes credit each change
+beside its contributor, not only in a summary list. MIT-licensed.
 
 Development-tool credit: repository maintenance uses both [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex/). This credits tools separately from human contributors; Codex is not added to Release Drafter's contributor list and receives no fabricated `Co-Authored-By` identity.
 

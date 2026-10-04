@@ -5,7 +5,7 @@ import * as path from 'path';
 // Removed tinyglobby dependency - using native fs instead
 // Removed zod dependency - using native validation instead
 import { calculateCostBreakdown, getModelRatesPerMillion } from './pricing';
-import { isRetryDuplicatePrompt } from './promptDedup';
+import { detachedPromptPrefix, isRetryDuplicatePrompt } from './promptDedup';
 import {
   dayKeyInZone,
   formatHourLabel,
@@ -22,6 +22,7 @@ import {
   UsageManifest,
 } from './claudeUsageFiles';
 import { LoadUsageDiagnostics } from './refreshDiagnostics';
+import { ownRecordValue, setRecordValue } from './ownRecord';
 import { classifyPromptTextOrigin } from './promptOrigin';
 import {
   AttributionEntry,
@@ -81,6 +82,60 @@ export function validateUsageRecord(data: any): data is ClaudeUsageRecord {
   if (typeof usage.input_tokens !== 'number') return false;
   if (typeof usage.output_tokens !== 'number') return false;
   return true;
+}
+
+/** Optional model metadata must not retain arbitrary objects or collide with
+ * object-map prototypes. Keep valid numeric usage, with no invented price for
+ * malformed labels. Absent/null labels retain the established skip behavior. */
+function usageModelName(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || value.length > 256 || /[\x00-\x1f\x7f]/.test(value) ||
+      Object.prototype.hasOwnProperty.call(Object.prototype, value)) return '<unknown>';
+  return value;
+}
+
+/** Keep only usage evidence after content analysis has inspected the raw line.
+ * A usage-bearing assistant row may contain a very large response/tool body;
+ * retaining the parsed row would pin that body in every dashboard snapshot. */
+export function compactUsageRecord(data: ClaudeUsageRecord): ClaudeUsageRecord {
+  const sourceUsage = data.message.usage;
+  const model = usageModelName(data.message.model);
+  const usage: ClaudeUsageRecord['message']['usage'] = {
+    input_tokens: sourceUsage.input_tokens,
+    output_tokens: sourceUsage.output_tokens,
+    ...(sourceUsage.cache_creation_input_tokens !== undefined
+      ? { cache_creation_input_tokens: sourceUsage.cache_creation_input_tokens } : {}),
+    ...(sourceUsage.cache_read_input_tokens !== undefined
+      ? { cache_read_input_tokens: sourceUsage.cache_read_input_tokens } : {}),
+    ...(sourceUsage.cache_creation !== undefined ? {
+      cache_creation: {
+        ...(sourceUsage.cache_creation?.ephemeral_1h_input_tokens !== undefined
+          ? { ephemeral_1h_input_tokens: sourceUsage.cache_creation.ephemeral_1h_input_tokens } : {}),
+        ...(sourceUsage.cache_creation?.ephemeral_5m_input_tokens !== undefined
+          ? { ephemeral_5m_input_tokens: sourceUsage.cache_creation.ephemeral_5m_input_tokens } : {}),
+      },
+    } : {}),
+    // speed / inference_geo drive billing multipliers and output_tokens_details
+    // carries exact thinking tokens: dropping them here silently prices fast
+    // mode and US-only inference at standard rates and empties the thinking tile.
+    ...(sourceUsage.speed !== undefined ? { speed: sourceUsage.speed } : {}),
+    ...(sourceUsage.inference_geo !== undefined
+      ? { inference_geo: sourceUsage.inference_geo } : {}),
+    ...(sourceUsage.output_tokens_details !== undefined
+      ? { output_tokens_details: sourceUsage.output_tokens_details } : {}),
+  };
+  return {
+    timestamp: data.timestamp,
+    ...(data.version !== undefined ? { version: data.version } : {}),
+    message: {
+      usage,
+      ...(model !== undefined ? { model } : {}),
+      ...(data.message.id !== undefined ? { id: data.message.id } : {}),
+    },
+    ...(data.costUSD !== undefined ? { costUSD: data.costUSD } : {}),
+    ...(data.requestId !== undefined ? { requestId: data.requestId } : {}),
+    ...(data.isApiErrorMessage !== undefined ? { isApiErrorMessage: data.isApiErrorMessage } : {}),
+  };
 }
 
 function validationDropReason(data: any): string {
@@ -177,6 +232,17 @@ export function newAnalysisAcc(cutoffMs: number, captureStructuralEvents = false
   };
 }
 
+/**
+ * Exact rolling content-analysis cutoff shared by the full loader and the
+ * incremental index. Keep millisecond precision: rounding could retain expired
+ * content, prompt samples and calibration contributions. The full loader also
+ * reuses this single captured cutoff for analysis and calibration, so a clock
+ * advance during parsing cannot give them different windows.
+ */
+export function analysisWindowCutoffMs(nowMs: number, windowDays: number): number {
+  return nowMs - windowDays * 24 * 60 * 60 * 1000;
+}
+
 const MAX_SKILL_USES = 5000;
 
 // Session-management slash commands: invoking them says nothing about what
@@ -217,7 +283,7 @@ function collectPrompt(
   // Web Component examples and must remain eligible for explicit opt-in.
   acc.prompts.push({
     cwd,
-    text: trimmed.slice(0, 2500),
+    text: detachedPromptPrefix(trimmed, 2500),
     observedAtEpochMs: Number.isFinite(observedAtEpochMs) ? observedAtEpochMs : 0,
   });
   if (acc.prompts.length > 600) {
@@ -235,7 +301,7 @@ function collectCommandUse(acc: AnalysisAcc, text: string, sessionId: string, ti
   if (!m) {
     return;
   }
-  const name = m[1].trim();
+  const name = detachedPromptPrefix(m[1].trim(), 80);
   if (TRIVIAL_COMMANDS.has(name.toLowerCase())) {
     return;
   }
@@ -294,8 +360,8 @@ function addToBucket(map: Record<string, AnalysisBucket>, key: string, text: str
   if (!text) {
     return;
   }
-  if (!map[key]) {
-    map[key] = { tokens: 0, chars: 0, count: 0 };
+  if (!ownRecordValue(map, key)) {
+    setRecordValue(map, key, { tokens: 0, chars: 0, count: 0 });
   }
   map[key].tokens += estimateTokens(text);
   map[key].chars += text.length;
@@ -381,8 +447,8 @@ export function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = fals
         if (!key) {
           return;
         }
-        if (!map[key]) {
-          map[key] = { thinking: 0, assistantTotal: 0 };
+        if (!ownRecordValue(map, key)) {
+          setRecordValue(map, key, { thinking: 0, assistantTotal: 0 });
         }
         map[key].thinking += thinkingTokens;
         map[key].assistantTotal += totalTokens;
@@ -418,12 +484,12 @@ export function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = fals
         } else if (block.type === 'tool_use') {
           let structuralSkillUse: SkillUse | undefined;
           if (typeof block.id === 'string' && typeof block.name === 'string') {
-            acc.toolIdToName[block.id] = block.name;
+            setRecordValue(acc.toolIdToName, block.id, block.name);
             // Skill invocations: remember the tool_use_id so the matching
             // tool result's size can be attributed to the skill.
             const skillName = (block.input as { skill?: unknown } | undefined)?.skill;
             if (block.name === 'Skill' && typeof skillName === 'string' && acc.skillUses.length < MAX_SKILL_USES) {
-              acc.skillByToolId[block.id] = acc.skillUses.length;
+              setRecordValue(acc.skillByToolId, block.id, acc.skillUses.length);
               const skillTs = typeof parsed.timestamp === 'string' ? Date.parse(parsed.timestamp) : NaN;
               structuralSkillUse = {
                 name: skillName,
@@ -484,14 +550,14 @@ export function analyzeLine(parsed: any, acc: AnalysisAcc, isSubagentFile = fals
           acc.toolResultEstimatedTokens += toolResultTokens;
           acc.observedInputEstimatedTokens += toolResultTokens + 8;
           addToBucket(acc.cat, 'toolResults', text);
-          addToBucket(acc.tools, acc.toolIdToName[block.tool_use_id] || 'unknown', text);
+          addToBucket(acc.tools, ownRecordValue(acc.toolIdToName, block.tool_use_id) || 'unknown', text);
           // Count only a fixed structural envelope proxy here; the tool-result
           // body remains in its ordinary consumption bucket and is never
           // mistaken for user-authored prose.
           addFrameworkOverhead(acc, 'tool-result-envelope', 8);
           // The injected skill prompt comes back as the Skill tool's result —
           // its size is the best available estimate of the skill's footprint.
-          const skillIdx = acc.skillByToolId[block.tool_use_id];
+          const skillIdx = ownRecordValue(acc.skillByToolId, block.tool_use_id);
           if (skillIdx !== undefined && acc.skillUses[skillIdx]) {
             const skillTokens = estimateTokens(text);
             acc.skillUses[skillIdx].estTokens += skillTokens;
@@ -555,11 +621,11 @@ export function mergeAnalysisAcc(target: AnalysisAcc, source: AnalysisAcc): void
     from: Record<string, AnalysisBucket>,
   ): void => {
     for (const [key, value] of Object.entries(from)) {
-      const bucket = into[key] ?? { tokens: 0, chars: 0, count: 0 };
+      const bucket = ownRecordValue(into, key) ?? { tokens: 0, chars: 0, count: 0 };
       bucket.tokens += value.tokens;
       bucket.chars += value.chars;
       bucket.count += value.count;
-      into[key] = bucket;
+      setRecordValue(into, key, bucket);
     }
   };
   mergeBuckets(target.cat, source.cat);
@@ -574,11 +640,11 @@ export function mergeAnalysisAcc(target: AnalysisAcc, source: AnalysisAcc): void
     from: Record<string, ThinkingShare>,
   ): void => {
     for (const [key, value] of Object.entries(from)) {
-      const current = into[key] ?? { thinking: 0, assistantTotal: 0 };
+      const current = ownRecordValue(into, key) ?? { thinking: 0, assistantTotal: 0 };
       current.thinking += value.thinking;
       current.assistantTotal += value.assistantTotal;
       if (value.hiddenThinking) current.hiddenThinking = true;
-      into[key] = current;
+      setRecordValue(into, key, current);
     }
   };
   mergeThinking(target.thinkingBySession, source.thinkingBySession);
@@ -746,7 +812,7 @@ export class ClaudeDataLoader {
     // How many days back the content analysis (and its prompt sample) looks.
     // Configurable via advice.promptWindowDays; defaults to 30.
     const windowDays = Math.min(365, Math.max(1, Math.round(options?.windowDays ?? 30)));
-    const windowMs = windowDays * 24 * 60 * 60 * 1000;
+    const analysisCutoffMs = analysisWindowCutoffMs(Date.now(), windowDays);
     const log = options?.log;
     const readParseStarted = performance.now();
     let filesDiscovered = 0;
@@ -778,11 +844,11 @@ export class ClaudeDataLoader {
       // sessionId → conversation title. Current Claude Code writes
       // `custom-title` (user-set) and `ai-title` (auto) lines; older versions
       // wrote `summary`. A custom title always wins over an AI one.
-      const aiTitleBySession: Record<string, string> = {};
-      const customTitleBySession: Record<string, string> = {};
+      const aiTitleBySession: Record<string, string> = Object.create(null);
+      const customTitleBySession: Record<string, string> = Object.create(null);
       // Content analysis (last `windowDays` days, default 30) is optional —
       // skipped when the user disables it via claudeCodeUsage.enableContentAnalysis.
-      const analysis = analyzeContent ? newAnalysisAcc(Date.now() - windowMs) : null;
+      const analysis = analyzeContent ? newAnalysisAcc(analysisCutoffMs) : null;
       // Per-refresh caches for sub-agent attribution lookups: agent type from
       // agent-*.meta.json (keyed by meta path) and workflow display name from
       // the session's workflows/scripts dir (keyed by workflow id).
@@ -802,7 +868,11 @@ export class ClaudeDataLoader {
         userPrompts: 0,
         // model name → { count, totalTokens }. totalTokens lets us tell whether
         // records exist but are all zeros (proxy-placeholder only).
-        models: {} as Record<string, { count: number; tokens: number }>,
+        // Diagnostic detail is optional and bounded, independently of the
+        // number/length of labels in source logs. Never retain arbitrary paths
+        // or prototype properties as model names for the output channel.
+        models: new Map<string, { count: number; tokens: number }>(),
+        otherModels: { count: 0, tokens: 0 },
       };
 
       for (const file of sortedFiles) {
@@ -843,7 +913,7 @@ export class ClaudeDataLoader {
             }
           }
 
-          // Per-session (per-file) map of prompt text → last-counted epoch ms,
+          // Per-session (per-file) map of prompt digest → last-counted epoch ms,
           // to drop API-error retry re-logs of the same prompt from the Messages
           // count (see promptDedup.ts).
           const recentPrompts = new Map<string, number>();
@@ -892,7 +962,7 @@ export class ClaudeDataLoader {
                         : '';
                   const trimmed = text.replace(/\s+/g, ' ').trim();
                   if (trimmed.length > 0) {
-                    agentInfo.task = trimmed.slice(0, 200);
+                    agentInfo.task = detachedPromptPrefix(trimmed, 200);
                   }
                 }
               }
@@ -931,7 +1001,7 @@ export class ClaudeDataLoader {
                     // Kept generous so the "costliest messages" panel can show
                     // the whole triggering prompt (scrollable); giant pastes are
                     // capped so a few huge prompts can't bloat memory.
-                    _promptText: text.trim().slice(0, 4000),
+                    _promptText: detachedPromptPrefix(text.trim(), 4000),
                     _sessionId: sessionInfo.sessionId,
                     _projectDirEncoded: sessionInfo.projectPath,
                   };
@@ -962,7 +1032,7 @@ export class ClaudeDataLoader {
               // Tag the record with the session/project it came from.
               // Prefer the real working directory (`cwd`) recorded in the log line
               // over the lossy, dash-encoded folder name when it is available.
-              const record = data as ClaudeUsageRecord;
+              const record = compactUsageRecord(data as ClaudeUsageRecord);
               record._sessionId = sessionInfo.sessionId;
               record._projectDirEncoded = sessionInfo.projectPath;
               const cwd = (parsed as { cwd?: unknown }).cwd;
@@ -1010,14 +1080,15 @@ export class ClaudeDataLoader {
                 }
                 requestIds.add(String(requestId));
               }
-            } catch (parseError) {
+            } catch {
               stats.parseErrors += 1;
-              console.warn(`Failed to parse line in ${file}:`, parseError);
+              // Count once in the anonymous load summary. Error objects and
+              // raw lines can expose source data; per-line console RPCs can
+              // also exhaust workbench/native resources on corrupt history.
             }
           }
-        } catch (fileError) {
+        } catch {
           filesFailed += 1;
-          console.warn(`Failed to read file ${file}:`, fileError);
         }
 
         // Yield to the event loop every so often so a large history does not
@@ -1061,13 +1132,20 @@ export class ClaudeDataLoader {
         if (record._isUserPrompt) {
           continue;
         }
-        const modelName =
-          typeof record.message?.model === 'string' ? record.message.model : '<no-model>';
-        if (!stats.models[modelName]) {
-          stats.models[modelName] = { count: 0, tokens: 0 };
+        if (log) {
+          const model = record.message?.model;
+          const modelName = typeof model === 'string' && model.length <= 160 &&
+            /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i.test(model)
+            ? model : null;
+          let detail = modelName ? stats.models.get(modelName) : undefined;
+          if (!detail && modelName && stats.models.size < 12) {
+            detail = { count: 0, tokens: 0 };
+            stats.models.set(modelName, detail);
+          }
+          const bucket = detail ?? stats.otherModels;
+          bucket.count += 1;
+          bucket.tokens += this.tokenSum(record);
         }
-        stats.models[modelName].count += 1;
-        stats.models[modelName].tokens += this.tokenSum(record);
       }
 
       // Attach harvested conversation titles (custom beats AI). A post-pass
@@ -1096,7 +1174,7 @@ export class ClaudeDataLoader {
           n >= 1e6 ? `${(n / 1e6).toFixed(1)}M`
           : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K`
           : `${n}`;
-        const modelsSummary = Object.entries(stats.models)
+        const modelsSummary = [...stats.models]
           .sort(([, a], [, b]) => b.count - a.count)
           .map(([name, m]) => `${name}=${m.count}/${fmt(m.tokens)}`)
           .join(', ') || 'none';
@@ -1104,17 +1182,17 @@ export class ClaudeDataLoader {
           `loader: ${stats.files} files, ${stats.linesScanned} lines | ` +
             `kept=${stats.kept}, user-prompts=${stats.userPrompts}, ` +
             `dedup-replaced=${stats.replacedByDedup}, ` +
-            `dedup-skipped=${stats.skippedByDedup}, parse-errors=${stats.parseErrors} | ` +
+            `dedup-skipped=${stats.skippedByDedup}, parse-errors=${stats.parseErrors}, files-failed=${filesFailed} | ` +
             `rejected: ${rejectedSummary}`
         );
-        log(`loader: models seen: ${modelsSummary}`);
+        log(`loader: models seen: ${modelsSummary}; other-models=${stats.otherModels.count}/${fmt(stats.otherModels.tokens)}`);
       }
       const contentAnalysis = analysis ? finalizeAnalysis(analysis) : null;
       if (contentAnalysis) {
         // Calibration anchors (Phase 8): exact billed token totals over the
         // analysis window (same cutoff the analyzer used), so the text-length
         // category estimates can be scaled to billing reality.
-        const calibrationCutoff = Date.now() - windowMs;
+        const calibrationCutoff = analysisCutoffMs;
         let realOutputTokens = 0;
         let realInputSideTokens = 0;
         for (const r of records) {
@@ -1134,9 +1212,9 @@ export class ClaudeDataLoader {
         }
       }
       return { records, contentAnalysis, diagnostics: diagnostics() };
-    } catch (error) {
+    } catch {
       filesFailed = Math.max(filesFailed, 1);
-      console.error('Error loading usage records:', error);
+      log?.(`loader: failed, files-failed=${filesFailed}, lines=${linesParsed}`);
       return { records: [], contentAnalysis: null, diagnostics: diagnostics() };
     }
   }
@@ -1250,13 +1328,12 @@ export class ClaudeDataLoader {
         continue;
       }
       // Only count records with usage and model (typically assistant type)
-      if (!record.message.usage || !record.message.model) {
+      const model = usageModelName(record.message.model);
+      if (!record.message.usage || !model) {
         continue;
       }
 
       const usage = record.message.usage;
-      const model = record.message.model;
-
       // Skip error records and invalid records
       if (model === '<synthetic>' || record.isApiErrorMessage) {
         continue;
@@ -1456,7 +1533,8 @@ export class ClaudeDataLoader {
 
   /** Model context-window size in tokens, plus whether it's a guess. Current
    * Claude (Opus 4.6+, Opus 5+, Sonnet 4.6+, Sonnet 5+, Fable/Mythos 5) is 1M;
-   * GPT-6 Astra is 1.05M; Haiku and older Claude are 200K; a "[1m]" suffix
+   * verified GPT-6 Astra/Sol/Luna and GPT-6.1 Sol are 1.05M;
+   * Haiku and older Claude are 200K; a "[1m]" suffix
    * forces 1M (the marker pricing.ts strips). A user override (>0) wins
    * outright and is treated as exact. Unrecognised / proxied models fall back
    * to 200K and are flagged
@@ -1492,7 +1570,7 @@ export class ClaudeDataLoader {
     if (/haiku/.test(m) || /opus|sonnet/.test(m)) {
       return { tokens: 200_000, estimated: false };
     }
-    if (/gpt-6-astra/.test(m)) {
+    if (/^(?:openai\/)?gpt-(?:6-(?:astra|sol|luna)|6\.1-sol)$/.test(m)) {
       return { tokens: 1_050_000, estimated: false };
     }
     if (/deepseek/.test(m)) {
@@ -1638,7 +1716,7 @@ export class ClaudeDataLoader {
    * Walks each session in timestamp order to attach the preceding prompt; keeps
    * only the top `limit` by cost (bounded insertion, no full-array sort). */
   static getCostliestMessages(records: ClaudeUsageRecord[], limit: number = 10): CostlyMessage[] {
-    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    const bySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       const sid = r._sessionId || 'unknown';
       (bySession[sid] ?? (bySession[sid] = [])).push(r);
@@ -1729,7 +1807,7 @@ export class ClaudeDataLoader {
     const warm = new Array(edges.length - 1).fill(0);
     const cold = new Array(edges.length - 1).fill(0);
 
-    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    const bySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       const sid = r._sessionId || 'unknown';
       (bySession[sid] ?? (bySession[sid] = [])).push(r);
@@ -1809,7 +1887,7 @@ export class ClaudeDataLoader {
     ttlMin = 60
   ): { wastedUsd: number; switchUsd: number; idleUsd: number; switchCount: number; idleCount: number } | null {
     const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
-    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    const bySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       if (new Date(r.timestamp).getTime() < cutoff) {
         continue;
@@ -1892,7 +1970,7 @@ export class ClaudeDataLoader {
       read: number; inputSide: number; total: number; turns: number;
       warm: number[]; cold: number[];
     };
-    const agg: Record<string, Stat> = {};
+    const agg: Record<string, Stat> = Object.create(null);
     const ensure = (m: string): Stat =>
       agg[m] ?? (agg[m] = {
         read: 0, inputSide: 0, total: 0, turns: 0,
@@ -1901,7 +1979,7 @@ export class ClaudeDataLoader {
       });
 
     // Volume + hit-rate aggregate, and collect per-session series for TTL.
-    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    const bySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       const u = r.message.usage;
       const m = r.message.model;
@@ -2001,7 +2079,7 @@ export class ClaudeDataLoader {
     idleCapMin = 90
   ): Record<string, number> {
     const capMs = idleCapMin * 60000;
-    const bySession: Record<string, ClaudeUsageRecord[]> = {};
+    const bySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       const sid = r._sessionId || 'unknown';
       (bySession[sid] ?? (bySession[sid] = [])).push(r);
@@ -2019,7 +2097,7 @@ export class ClaudeDataLoader {
           active += Math.min(gap, capMs);
         }
       }
-      out[sid] = active;
+      setRecordValue(out, sid, active);
     }
     return out;
   }
@@ -2046,7 +2124,7 @@ export class ClaudeDataLoader {
     let grossUsd = 0;
     let count = 0;
     let cacheReadSum = 0;
-    const perModel: Record<string, number> = {};
+    const perModel: Record<string, number> = Object.create(null);
     for (const r of records) {
       const u = r.message.usage;
       const m = r.message.model;
@@ -2206,7 +2284,7 @@ export class ClaudeDataLoader {
     windowDays = 30
   ): { name: string; kind: 'skill' | 'plugin'; costUsd: number; outputTokens: number; turns: number; outPerUsd: number }[] | null {
     const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
-    const agg: Record<string, { kind: 'skill' | 'plugin'; costUsd: number; outputTokens: number; turns: number }> = {};
+    const agg: Record<string, { kind: 'skill' | 'plugin'; costUsd: number; outputTokens: number; turns: number }> = Object.create(null);
     let tagged = 0;
     for (const r of records) {
       const u = r.message.usage;
@@ -2380,7 +2458,9 @@ export class ClaudeDataLoader {
    *   sessions and narrows them with client-side time / project / model filters.
    */
   static getSessionBreakdown(records: ClaudeUsageRecord[], limit: number = 1000): SessionUsage[] {
-    const recordsBySession: Record<string, ClaudeUsageRecord[]> = {};
+    // Internal grouping tables have no inherited keys. Public rows/snapshots
+    // still use their existing ordinary-object shape.
+    const recordsBySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
 
     for (const record of records) {
       const sessionId = record._sessionId || 'unknown';
@@ -2431,7 +2511,7 @@ export class ClaudeDataLoader {
     pick: (r: ClaudeUsageRecord) => string | undefined,
     limit: number = 12
   ): SessionToolUse[] {
-    const agg: Record<string, { cost: number; count: number }> = {};
+    const agg: Record<string, { cost: number; count: number }> = Object.create(null);
     for (const record of records) {
       const key = pick(record);
       if (!key) {
@@ -2514,8 +2594,8 @@ export class ClaudeDataLoader {
    * @param limit Maximum number of runs to return (default 50)
    */
   static getWorkflowBreakdown(records: ClaudeUsageRecord[], limit: number = 50): WorkflowUsage[] {
-    const recordsByWorkflow: Record<string, ClaudeUsageRecord[]> = {};
-    const adHocAgentsBySession: Record<string, Set<string>> = {};
+    const recordsByWorkflow: Record<string, ClaudeUsageRecord[]> = Object.create(null);
+    const adHocAgentsBySession: Record<string, Set<string>> = Object.create(null);
     for (const record of records) {
       if (!record._workflowId) {
         // Generic sub-agent records become ad-hoc batches, one per session.
@@ -2552,7 +2632,7 @@ export class ClaudeDataLoader {
     };
 
     const workflows: WorkflowUsage[] = Object.entries(recordsByWorkflow).map(([workflowId, wfRecords]) => {
-      const recordsByAgent: Record<string, ClaudeUsageRecord[]> = {};
+      const recordsByAgent: Record<string, ClaudeUsageRecord[]> = Object.create(null);
       for (const r of wfRecords) {
         const agentId = r._agentId || 'unknown';
         if (!recordsByAgent[agentId]) {
@@ -2602,7 +2682,7 @@ export class ClaudeDataLoader {
     // orchestration that lives in the main session, not the agent files.
     // To avoid double-counting when two runs of the same session overlap, a
     // record is attributed only if exactly one run's window contains it.
-    const mainBySession: Record<string, ClaudeUsageRecord[]> = {};
+    const mainBySession: Record<string, ClaudeUsageRecord[]> = Object.create(null);
     for (const r of records) {
       if (r._agentId || r._workflowId || r._isUserPrompt) {
         continue;
@@ -2610,7 +2690,7 @@ export class ClaudeDataLoader {
       const sid = r._sessionId || 'unknown';
       (mainBySession[sid] ||= []).push(r);
     }
-    const windowsBySession: Record<string, { start: number; end: number }[]> = {};
+    const windowsBySession: Record<string, { start: number; end: number }[]> = Object.create(null);
     for (const wf of workflows) {
       (windowsBySession[wf.sessionId] ||= []).push({
         start: wf.startTime.getTime(),
@@ -2725,11 +2805,11 @@ export class ClaudeDataLoader {
     // this skill"); shares overlap by design. Plugins use the earliest
     // invocation among their skills, so a plugin never double-counts itself.
     type SkillStart = { key: string; ts: number; isPlugin: boolean };
-    const startsBySession: Record<string, SkillStart[]> = {};
-    const skillMeta: Record<string, { count: number; estTokens: number }> = {};
-    const pluginMeta: Record<string, { count: number; estTokens: number }> = {};
-    const skillW: Record<string, number> = {};
-    const pluginW: Record<string, number> = {};
+    const startsBySession: Record<string, SkillStart[]> = Object.create(null);
+    const skillMeta: Record<string, { count: number; estTokens: number }> = Object.create(null);
+    const pluginMeta: Record<string, { count: number; estTokens: number }> = Object.create(null);
+    const skillW: Record<string, number> = Object.create(null);
+    const pluginW: Record<string, number> = Object.create(null);
     if (analysis && analysis.skillUses.length > 0) {
       let uses = analysis.skillUses;
       if (scope.kind === 'session') {
@@ -2747,12 +2827,12 @@ export class ClaudeDataLoader {
             return hasTs ? u.ts >= scopeSinceTs : u.day >= dayKeyInZone(new Date(scopeSinceTs), timeZone);
           }
           const currentZoneDay = hasTs ? dayKeyInZone(new Date(u.ts), timeZone) : u.day;
-          return scopeDayKeys?.has(currentZoneDay) === true;
+          return scopeDayKeys ? scopeDayKeys.has(currentZoneDay) : true;
         });
       }
       // key → session → earliest invocation ts (skills and plugins separately)
-      const skillEarliest: Record<string, Record<string, number>> = {};
-      const pluginEarliest: Record<string, Record<string, number>> = {};
+      const skillEarliest: Record<string, Record<string, number>> = Object.create(null);
+      const pluginEarliest: Record<string, Record<string, number>> = Object.create(null);
       const note = (
         key: string,
         u: SkillUse,
@@ -2765,7 +2845,7 @@ export class ClaudeDataLoader {
         meta[key].count += 1;
         meta[key].estTokens += u.estTokens;
         if (!earliest[key]) {
-          earliest[key] = {};
+          earliest[key] = Object.create(null);
         }
         const prev = earliest[key][u.sessionId];
         if (prev === undefined || u.ts < prev) {
@@ -2800,16 +2880,16 @@ export class ClaudeDataLoader {
     let totalTokens = 0;
     let largeContextW = 0;
     let workflowW = 0;
-    const bySession: Record<string, { weight: number; subagentWeight: number; hours: Set<number> }> = {};
-    const byAgentType: Record<string, { weight: number; count: number }> = {};
-    const byModel: Record<string, { weight: number; count: number }> = {};
+    const bySession: Record<string, { weight: number; subagentWeight: number; hours: Set<number> }> = Object.create(null);
+    const byAgentType: Record<string, { weight: number; count: number }> = Object.create(null);
+    const byModel: Record<string, { weight: number; count: number }> = Object.create(null);
     // Authoritative skill/plugin attribution from the log fields (Phase 7a):
     // exact cost-weight + token-sum of the lines Claude Code stamped. Preferred
     // over the <command-name> heuristic whenever any record carries the fields.
-    const skillExactW: Record<string, { weight: number; count: number; tokens: number }> = {};
-    const pluginExactW: Record<string, { weight: number; count: number; tokens: number }> = {};
-    const byEffort: Record<string, { weight: number; count: number }> = {};
-    const byMcpServer: Record<string, { weight: number; count: number }> = {};
+    const skillExactW: Record<string, { weight: number; count: number; tokens: number }> = Object.create(null);
+    const pluginExactW: Record<string, { weight: number; count: number; tokens: number }> = Object.create(null);
+    const byEffort: Record<string, { weight: number; count: number }> = Object.create(null);
+    const byMcpServer: Record<string, { weight: number; count: number }> = Object.create(null);
     for (const r of scoped) {
       const w = this.recordCost(r);
       if (w <= 0) {
@@ -3027,8 +3107,8 @@ export class ClaudeDataLoader {
     mode: 'git' | 'folder' | 'flat' = 'git'
   ): ProjectGroup[] {
     // 1. Group records per project, merging paths that differ only in case.
-    const recordsByKey: Record<string, ClaudeUsageRecord[]> = {};
-    const displayPathByKey: Record<string, string> = {};
+    const recordsByKey: Record<string, ClaudeUsageRecord[]> = Object.create(null);
+    const displayPathByKey: Record<string, string> = Object.create(null);
 
     for (const record of records) {
       const rawPath = record._projectPath || record._projectName || 'unknown';
@@ -3053,7 +3133,7 @@ export class ClaudeDataLoader {
     const groups: Record<
       string,
       { records: ClaudeUsageRecord[]; children: ProjectUsage[]; displayPath: string; isGitRepo: boolean }
-    > = {};
+    > = Object.create(null);
     const gitCache = new Map<string, string | null>();
 
     keys.forEach((key, idx) => {

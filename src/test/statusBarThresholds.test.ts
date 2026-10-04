@@ -115,6 +115,32 @@ function codexScope(): any {
   };
 }
 
+test('clearing Codex source data removes cached totals and quota without erasing Claude state', () => {
+  const manager = bareStatusBar();
+  manager.statusBarItem = statusItem();
+  manager.quotaItem = statusItem();
+  manager.contextItem = statusItem();
+  manager.showCost = true;
+  manager.usageLimitTracking = true;
+  manager.provider = 'codex';
+  const claudeState = { owner: 'claude' };
+  manager.lastClaudeUsage = claudeState;
+  manager.updateCodex(codexScope(), 'processed', null);
+  manager.quotaItem.text = 'wk 64%';
+  manager.quotaItem.tooltip = 'previous-source-quota';
+  manager.quotaItem.show();
+  assert.notEqual(manager.statusBarItem.text, 'CX —');
+  manager.clearCodex();
+  assert.equal(manager.lastCodex, null);
+  assert.equal(manager.statusBarItem.text, 'CX —');
+  assert.equal(manager.quotaItem.visible, false);
+  assert.equal(manager.quotaItem.text, '');
+  assert.equal(manager.quotaItem.tooltip, undefined);
+  assert.equal(manager.lastClaudeUsage, claudeState);
+  manager.setProvider('codex');
+  assert.equal(manager.statusBarItem.text, 'CX —', 'provider switching cannot restore stale source values');
+});
+
 /** The fill colour the bar paints, read back off the rendered spans. The inner
  * span carries the fill; the outer track is always #bbbbbb. */
 function barColor(pct: number, thresholds?: unknown): string {
@@ -317,4 +343,47 @@ test('Codex quota tooltip escapes provider labels', () => {
 
   assert.match(tooltip.value, /&lt;unsafe &amp; label&gt;/);
   assert.doesNotMatch(tooltip.value, /<unsafe/);
+});
+
+test('the quota format setting reaches the bar text, and its colour follows suit', () => {
+  // quotaFormat.test.ts pins the rendering; this pins the half you would
+  // otherwise only see in the Extension Development Host — that the template
+  // argument setVisibility receives is what the bar ends up drawing.
+  const manager = bareStatusBar();
+  manager.statusBarItem = statusItem();
+  manager.quotaItem = statusItem();
+  manager.contextItem = statusItem();
+  manager.provider = 'claude';
+  const resetsAt = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString();
+  const quota = {
+    five_hour: { utilization: 6, resets_at: resetsAt },
+    seven_day: { utilization: 1, resets_at: resetsAt },
+    limits: [
+      { kind: 'session', group: 'session', percent: 6, resets_at: resetsAt, scope: null, is_active: true },
+      { kind: 'weekly_all', group: 'weekly', percent: 1, resets_at: resetsAt, scope: null, is_active: true },
+      {
+        kind: 'weekly_scoped',
+        group: 'weekly',
+        percent: 92,
+        resets_at: resetsAt,
+        scope: { model: { id: null, display_name: 'Fable' } },
+        is_active: true,
+      },
+    ],
+  };
+
+  // Empty template, scoped weeklies off: the built-in layout, and the loud
+  // per-model cap it does not draw must not colour the item either.
+  manager.setVisibility(true, true, true, 'cost', false, false, false, 'decimal', '');
+  manager.updateQuota(quota);
+  assert.equal(manager.quotaItem.text, '$(dashboard) 5h 6% · wk 1%');
+  assert.equal(manager.quotaItem.backgroundColor, undefined);
+
+  // Same data, same toggles: naming that cap in a template both shows it and
+  // hands it the colour.
+  manager.setVisibility(true, true, true, 'cost', false, false, false, 'decimal', '{5h.pct} | {7d.pct} · {model:Fable.pct}');
+  manager.updateQuota(quota);
+  assert.equal(manager.quotaItem.text, '$(dashboard) 6% | 1% · 92%');
+  assert.equal(manager.quotaItem.backgroundColor?.id, 'statusBarItem.errorBackground');
+  assert.equal(manager.quotaItem.visible, true);
 });

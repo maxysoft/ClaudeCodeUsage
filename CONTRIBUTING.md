@@ -7,8 +7,8 @@ it grows.
 ## Project scope
 
 Before proposing a feature, it helps to know the positioning: this extension is
-provider-aware and lightweight, supporting Claude Code and **Codex Beta**.
-Codex Beta is enabled by default and can be turned off in provider settings.
+provider-aware and lightweight, supporting Claude Code and **Codex**.
+Codex is enabled by default and can be turned off in provider settings.
 The emphasis is truthful local usage and token attribution rather than billing
 reconciliation. Features that sharpen attribution, privacy, or the advice
 experience are the best fit.
@@ -97,8 +97,8 @@ tags:
 
 1. **Open a PR** (a `fix/…`, `feat/…` or `docs/…` branch name keeps the intent
    clear). A maintainer applies the matching label when merging — that label sets
-   the version bump (`feature` → minor, `breaking` → major, otherwise patch;
-   unlabeled → patch).
+   the version bump (`minor` → minor, `breaking` or `major` → major; ordinary
+   `feature` / `fix` / docs and unlabeled PRs → patch).
 2. **A maintainer merges it.** [Release Drafter](https://github.com/release-drafter/release-drafter)
    then adds your change to a continuously-updated **draft GitHub Release** and
    recomputes the next version.
@@ -112,6 +112,22 @@ tags:
 
 Because changes ship by **merging** your PR — not by re-applying it — your commit
 authorship and the PR's *merged* status are preserved.
+
+### Release-note attribution
+
+The draft release already puts `@PR-author` **on each change entry**. When a
+maintainer edits the draft before publishing, keep that per-entry attribution
+beside the specific change; a single Contributors list at the bottom is not a
+substitute. If a fix comes from a linked public issue, verify the issue reporter
+and credit `@reporter` on that same entry too. Keep the summary Contributors
+list (including the maintainer when they contributed), and identify a verified
+first-time contributor where relevant. Do not attribute unmerged PR code as
+shipped, or mention private plans in public notes. The maintainer reviews the
+draft and personally clicks Publish.
+
+At each minor release, reconcile the README Credits against public PR and
+issue authors. Keep merged PRs, issue reports, and unmerged proposals distinct;
+do not remove earlier contributors when refreshing the list.
 
 ## Repository assistants and truthful attribution
 
@@ -127,6 +143,18 @@ The runner checks out only the base repository, never executes contributor code,
 reads at most six allowlisted text files within byte budgets, and can only post
 one comment. Public input remains untrusted and model output may be wrong. A
 missing or empty PR diff stops the workflow without posting a review.
+When both model tiers fail or return no usable PR analysis, the workflow fails
+with a status-only diagnostic and **does not post a generic review**. Inspect
+the Actions log before retrying; API response bodies, credentials, PR text,
+and model replies are not included in this diagnostic. Issues retain a clearly
+labelled, provider-neutral triage fallback. Historical fallback comments are
+not automatically replaced. The bot only runs on `opened`, so a later retry
+requires an explicitly arranged workflow run, not a fresh push to the PR.
+
+中文说明：外部 PR 的自动初审若两层模型都失败，会在 Actions 中显示安全的
+状态分类并停止，不再发布泛泛的模板评论；日志不会包含密钥、接口原文或 PR
+内容。Issue 的分流兜底保持不变。旧评论不会自动改写，给 PR 推新提交也不会
+触发本工作流再次运行，是否重试由维护者决定。
 
 Codex automatic attribution is not enabled in v2.2.1. It requires a separately
 implemented and trusted OpenAI/Codex transport; a model name or repository

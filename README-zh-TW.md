@@ -1,14 +1,14 @@
 # Claude Code 使用量監控
 
-🌐 **語言**: [🏠 Main](README.md) | [English](README-en.md) | **繁體中文** | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md) | [Bahasa Indonesia](README-id.md)
+🌐 **語言**: [🏠 Main](README.md) | [English](README-en.md) | [Deutsch](README-de-DE.md) | **繁體中文** | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md) | [Português (Brasil)](README-pt-BR.md) | [Bahasa Indonesia](README-id.md)
 
 ---
 
-**看清 Claude Code 與 Codex 的本地用量，讓 AI 幫你用得更好。** 不是帳單工具。Claude 保留成本與配額檢視；Codex Beta 依自己的 token 與行為語意提供分析。
+**看清 Claude Code 與 Codex 的本地用量，讓 AI 幫你用得更好。** 不是帳單工具。Claude 保留成本與配額檢視；Codex 依自己的 token 與行為語意提供分析。
 
-> **它是什麼**：一個 VS Code 狀態列小工具，讀取本地 Claude Code 對話日誌，按 token × 公開單價估算用量與成本；並提供可選的 AI 建議功能，幫你優化提示詞、減少不必要的 token 消耗。
+> **它是什麼**：一個 VS Code 狀態列小工具，讀取本地 Claude Code 與 Codex 用量日誌，依各自語意顯示 token、配額與估算值；並提供可選的建議，協助減少不必要的消耗。
 >
-> **它不是什麼**：帳單工具。顯示金額均為估算值，實際費用請以官方帳單為準。
+> **它不是什麼**：帳單工具。Claude 成本與 Codex API 等效成本均為估算值，不是訂閱扣款或發票；實際帳單請以相應供應商帳戶為準。Codex 配額僅為本地最後觀測，並非即時餘額。
 
 > 截圖包含英文與簡體中文介面。完整功能說明請見[主 README](README.md)。
 
@@ -48,6 +48,7 @@
 ## 功能特色
 
 - **狀態列** — 今日成本、當前 session 成本，以及真實的 5 小時 / 每週配額（`5h:N% wk:N%`），透過 Claude Code 自身的 OAuth 工作階段讀取，無需設定。
+- **配額格式** — ⚙ 設定可選內建（預設）、僅 5 小時或僅每週；選「自訂」時才會顯示範本輸入欄。
 - **儀表板分頁** — 今日 / 最近 30 天 / 全部時間，外加 **Sessions / Projects / Content / Branches**，皆可排序。
 - **堆疊式成本構成圖**，含 Y 軸與參考線 —— 一眼看出每日 / 每月的成本中，輸入、輸出、快取寫入、快取讀取各佔多少。
 - **Content 分頁** — 估算哪些內容消耗你的 token（你的提示 vs 工具結果 vs 助理輸出 / 思考）。
@@ -56,7 +57,50 @@
 - **多廠商定價** — Opus 4.x / Sonnet 4.x / Haiku 4.5 對照 Anthropic 官方定價；OpenAI / Gemini / DeepSeek / Kimi / GLM / Qwen 參考價，含家族感知回退。`Refresh Token Pricing` 可拉取 LiteLLM 即時價格。
 - **個人化** — 語言、時區、小數位數、精簡數字、專案分組、儀表板自動刷新開關。
 
+## v2.4 新功能
+
+<details open>
+<summary>目前版本的主要更新</summary>
+
+- **減少更新干擾**：暫停自動更新同時作用於兩個頁面，背景收集與狀態列仍運作。
+  失敗保留已驗證資料，回填與等待重試分開顯示；未變更的隱藏面板復用有界快取。
+- **預覽與設定一致**：AI 預覽顯示實際地址、協定與模型，不靜默切換供應商。
+  分享卡匯出使用已接受的 SVG，變更控制項後須重新預覽。還原預設保留 API 金鑰；
+  Codex 目錄修正欄位在兩個設定頁都可用。
+- **計價診斷防護**：未知模型警告在每次擴充功能宿主執行期間去重並限制總量，
+  修正 [#122](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/122) 的逐筆警告洪流。
+  已過期的分析檔案保留空貢獻，避免打斷增量更新。
+- **新模型與更新防護**：Opus 5.5、Sonnet 5.5、GPT-6.1 Sol、GPT-6 Sol 與 GPT-6 Luna
+  採用獨立的標準及快取價格。異常模型欄位不會中斷整批索引，統計桶每輪只複製一次；
+  背景結果佇列與手動價格更新均設有容量限制。未知 Codex 型號仍不計價。
+- **大量歷史更新優化**：未變更的內容歸因復用資料，AI 控件仍即時更新；顯示設定
+  不再重複冷讀已完成的索引工作，遲到索引結果也不能覆蓋剛更新的價格。
+  今日用量歸因按自然日快取，同一小時內未變更的輪詢可更新倒數計時，不遍歷完整歷史；
+  整點更新隱藏面板時，內容週歸因仍重新計算一次。
+- **升級相容保護**：未變更的輪詢保留已確認預覽；切換 Claude 目錄即清空舊來源，
+  不受頁面暫停影響。已有密鑰而未明確設定協定時保留舊 Anthropic 格式。
+  若預覽提示不相容，請在設定中明確選擇 API 格式與網址後重新預覽。
+  新安裝採用 OpenAI 相容預設，不會因升級將舊密鑰靜默轉送至其他供應商。
+- **Codex 狀態列與捲動**：預設精簡指標顯示今日已處理 Token，獨立的每週額度顯示
+  剩餘比例。捲動期間面板更新會短暫延後，並設有最長等待邊界。
+- **統一、預覽優先的分享工作台**：全寬匯出預覽成為視覺焦點，控制項統一置於下方；
+  一個呈現方式選擇器即可切換**綜合活動熱力圖**、**Claude 分享卡**與 **Claude token
+  熱力圖**。綜合呈現只在兩個供應商都有真實資料時出現，後兩種舊版呈現仍只使用 Claude 資料。
+- **相容入口，不再重複面板**：`exportShareCard`、`exportHeatmap` 與
+  `publishHeatmapToGitHub` 繼續保留並開啟對應預覽。`enableShareCard` 仍是唯一可見的
+  分享開關且預設開啟；退役的 `showHeatmap` 僅為一個版本的狀態相容與有界清除而保留。
+- **嚴格的本機產物與供應商邊界**：切換、預覽和本機 SVG/Markdown 匯出只使用已物化彙總，
+  不發出網路請求，也不登入 GitHub 或取得 profile／頭像／名稱。只有 Claude 熱力圖中獨立的
+  **發佈到 GitHub** 動作可以連線；它仍僅支援公開儲存庫，並在寫入前確認精確目標及建立／覆寫動作。
+  綜合活動不代表帳單、生產力、能力或跨供應商等價。
+
+</details>
+
 ## v2.3 新功能
+
+<details>
+<summary>展開 v2.3 的 Codex、比較與歷史功能</summary>
+
 
 - **v2.3 系列持續完善**——新增 GPT-6 Astra、Fable 5.1 模型中繼資料與
   可選 AWS Bedrock 定價，提供固定參考匯率幣別選擇、僅 Token 的 30／90 天
@@ -73,6 +117,8 @@
 - 每則建議只在已索引的 30 天結構聚合有證據時顯示觀測、易讀證據和條件式行動；沒有證據就不會產生泛化建議。
 - 持久索引保存使用本機鹽值產生的假名化鍵、數值與結構聚合，以及經過去識別化的專案、目錄、agent、模型、effort、角色、時間和品質中繼資料；絕不保存原始 ID、完整路徑或儲存庫 URL、執行緒標題或對話正文。
 - 共用設定分頁在 Codex 下只顯示通用與對 Codex 有效的選項。Codex 資料收集和本地 Codex 建議可分別關閉；背景監聽延遲可設定（預設 30 秒，也可關閉或選更長間隔）。首次建立索引或舊索引遷移尚未收斂時，會取得一次受限的 64 GiB / 16,384 檔案輪次串流上限；這不會預先占用等量記憶體，且仍可取消、可續傳。收斂後，背景工作恢復為 128 MiB / 64 檔案輪次，永遠可見的「重新整理」使用 2 GiB / 512 檔案輪次。未變更的常規重新整理仍不會讀取用量 JSONL 內文。
+
+</details>
 
 ## 安裝
 
@@ -147,9 +193,7 @@ Code 的 `stats-cache` 則逐行累加。本擴充功能不會用倍率去貼合
 
 ## 致謝
 
-Fork 自 [`ClaudeCodeUsage/ClaudeCodeUsage`](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage)。MIT 授權。社群貢獻致謝見 [CHANGELOG.md](CHANGELOG.md)。許多程式碼改動由 [Claude Code](https://claude.com/claude-code) 協助起草。
-
-開發工具致謝：repository 維護同時使用 [Claude Code](https://claude.com/claude-code) 與 [OpenAI Codex](https://developers.openai.com/codex/)。這只記錄開發工具，與人類貢獻者身分分開；Codex 不會列入 Release Drafter 的人類 contributor 名單，也不會使用虛構的 `Co-Authored-By` 身分。
+由 [@jack21](https://github.com/jack21) 建立、[@Carl723000](https://github.com/Carl723000) 維護；PR 與 issue 貢獻者的完整名單見[主 README 的 Credits](README.md#credits)。開發工具 [Claude Code](https://claude.com/claude-code) 與 [OpenAI Codex](https://developers.openai.com/codex/) 另行致謝。
 
 **歡迎提出 Issue、PR 與想法** —— 這正是專案成長的方式。
 

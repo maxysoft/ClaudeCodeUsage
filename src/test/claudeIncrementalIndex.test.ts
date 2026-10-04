@@ -64,6 +64,109 @@ function usageLine(
   return JSON.stringify(value);
 }
 
+test('malformed optional model labels cannot poison a complete index or retain arbitrary objects', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-bad-model-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture');
+  await mkdir(project, { recursive: true });
+  const models = [42, { privatePayload: 'synthetic-private-body'.repeat(8_000) },
+    ['claude-opus-5-5'], '__proto__', 'constructor', 'toString', 'x'.repeat(10_000)];
+  const bad = models.map((model, id) => {
+    const row = JSON.parse(usageLine(`bad-${id}`, 100, 10));
+    row.message.model = model;
+    return JSON.stringify(row);
+  });
+  const file = path.join(project, 'session.jsonl');
+  await writeFile(file, [...Array.from({ length: 500 }, (_, id) => usageLine(`good-${id}`, 100, 10)), ...bad].join('\n') + '\n');
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  assert.equal(cold.diagnostics.filesFailed, 0);
+  assert.equal(cold.records.length, 500 + models.length);
+  assert.equal(cold.index.aggregates.allTime.totalInputTokens, (500 + models.length) * 100);
+  assert.equal(cold.index.aggregates.allTime.modelBreakdown['<unknown>'].inputTokens, models.length * 100);
+  assert.equal(cold.index.aggregates.allTime.modelBreakdown['<unknown>'].cost, 0, 'malformed labels have no invented price');
+  assert.equal(JSON.stringify(cold.records).includes('synthetic-private-body'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(cold.index.aggregates.allTime.modelBreakdown, '__proto__'), false);
+  const unchanged = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  assert.equal(unchanged.diagnostics.bodyReads, 0, 'bad secondary metadata must not cause a full retry');
+  await appendFile(file, usageLine('tail', 123, 12) + '\n');
+  const appended = await updateClaudeUsageIndex(unchanged.index, root, { analyzeContent: false });
+  assert.equal(appended.index.aggregates.allTime.totalInputTokens, cold.index.aggregates.allTime.totalInputTokens + 123);
+  assert.equal(cold.index.aggregates.allTime.totalInputTokens, (500 + models.length) * 100);
+  await assertMatchesFull(root, appended.records);
+});
+
+test('model-label churn copies each aggregate bucket once per transaction, not once per record', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-model-churn-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture');
+  await mkdir(project, { recursive: true });
+  const lines = Array.from({ length: 600 }, (_, id) => {
+    const row = JSON.parse(usageLine(`churn-${id}`, 10, 1));
+    row.message.model = `future-model-churn-${id}`;
+    return JSON.stringify(row);
+  });
+  const file = path.join(project, 'session.jsonl');
+  await writeFile(file, lines.join('\n') + '\n');
+  const originalEntries = Object.entries;
+  const originalWarn = console.warn;
+  let multiModelEnumerations = 0;
+  Object.entries = ((value: object) => {
+    const entries = originalEntries(value);
+    if (entries.length > 1 && entries[0][0].startsWith('future-model-churn-')) multiModelEnumerations += 1;
+    return entries;
+  }) as typeof Object.entries;
+  console.warn = () => undefined;
+  try {
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+    assert.ok(multiModelEnumerations < 50, `unexpected repeated model-map copies: ${multiModelEnumerations}`);
+    assert.equal(Object.keys(cold.index.aggregates.allTime.modelBreakdown).length, 600);
+    const previous = JSON.stringify(cold.index.aggregates);
+    for (const buckets of Object.values(cold.index.aggregates)) {
+      if (buckets instanceof Map) for (const bucket of buckets.values()) deepFreeze(bucket);
+    }
+    deepFreeze(cold.index.aggregates.allTime);
+    await appendFile(file, usageLine('churn-tail', 9, 1) + '\n');
+    const appended = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+    assert.equal(appended.index.aggregates.allTime.totalInputTokens, 6009);
+    assert.equal(JSON.stringify(cold.index.aggregates), previous, 'copy-on-write still preserves the old snapshot');
+    await assertMatchesFull(root, appended.records);
+  } finally {
+    Object.entries = originalEntries;
+    console.warn = originalWarn;
+  }
+});
+
+test('usage records retain numeric evidence but not assistant response bodies', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-compact-usage-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-compact');
+  await mkdir(project, { recursive: true });
+  const source = JSON.parse(usageLine('large-response', 12, 4)) as Record<string, any>;
+  source.message.content = [{ type: 'text', text: 'synthetic-only-'.repeat(17_000) }];
+  source.message.usage.cache_creation = {
+    ephemeral_1h_input_tokens: 2,
+    ephemeral_5m_input_tokens: 0,
+  };
+  source.costUSD = 1.25;
+  await writeFile(path.join(project, 'session-compact.jsonl'), `${JSON.stringify(source)}\n`, 'utf8');
+
+  const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, {
+    analyzeContent: true,
+  });
+  const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+  for (const record of [incremental.records[0], full.records[0]]) {
+    assert.equal(record.message.usage.input_tokens, 12);
+    assert.equal(record.message.usage.output_tokens, 4);
+    assert.deepEqual(record.message.usage, source.message.usage);
+    assert.equal(record.message.model, 'claude-sonnet-4-5');
+    assert.equal(record.message.id, 'message-large-response');
+    assert.equal(record.requestId, 'request-large-response');
+    assert.equal(record.costUSD, 1.25);
+    assert.equal('content' in record.message, false);
+    assert.equal(JSON.stringify(record).includes('synthetic-only-'), false);
+  }
+});
+
 function promptLine(text: string, timestamp = '2026-08-21T08:00:00.000Z'): string {
   return JSON.stringify({
     type: 'user',
@@ -236,9 +339,7 @@ test('cold production index preserves the established full-loader record semanti
 
 test('content analysis is materialized from per-file contributions without a second body scan', async () => {
   const previousNow = Date.now;
-  // The fixture timestamps are fixed, so a real clock further than the
-  // analysis window past them changes which files stay in range.
-  Date.now = () => Date.parse('2026-08-21T12:00:00.000Z');
+  Date.now = () => Date.parse('2026-09-10T12:00:00.000Z');
   try {
     const { root, first } = await fixture();
     await appendFile(first, [
@@ -448,6 +549,512 @@ test('calibration follows missing request IDs, a cross-file winner, and cutoff e
     });
     assert.equal(expired.contentAnalysis?.calibration, undefined);
     assert.deepEqual(expired.contentAnalysis, expiredFull.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('a newly started session file does not rebuild the established corpus', async (t) => {
+  const previousNow = Date.now;
+  Date.now = () => Date.parse('2026-09-10T12:00:00.000Z');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-new-file-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-new-file');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  try {
+    for (let index = 0; index < 64; index += 1) {
+      const file = path.join(project, `session-${String(index).padStart(3, '0')}.jsonl`);
+      files.push(file);
+      await writeFile(file, `${analysisTextLine(
+        `new-file-seed-${index}`,
+        `seed ${index}`,
+        new Date(Date.parse('2026-09-09T00:00:00.000Z') + index * 1_000).toISOString(),
+      )}
+`, 'utf8');
+    }
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
+    assert.equal(cold.diagnostics.bodyReads, 64);
+
+    // Every new session starts its own transcript while other sessions append.
+    await appendFile(files[7], `${analysisTextLine(
+      'new-file-tail-a', 'tail a', '2026-09-09T00:10:00.000Z',
+    )}
+`, 'utf8');
+    await appendFile(files[40], `${analysisTextLine(
+      'new-file-tail-b', 'tail b', '2026-09-09T00:11:00.000Z',
+    )}
+`, 'utf8');
+    await writeFile(path.join(project, 'session-new.jsonl'), `${analysisTextLine(
+      'new-file-fresh', 'fresh session', '2026-09-09T00:12:00.000Z',
+    )}
+`, 'utf8');
+
+    const warm = await updateClaudeUsageIndex(cold.index, root);
+    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+
+    // File identity is (dev, inode), and NTFS reuses file record numbers: a file
+    // created here can land on the identity of one the fixture already indexed,
+    // which reads as a move and legitimately forces the full rebuild. That is a
+    // property of the filesystem, not of this path, so skip rather than assert
+    // a number the run cannot deliver. The correctness check below still holds.
+    if (warm.diagnostics.changed.move > 0) {
+      t.skip('the filesystem reused a file identity, so this refresh is a move, not an addition');
+      return;
+    }
+
+    assert.equal(warm.diagnostics.bodyReads, 3);
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('the exact analysis cutoff reads a boundary file only when an event expires', async () => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:05:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-window-step-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-window-step');
+  await mkdir(project, { recursive: true });
+  try {
+    // A session that was busy 30 days ago at this time of day: events every few
+    // minutes right at the edge of the window.
+    const boundary = path.join(project, 'session-boundary.jsonl');
+    const lines: string[] = [];
+    for (let minute = 10; minute < 60; minute += 5) {
+      lines.push(analysisTextLine(
+        `boundary-${minute}`, `edge ${minute}`, `2026-08-11T12:${String(minute).padStart(2, '0')}:00.000Z`,
+      ));
+    }
+    await writeFile(boundary, `${lines.join('\n')}\n`, 'utf8');
+    const active = path.join(project, 'session-active.jsonl');
+    await writeFile(active, `${analysisTextLine('active', 'recent', '2026-09-10T12:00:00.000Z')}\n`, 'utf8');
+
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 30 });
+    assert.equal(cold.index.analysisCutoffMs, Date.parse('2026-08-11T12:05:00.000Z'));
+
+    // Moving the exact cutoff between admitted-event frontiers requires no
+    // body read. Equality still admits the event; one millisecond later it
+    // expires immediately rather than lingering until the next whole hour.
+    let previous = cold;
+    for (const [time, expectedReads, expectedCount] of [
+      ['12:09:59.999', 0, 11],
+      ['12:10:00.000', 0, 11],
+      ['12:10:00.001', 1, 10],
+      ['12:10:30.000', 0, 10],
+      ['12:15:00.001', 1, 9],
+    ] as const) {
+      now = Date.parse(`2026-09-10T${time}Z`);
+      const warm = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
+      const full = await ClaudeDataLoader.loadUsageRecords(root, {
+        analyzeContent: true,
+        windowDays: 30,
+      });
+      assert.equal(warm.diagnostics.bodyReads, expectedReads);
+      assert.equal(warm.index.analysisCutoffMs, now - 30 * 24 * 60 * 60 * 1000);
+      assert.equal(
+        warm.contentAnalysis?.categories.find((slice) => slice.key === 'assistantText')?.count,
+        expectedCount,
+      );
+      assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+      previous = warm;
+    }
+
+    // Once all boundary events are outside the exact window, metadata alone
+    // expires the entire contribution; the full loader still agrees.
+    now = Date.parse('2026-09-10T13:00:00.000Z');
+    const stepped = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
+    const steppedFull = await ClaudeDataLoader.loadUsageRecords(root, {
+      analyzeContent: true,
+      windowDays: 30,
+    });
+    assert.equal(stepped.index.analysisCutoffMs, Date.parse('2026-08-11T13:00:00.000Z'));
+    assert.equal(stepped.diagnostics.bodyReads, 0);
+    assert.deepEqual(stepped.contentAnalysis, steppedFull.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('the window drifting past an old event keeps the refresh incremental', async (t) => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:00:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-window-drift-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-window-drift');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  try {
+    // One file holds an event that is about to fall out of the window, the rest
+    // are an established corpus that nothing touches.
+    for (let index = 0; index < 32; index += 1) {
+      const file = path.join(project, `session-${String(index).padStart(3, '0')}.jsonl`);
+      files.push(file);
+      await writeFile(file, `${analysisTextLine(
+        `drift-seed-${index}`,
+        `seed ${index}`,
+        new Date(Date.parse('2026-09-10T00:00:00.000Z') + index * 1_000).toISOString(),
+      )}
+`, 'utf8');
+    }
+    // Only this file holds an event old enough to leave the window when the
+    // clock moves below; every other file stays entirely inside it.
+    await appendFile(files[3], `${analysisTextLine(
+      'drift-expiring', 'about to expire', '2026-09-09T13:00:00.000Z',
+    )}
+`, 'utf8');
+
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 1 });
+    assert.equal(cold.diagnostics.bodyReads, 32);
+
+    // The clock moves past the oldest event of files[3]: it now needs a body
+    // read to recompute its aggregate ('cutoff'), while another session simply
+    // appends. Before this path existed, that pair forced every body to be
+    // re-read — the ordinary case on a long history, where the window is always
+    // drifting past something.
+    now = Date.parse('2026-09-10T14:00:00.000Z');
+    await appendFile(files[20], `${analysisTextLine(
+      'drift-tail', 'tail', '2026-09-10T13:55:00.000Z',
+    )}
+`, 'utf8');
+
+    const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
+    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      analyzeContent: true,
+      windowDays: 1,
+    });
+
+    if (warm.diagnostics.changed.move > 0) {
+      t.skip('the filesystem reused a file identity, so this refresh is a move, not an addition');
+      return;
+    }
+
+    assert.ok(
+      warm.diagnostics.bodyReads < 32,
+      `window drift re-read the whole corpus: ${warm.diagnostics.bodyReads} bodies`,
+    );
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('a file already outside the window keeps its empty contribution as the window drifts', async () => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:00:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-window-expired-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-window-expired');
+  await mkdir(project, { recursive: true });
+  try {
+    // Every event of this file is older than the window: its analysis
+    // contribution is empty from the first refresh on.
+    const expired = path.join(project, 'session-expired.jsonl');
+    await writeFile(expired, `${analysisTextLine(
+      'expired-seed', 'long gone', '2026-08-01T08:00:00.000Z',
+    )}
+`, 'utf8');
+    const active = path.join(project, 'session-active.jsonl');
+    await writeFile(active, `${analysisTextLine(
+      'active-seed', 'recent', '2026-09-10T11:00:00.000Z',
+    )}
+`, 'utf8');
+
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 30 });
+    const expiredOf = (index: typeof cold.index) =>
+      [...index.files.values()].find((file) => file.path === expired);
+    const coldExpired = expiredOf(cold.index);
+    assert.ok(coldExpired?.analysis);
+
+    // The window moves on by a minute on every refresh while another session
+    // appends. The expired file stays empty; handing it fresh collections each
+    // time made it read as a changed payload and kept the append fast path off
+    // for good on any history older than the window.
+    let previous = cold;
+    for (let step = 1; step <= 3; step += 1) {
+      now += 60_000;
+      await appendFile(active, `${analysisTextLine(
+        `active-tail-${step}`, `tail ${step}`, new Date(now - 1_000).toISOString(),
+      )}
+`, 'utf8');
+      const warm = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
+      const full = await ClaudeDataLoader.loadUsageRecords(root, {
+        analyzeContent: true,
+        windowDays: 30,
+      });
+      assert.equal(warm.diagnostics.bodyReads, 1);
+      assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+      const warmExpired = expiredOf(warm.index);
+      assert.ok(warmExpired?.analysis);
+      assert.equal(warmExpired.analysis.seenUuids, coldExpired.analysis.seenUuids);
+      assert.equal(warmExpired.analysis.cat, coldExpired.analysis.cat);
+      previous = warm;
+    }
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('a file that is appended to while losing an event to the window stays incremental', async (t) => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:00:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-window-append-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-window-append');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      const file = path.join(project, `session-${String(index).padStart(3, '0')}.jsonl`);
+      files.push(file);
+      await writeFile(file, `${analysisTextLine(
+        `window-append-seed-${index}`,
+        `seed ${index}`,
+        new Date(Date.parse('2026-09-10T00:00:00.000Z') + index * 1_000).toISOString(),
+      )}
+`, 'utf8');
+    }
+    // This file alone holds an event old enough to leave the window below.
+    await appendFile(files[2], `${analysisTextLine(
+      'window-append-expiring', 'about to expire', '2026-09-09T13:00:00.000Z',
+    )}
+`, 'utf8');
+
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 1 });
+    assert.equal(cold.diagnostics.bodyReads, 8);
+
+    // The same file is appended to in the refresh where its oldest event leaves
+    // the window. Its stored aggregate still counts the expired event, so the
+    // tail cannot simply be added to it and the file is re-read in full — but
+    // the body only grew, and re-reading one file is no reason to re-read all eight.
+    now = Date.parse('2026-09-10T14:00:00.000Z');
+    await appendFile(files[2], `${analysisTextLine(
+      'window-append-tail', 'tail', '2026-09-10T13:55:00.000Z',
+    )}
+`, 'utf8');
+    const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
+    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      analyzeContent: true,
+      windowDays: 1,
+    });
+    assert.ok(
+      warm.diagnostics.bodyReads < 8,
+      `an appended file losing an event re-read the whole corpus: ${warm.diagnostics.bodyReads} bodies, ` +
+      `changed=${JSON.stringify(warm.diagnostics.changed)}`,
+    );
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('mixed window rebuild and append give a new UUID to the earliest file', async () => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:00:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-mixed-window-owner-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-mixed-window-owner');
+  await mkdir(project, { recursive: true });
+  try {
+    const earlier = path.join(project, 'earlier.jsonl');
+    const later = path.join(project, 'later.jsonl');
+    await writeFile(earlier, `${analysisTextLine(
+      'mixed-earlier-seed', 'early seed', '2026-09-10T00:00:00.000Z',
+    )}\n`, 'utf8');
+    await writeFile(later, [
+      analysisTextLine('mixed-later-seed', 'later seed', '2026-09-10T00:01:00.000Z'),
+      analysisTextLine('mixed-expiring', 'expires', '2026-09-09T13:00:00.000Z'),
+    ].join('\n') + '\n', 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 1 });
+
+    now = Date.parse('2026-09-10T14:00:00.000Z');
+    await appendFile(earlier, `${analysisTextLine(
+      'mixed-shared-uuid', 'earlier owner', '2026-09-10T13:55:00.000Z',
+    )}\n`, 'utf8');
+    await appendFile(later, `${analysisTextLine(
+      'mixed-shared-uuid', 'later should not own', '2026-09-10T13:56:00.000Z',
+    )}\n`, 'utf8');
+    const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
+    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      analyzeContent: true,
+      windowDays: 1,
+    });
+    assert.equal(warm.diagnostics.bodyReads, 2);
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('same-file expiry plus an earlier UUID preemption falls back to ordered analysis', async () => {
+  const previousNow = Date.now;
+  let now = Date.parse('2026-09-10T12:00:00.000Z');
+  Date.now = () => now;
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-same-file-uuid-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-same-file-uuid');
+  await mkdir(project, { recursive: true });
+  try {
+    const earlier = path.join(project, 'earlier.jsonl');
+    const later = path.join(project, 'later.jsonl');
+    await writeFile(earlier, [
+      analysisTextLine('earlier-seed', 'early seed', '2026-09-10T00:00:00.000Z'),
+      analysisTextLine('earlier-expiring', 'expires', '2026-09-09T13:00:00.000Z'),
+    ].join('\n') + '\n', 'utf8');
+    await writeFile(later, `${analysisTextLine(
+      'shared-window-uuid', 'later owner', '2026-09-10T00:01:00.000Z',
+    )}\n`, 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { windowDays: 1 });
+
+    now = Date.parse('2026-09-10T14:00:00.000Z');
+    await appendFile(earlier, `${analysisTextLine(
+      'shared-window-uuid', 'earlier owner', '2026-09-10T13:55:00.000Z',
+    )}\n`, 'utf8');
+    const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
+    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      analyzeContent: true,
+      windowDays: 1,
+    });
+    assert.equal(warm.diagnostics.bodyReads, 3);
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('a new file carrying an already-owned UUID falls back to the full rebuild', async () => {
+  const previousNow = Date.now;
+  Date.now = () => Date.parse('2026-09-10T12:00:00.000Z');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-new-file-owned-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-new-file-owned');
+  await mkdir(project, { recursive: true });
+  try {
+    const established = path.join(project, 'session-established.jsonl');
+    await writeFile(established, `${analysisTextLine(
+      'shared-owned-uuid', 'established content', '2026-09-09T10:00:00.000Z',
+    )}
+`, 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
+
+    // Earlier by timestamp, so the full loader hands ownership to the new file.
+    await writeFile(path.join(project, 'session-earlier.jsonl'), `${analysisTextLine(
+      'shared-owned-uuid', 'a different body for the same uuid', '2026-09-09T09:00:00.000Z',
+    )}
+`, 'utf8');
+
+    const warm = await updateClaudeUsageIndex(cold.index, root);
+    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('concurrent appends to several files stay incremental instead of forcing a full rebuild', async () => {
+  const previousNow = Date.now;
+  Date.now = () => Date.parse('2026-09-10T12:00:00.000Z');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-multi-append-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-multi-append');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  try {
+    for (let index = 0; index < 64; index += 1) {
+      const file = path.join(project, `session-${String(index).padStart(3, '0')}.jsonl`);
+      files.push(file);
+      await writeFile(file, `${usageLine(`multi-append-${index}`, index + 1, 1, {
+        timestamp: new Date(Date.parse('2026-09-09T00:00:00.000Z') + index * 1_000).toISOString(),
+      })}
+`, 'utf8');
+    }
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
+    assert.equal(cold.diagnostics.bodyReads, 64);
+
+    // Three sessions writing at once is the ordinary case for a machine running
+    // several agents, not an edge case.
+    const appended = [files[10], files[30], files[63]];
+    let offset = 0;
+    let appendedBytes = 0;
+    for (const file of appended) {
+      offset += 1;
+      const tail = `${usageLine(`multi-append-tail-${offset}`, 9, 3, {
+        timestamp: new Date(Date.parse('2026-09-09T00:10:00.000Z') + offset * 1_000).toISOString(),
+      })}
+`;
+      appendedBytes += Buffer.byteLength(tail);
+      await appendFile(file, tail, 'utf8');
+    }
+
+    const warm = await updateClaudeUsageIndex(cold.index, root);
+    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+
+    assert.equal(warm.diagnostics.bodyReads, appended.length);
+    assert.equal(warm.diagnostics.bytesRead, appendedBytes);
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('a 645-session corpus reads only seven live tails and one new session', async (t) => {
+  const previousNow = Date.now;
+  Date.now = () => Date.parse('2026-09-10T12:00:00.000Z');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-many-sessions-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-many-sessions');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  try {
+    const start = Date.parse('2026-09-09T00:00:00.000Z');
+    for (let index = 0; index < 645; index += 1) {
+      const file = path.join(project, `session-${String(index).padStart(3, '0')}.jsonl`);
+      files.push(file);
+      await writeFile(file, `${usageLine(`many-seed-${index}`, 10, 1, {
+        timestamp: new Date(start + index * 1_000).toISOString(),
+      })}\n`, 'utf8');
+    }
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
+    assert.equal(cold.diagnostics.bodyReads, 645);
+
+    let expectedBytesRead = 0;
+    for (const [offset, index] of [7, 91, 183, 275, 367, 459, 644].entries()) {
+      const tail = `${usageLine(`many-tail-${index}`, 20, 2, {
+        timestamp: new Date(start + (1_800 + offset) * 1_000).toISOString(),
+      })}\n`;
+      expectedBytesRead += Buffer.byteLength(tail);
+      await appendFile(files[index], tail, 'utf8');
+    }
+    const newFile = `${usageLine('many-new', 30, 3, {
+      timestamp: '2026-09-09T00:31:00.000Z',
+    })}\n`;
+    // A new file is read once to establish canonical source order and once to
+    // parse its body. Both reads remain bounded to the new file, never history.
+    expectedBytesRead += 2 * Buffer.byteLength(newFile);
+    await writeFile(path.join(project, 'session-new.jsonl'), newFile, 'utf8');
+
+    const warm = await updateClaudeUsageIndex(cold.index, root);
+    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
+    await assertMatchesFull(root, warm.records);
+    // Some filesystems reuse a removed file identity, legitimately turning a
+    // new session into a move/rebuild. Correctness still holds; only the
+    // bounded-read assertion becomes inapplicable.
+    if (warm.diagnostics.changed.move > 0) {
+      t.skip('the filesystem reused a file identity, so this refresh is a move');
+      return;
+    }
+    assert.equal(warm.diagnostics.filesDiscovered, 646);
+    assert.equal(warm.diagnostics.bodyReads, 8);
+    assert.equal(warm.diagnostics.linesParsed, 8);
+    assert.equal(warm.diagnostics.bytesRead, expectedBytesRead);
   } finally {
     Date.now = previousNow;
   }

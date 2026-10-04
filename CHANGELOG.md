@@ -2,7 +2,45 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream merge: 2.3.3 / `b83e7d6`). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://keepachangelog.com).
+
+## [2.15.0] — 2026-10-04
+
+### Fixed (fork-specific)
+
+- **"This Week" data on the reused-snapshot publish path** — upstream's v2.4.0 performance work replaced the day-rollover republish with a republish on every unchanged refresh, driven by a reused dashboard snapshot. The weekly billing-window aggregate is not part of that snapshot (it exists only when the OAuth quota API reported a reset time), so it is now recomputed on that path as well, and the week aggregate and its reset instant travel with every `updateData` call — including the two new cold-failure paths upstream introduced.
+- **Per-panel render cache and the "This Week" tab** — the dashboard now memoises each tab's HTML against the data it was rendered from. The week aggregate and its reset instant are part of that cache identity, so a changed billing window re-renders the tab instead of serving the previous week's HTML.
+- **"Usage tracking" card outside Today** — upstream memoised the attribution behind a today-only cache. The fork's week, month and all-time cards each carry their own exact scope and are computed per scope again; only the Today card uses the memoised value.
+- **Fast-mode, US-inference and thinking-token data reaching the aggregators** — upstream's new `compactUsageRecord()` rebuilds each parsed record's `usage` object and runs on both parsers before any aggregation. It kept only the token counts, so `speed`, `inference_geo` and `output_tokens_details` were discarded: fast-mode pricing, the 1.1× US-only multiplier and the exact thinking-token figure were all silently inert at runtime while every pricing test stayed green (they price raw token objects and never go through the loader). The three fields travel through compaction again, covered by a loader-path test that bills a fast-mode US request end to end.
+- **MCP and reasoning-effort rows in the "Usage tracking" card** — `_mcpServer`, `_mcpTool` and `_effort` were stamped only by the legacy loader, which stopped being the runtime path when the incremental index took over. The index parser stamps them too, so those rows render again.
+- **Prototype pollution via a session's skill or plugin name** — the per-session skill/plugin aggregate was the one aggregation map still built from a `{}` literal, so a session attributed to a skill literally named `__proto__` mutated `Object.prototype`. It now uses a null-prototype map like every sibling aggregate.
+- **All-time skill attribution** — the heuristic skill/plugin shares on the All Time card were always empty: with no day-key set for that scope the filter compared `undefined === true` and dropped every invocation, while the record filter kept them all.
+- **Dashboard reuse benchmark measured the wrong corpus** — `tests/perf/measure-dashboard-reuse.cjs` wrote its 50,000-record array into the `dataDirectory` slot, because this fork's `weekData` parameter shifts `allRecords` one position later. The benchmark reported `records: 50000` while timing a six-record fixture, and exited 0. It now writes the correct slot and asserts the provider actually received the corpus.
+- **Status bar session cost during a failed refresh** — upstream's new shared cold-failure handler republished today / workspace / month totals but dropped the session segment. The session total is passed on that path too.
+- **1-hour cache-write rate after a pricing refresh** — upstream rewrote the LiteLLM catalog parser with validation and a replace-then-swap build. The parser copies same-named fields only, so the LiteLLM-specific `cache_creation_input_token_cost_above_1hr` mapping is applied inside the new parser; without it a pricing refresh silently billed 1-hour cache writes at the 5-minute rate.
+- **Sonnet 5 introductory pricing next to upstream's Sonnet 5.5 table** — both tiers exist as distinct pricing objects, and the 5.5 pattern is matched before the looser Sonnet 5 pattern so `sonnet-5-5` is not priced as Sonnet 5. The timestamped `getModelPricing(model, atMs)` cutover is unchanged.
+
+### Added (merged from upstream v2.4.0)
+
+- **Optional status-bar quota format template** — `statusBarQuotaFormat` names the quota windows, order and separators shown in the status bar, with per-segment reset styles.
+- **Preview-first sharing workspace** — one presentation selector for the combined Claude + Codex activity heatmap, the Claude Share Card and the Claude-only token heatmap, with the export preview as the visual focus.
+- **German and Brazilian Portuguese READMEs**, bringing documentation to all eight UI languages.
+
+### Changed (merged from upstream v2.4.0)
+
+- **Incremental-index performance series (#99)** — window drift, newly appended files, multi-file appends and files that leave the window no longer force a full corpus rebuild; `Intl` and date-label formatters are memoised; an unknown model is reported once per session instead of once per priced record; the full loader and the incremental index share one exact content-analysis cutoff. This fork's exact `sinceTs` attribution boundary is unaffected: it remains an instant, not a civil day.
+- **Claude and Codex experience alignment** — Codex is presented as a first-class provider in current UI and documentation; historical v2.3 notes keep their Beta wording. Fork-exclusive Claude surfaces stay Claude-only.
+- **Bounded diagnostics and stabilized large-history refreshes** — diagnostic output and pricing-fetch work are bounded, and a reused render snapshot keeps equivalent polls from rebuilding every hidden panel.
+
+### Changed (fork-specific)
+
+- Upstream's `fix: auto-recover marketplace delivery (#107)` is deliberately not adopted: its VS Code Marketplace and Open VSX publish steps, the retry/reconciliation job and the new `marketplace-recovery.yml` workflow are omitted. This fork still ships the `.vsix` as a GitHub Release asset only, and the policy tests that assert that boundary are kept in place of upstream's registry-delivery assertions.
+
+### Upstream alignment
+
+Aligned with `jack21/ClaudeCodeUsage` v2.4.0 (`298b2e1`).
+
+---
 
 ## [2.14.0] — 2026-09-20
 
@@ -379,9 +417,242 @@ This fork is aligned with `jack21/ClaudeCodeUsage` v2.1.1 (`e52634c`) — every 
 
 ---
 
-## [2.3.3] — Unreleased
+## [Unreleased]
+
+### Added
+- **Documentation in every supported UI language** — German and Brazilian
+  Portuguese now have concise READMEs alongside the existing editions. The
+  Marketplace README links all eight language variants; English and Chinese
+  retain the fuller references. The extension description and tags identify
+  its Claude/Codex token and quota use cases without presenting estimates as
+  billing data.
+- **`statusBarQuotaFormat`** (default empty) — name the quota windows in the
+  status bar yourself when you want a different set, order or separators than
+  the built-in `5h 6% · wk 1%`: `{5h.pct}`, `{wk.pct}` (or `{7d.pct}`) and
+  `{model:Fable.pct}`, each also taking `.reset` and `.label`. `.reset` follows
+  `resetCountdownFormat` unless it names its own style, so one bar can mix them:
+  `{5h.reset:units}`, `:decimal`, `:clock` or `:at` (wall clock, `Thu 16:59`).
+  Empty keeps the built-in layout, and a template supersedes
+  `quotaFiveHourOnly` and `showScopedWeekly` since it names its windows itself.
+  A segment whose window your account does not report is dropped along with its
+  separator. The dashboard keeps this optional feature compact: a Built-in,
+  5-hour-only, Weekly-only, or Custom dropdown reveals the template field only
+  when Custom is selected.
+
+### Changed
+- **Codex graduates from Beta** — after the shared interaction, accessibility,
+  performance, localization, package, and installed-extension gates passed,
+  current UI and documentation now present Codex as a first-class provider.
+  Historical v2.3 release notes retain their original Beta wording.
+- **One preview-first sharing workspace** — the full-width export preview is
+  now the visual focus, with controls below it and one presentation selector
+  for the combined Claude + Codex activity heatmap, the legacy Claude Share
+  Card, and the Claude-only token heatmap. Provider accounting and labels remain
+  distinct: the combined view is activity volume, while the two legacy views
+  continue to use Claude aggregates only.
+- **Command and setting compatibility** — `exportShareCard`, `exportHeatmap`,
+  and `publishHeatmapToGitHub` remain registered and open their matching preview
+  instead of bypassing the workspace. `enableShareCard` remains the one visible
+  on/off control and still defaults to `true`; retired `showHeatmap` state stays
+  catalogued and clearable for one release without creating a duplicate panel.
+- **Strict local-artifact boundary** — previews and local SVG/Markdown exports
+  use only materialized aggregates and cannot request GitHub authentication,
+  profile, avatar, or name data. Claude heatmap publication is the only sharing
+  network path; it remains a separate explicit public-repository action with
+  exact repository/branch/path and create-or-overwrite confirmation.
+- **Codex status bar** — newly defaulted metric is today's processed tokens;
+  explicit uncached/output choices remain available. The weekly indicator
+  continues to show remaining capacity, not used tokens.
+- **Smooth live scrolling** — during an active scroll burst, the newest
+  provider-panel refresh waits for a short quiet interval before replacing
+  its DOM. A 500 ms ceiling prevents continuous scrolling from starving live
+  updates; the existing scroll/focus preservation and single-flight index
+  boundaries remain in place.
+- **Bounded sharing refreshes** — only the selected presentation is rendered;
+  hidden Share Card and heatmap artifacts are not rebuilt on every refresh.
+  Materialized daily aggregates are reused while their input and pricing
+  identity is unchanged.
+- **Shared exact content-analysis cutoff (#99)** — the full loader and
+  incremental index now use one rolling-cutoff helper. The full loader captures
+  it once for both content analysis and calibration, keeping those windows
+  aligned even if parsing crosses an expiry boundary. Millisecond precision
+  remains unchanged; existing timestamp frontiers skip body reads between
+  actual expiries. The proposed hourly approximation is not applied.
 
 ### Fixed
+- **AI destination mismatch** — the initial DeepSeek configuration now selects
+  its matching OpenAI-compatible format. Request normalization preserves the
+  configured host and proxy prefix, rejects protocol conflicts and secret-bearing
+  URLs, and supports DeepSeek's explicit Anthropic-compatible prefix. Previews
+  disclose endpoint, format and model alongside canonical bytes; private integrity
+  seals bind destination metadata to the exact prepared request.
+  Before advice activation, an existing BYOK key without an explicit format
+  retains its prior Anthropic protocol. Explicit formats remain unchanged;
+  new installs use the matching OpenAI-compatible default. Incompatible legacy
+  endpoints require an explicit format/URL correction, never a silent host switch.
+  Migration failure disables advice for that activation without losing the
+  stored key or disabling usage views. Ordinary reset retains this compatibility
+  default; separately confirmed clear-all also clears the non-secret enum marker.
+  Obsolete VS Code configuration is ignored after the generic settings migration,
+  so resetting a local override cannot resurrect an old API format.
+- **Share Card preview/export mismatch** — editing range, theme, number format
+  or visible sections disables export until a matching preview is accepted.
+  Stale preview replies cannot enable a newer draft. Export writes that immutable
+  SVG rather than recalculating a different artifact when opening the save dialog.
+- **Auto-refresh pause across providers** — both Claude and Codex pages respect
+  the switch while indexing and status items continue. Manual/settings updates
+  remain available. Source revisions still invalidate stale advice handles while
+  paused; privacy revocation is never gated by presentation pause.
+- **Misleading indexing completion** — primary logs, period migration and hourly
+  history use their own counters; cooldown, no-progress and user-pause states
+  show recovery/wait text rather than treating primary 100% as full completion.
+- **Warm refresh failures without feedback** — verified data remains displayed
+  with a coalesced, anonymous inline failure/last-success indicator. Retry success
+  clears it without replacing charts, scroll or focus merely to report status.
+  Codex retains same-directory snapshots through temporary unavailability, but
+  clears old data on a directory change. Retired asynchronous callbacks cannot
+  mutate the replacement provider's state.
+  Claude source changes likewise immediately revoke old usage, quota, advice
+  and sharing previews even while presentation is paused; late discoveries or
+  index results cannot restore a retired source or its last-success timestamp.
+- **Repeated hidden-panel work** — unchanged panel HTML and Claude weekly usage
+  inputs have provider-lifetime bounded caches. Data, configuration, prices,
+  locale, configured calendar day and quota-reset boundaries invalidate them;
+  Today's relative reset text expires by minute without recalculating history.
+  Complete, unchanged Codex polls retain the verified view and insight revisions
+  instead of generating false backfill progress and invalidating hidden panels.
+  Production Claude poll/focus refreshes also reuse the complete time-aware
+  dashboard contract; identical quota observations retain their references.
+  Unchanged polls no longer invalidate accepted Share Card previews.
+  Default-on Content attribution also reuses one bounded data section without
+  freezing live advice or Optimizer controls; it expires at calendar/settings
+  boundaries and releases retained records when the source is revoked.
+- **Minute-spaced Today polling** — Today's numeric usage attribution now has
+  a single-entry calendar-day cache, independent from minute-sensitive quota
+  countdowns. Unchanged minute polls within an hour avoid full-history scans;
+  the hourly hidden-panel refresh still computes Content attribution once.
+  Record/analysis changes, configured midnight/timezone, pricing and
+  source revocation still invalidate it. Coordinator and scale regressions now
+  advance both Date.now() and new Date() between polls rather than testing only
+  repeated refreshes at one frozen instant.
+- **Cold-build interruption and price-refresh race** — display-only settings
+  changes retain completed, verified same-source index work without delivering
+  the retired presentation. A separate source/pricing generation rejects late
+  results after price refresh, source changes, clear-all or disposal, so an
+  old-priced index cannot overwrite the replacement and keep stale costs.
+- **API key removed by ordinary defaults reset** — the dashboard and host exclude
+  secret keys from that action. The separately confirmed clear-key command remains
+  the explicit deletion route.
+- **Codex directory recovery hidden after fallback** — its existing directory
+  field is available on both providers' settings pages, including when Codex is
+  unavailable and the dashboard falls back to Claude. No additional setting is added.
+- **Unknown-model warning flood and Opus 5.5 pricing (#122, #120)** — pricing
+  diagnostics are emitted once per bounded model label, with a hard limit of
+  128 labels plus one suppression message per Extension Host lifetime. The
+  deduplication set cannot grow without bound; oversized or non-model labels
+  are neither retained nor echoed. This removes the per-record console/IPC
+  amplification reported by @jordanvalnet, building on @rsyuzyov's #120.
+  Opus 5.5 now has its own verified standard and cache-write/read prices,
+  including the explicit Bedrock regional backend, instead of inheriting
+  Opus 5 rates. Codex and weekly-value exact-price coverage still exclude
+  family/default fallback rates; Claude's main cost retains its existing
+  estimated fallback behavior.
+- **Current exact model prices** — GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna, and
+  Sonnet 5.5 now use dedicated, officially verified Standard/cache rates.
+  Sol generations retain their distinct cache-read rates; Sonnet 5.5 retains
+  its separate 1-hour cache-write price and explicit Bedrock regional premium.
+  Unknown dated labels do not acquire fabricated exact-price coverage.
+- **Malformed metadata and related refresh hazards** — non-string, oversized,
+  control-character, and prototype-named model labels become a fixed unpriced
+  label without dropping their valid numeric usage. Model/tool/session object
+  keys cannot mutate shared prototypes. Each aggregate bucket is copied only
+  once per transaction, including model-label churn, while old snapshots stay
+  immutable. Failed provider UI synchronization cannot strand either refresh
+  gate, stop Codex provider work, or repeatedly emit diagnostic messages;
+  a failed Claude new-snapshot render does not discard its verified index.
+- **Bounded background results and pricing downloads** — a slow first Codex
+  file or checkpoint no longer accumulates the entire batch of later results:
+  dispatch is limited to twice the worker count ahead of ordered application.
+  Manual price refreshes share one request, have a 16 MiB response cap,
+  16,384-entry catalog cap and 15-second absolute deadline, and replace the
+  runtime catalog atomically only after validation. Failed downloads preserve
+  the previous catalog. The compatibility loader reports anonymous counts
+  instead of per-line/file console errors or arbitrary diagnostic labels.
+- **Claude all-time drill-down cost on large histories** — month → day uses a
+  materialized configured-timezone daily aggregate built by the incremental
+  index, rather than rescanning retained records when a month is opened.
+  Eligible recent days can continue to the existing hour detail without any
+  source-log read.
+- **Raw Share Card scope persisted in browser storage** — project paths and
+  session identifiers now remain memory-only; only non-identifying display
+  controls survive a Webview reload.
+- **Large Claude transcript buffers retained in memory** — dedup now keeps
+  fixed-size UTF-16-accurate digests, bounded prompt/task excerpts are detached,
+  and usage-bearing assistant rows retain only the fields needed for usage
+  calculations after content analysis. An opt-in 2.4 GiB synthetic corpus with
+  content analysis enabled showed sampled peak RSS falling from about 3.04 GB
+  to 360 MB for long user prompts; a separate long assistant-body fixture also
+  stays below 350 MB. Unchanged files are not reread. This does not establish
+  Windows or real-history smoothness; #99 remains open.
+- **PR first-pass review that only posted boilerplate (#108–#112)** — a failed
+  model request or empty answer now fails the PR workflow with a safe tier/status
+  diagnostic and posts no comment; issue triage retains its explicit fallback.
+  DeepSeek's cheap tier disables default thinking to preserve reply tokens, the
+  escalation tier has an output cap above its thinking budget, and the default
+  flash identifier tracks the current supported model. A cheap reply marked
+  as needing source is never posted when escalation fails. Existing bot
+  comments are not edited retroactively.
+- **Full rebuild whenever a new transcript appeared (#99)** — a file that had
+  just been created was treated as an unsafe mutation, so every new session
+  rebuilt every contribution in the corpus. A new file is now read in full on
+  its own while the established files stay untouched; ordering state is
+  recomputed from metadata, and a new file carrying an already-owned UUID still
+  falls back to the full rebuild. Measured on 15 real transcripts with two
+  appends and one new file: 16 body reads and 3042 ms became 3 body reads and
+  567 ms.
+- **Full re-read when several sessions append at once (#99)** — the content
+  analysis fast path required exactly one changed file, so a machine running
+  more than one agent never took it: every refresh rebuilt all contributions
+  from every file. Any number of pure tail appends now stays incremental.
+  Appends are parsed in full-scan order and new-UUID ownership is attributed to
+  the owning file, so results match the full loader. Measured on 15 real
+  transcripts (34 MB) with three files appended: 15 body reads and 8.7 s became
+  3 body reads and 0.6 s.
+- **High CPU during indexing (#99)** — day, month and hour bucketing no longer
+  constructs a fresh `Intl.DateTimeFormat` for every ingested record. The
+  resolved zone and both formatters are memoised per zone, so a large local
+  history is indexed without pinning a core. On a 1.4 GB history the key
+  derivation went from ~1.1k to ~168k records/second (158x) with identical
+  keys; invalid and empty zones still fall back exactly as before.
+- **Dashboard date labels rebuilt a formatter for every row (#99)** — the same
+  per-call `Intl.DateTimeFormat` construction, in the table and chart labels:
+  `toLocaleDateString` built a fresh formatter for every date it rendered. The
+  formatter is now memoised per locale and options, with output identical to
+  `toLocaleDateString` for every UI locale; one label went from ~31 µs to ~1 µs.
+- **Append fast path never ran on a history older than the window (#99)** —
+  every file whose events were all older than the content-analysis window got
+  fresh empty collections on each refresh, so it read as a changed payload and
+  kept the fast path off for good. Such a file now keeps its empty
+  contribution. On a 979-file history, 53 spurious payload rebases per refresh
+  became none.
+- **One-shot sharing command intent** — command-opened previews now override a
+  previously saved Claude tab and presentation exactly once. A provider-local
+  monotonic revision history is separate from the live intent; the Webview ACK
+  consumes that intent, so reset, normal rerender, and dispose/reopen cannot
+  replay an acknowledged command or reuse its revision.
+- **Verified sharing reset** — the in-workspace button now uses the same
+  confirmed host request → request-id client action → ACK protocol as Local Data
+  controls. Browser-storage deletion failure is reported, and successful reset
+  defaults survive a full reload.
+- **Readable and accessible SVG previews** — the 1200×680 Share Card keeps its
+  intrinsic width inside a local horizontal scroller at 360px. Deterministic
+  inner-SVG geometry and contrast tests cover every normal label at 4.5:1 or
+  better without excluding the artifact from the surrounding Axe scan.
+
+## [2.3.3] — 2026-09-16
+
+### Fixed
+
 - **Startup with legacy workspace advice keys (#105)** — a workspace-scoped
   plaintext BYOK key or unavailable SecretStorage no longer prevents the usage
   status bar, commands, and dashboard from activating. The old key remains

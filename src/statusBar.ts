@@ -53,6 +53,7 @@ export class StatusBarManager {
   private quotaFiveHourOnly: boolean = false; // show only the 5h window
   private showResetInBar: boolean = false;    // append reset countdown to the bar
   private resetCountdownFormat: ResetCountdownFormat = 'decimal'; // style of that countdown (#74)
+  private quotaFormat: string = '';           // statusBarQuotaFormat; '' keeps the built-in layout
   private provider: 'claude' | 'codex' = 'claude';
   private lastClaudeUsage: {
     todayData: UsageData | null;
@@ -141,7 +142,8 @@ export class StatusBarManager {
     showScopedWeekly: boolean = false,
     quotaFiveHourOnly: boolean = false,
     showResetInBar: boolean = false,
-    resetCountdownFormat: ResetCountdownFormat = 'decimal'
+    resetCountdownFormat: ResetCountdownFormat = 'decimal',
+    quotaFormat: string = ''
   ): void {
     this.showCost = showCost;
     this.showContext = showContext;
@@ -151,6 +153,7 @@ export class StatusBarManager {
     this.quotaFiveHourOnly = quotaFiveHourOnly;
     this.showResetInBar = showResetInBar;
     this.resetCountdownFormat = resetCountdownFormat;
+    this.quotaFormat = quotaFormat;
     if (!showContext) {
       this.contextItem.hide();
     }
@@ -367,7 +370,9 @@ export class StatusBarManager {
       showReset: this.showResetInBar,
       fiveHourOnly: this.quotaFiveHourOnly,
       showScopedWeekly: this.showScopedWeekly,
-      resetFormat: this.resetCountdownFormat
+      resetFormat: this.resetCountdownFormat,
+      // When set this names the windows itself, so the toggles above no longer apply.
+      template: this.quotaFormat
     };
     const text = formatQuotaStatusText(live, opts);
     if (!text) {
@@ -395,6 +400,17 @@ export class StatusBarManager {
     if (this.provider === 'codex') {
       this.renderCodex(scope, metric, limit);
     }
+  }
+
+  /** A replaced/cleared source owns neither the old totals nor its quota. */
+  clearCodex(): void {
+    const hadSnapshot = this.lastCodex !== null;
+    this.lastCodex = null;
+    if (this.provider !== 'codex' || !hadSnapshot) return;
+    this.quotaItem.text = '';
+    this.quotaItem.tooltip = undefined;
+    this.quotaItem.backgroundColor = undefined;
+    this.setProvider('codex');
   }
 
   private renderCodex(

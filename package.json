@@ -1,8 +1,8 @@
 {
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
-  "description": "Monitor Claude Code and Codex usage and costs in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.14.0",
+  "description": "Monitor Claude Code and Codex token usage, costs and quota in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
+  "version": "2.15.0",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",
@@ -26,8 +26,10 @@
   "keywords": [
     "claude",
     "claude-code",
+    "claude-code-usage",
     "codex",
     "openai",
+    "openai-codex",
     "local-usage",
     "usage",
     "cost",
@@ -35,7 +37,12 @@
     "ai",
     "anthropic",
     "token",
-    "status-bar"
+    "status-bar",
+    "codex-usage",
+    "token-usage",
+    "quota",
+    "usage-tracker",
+    "token-tracker"
   ],
   "engines": {
     "vscode": "^1.74.0"

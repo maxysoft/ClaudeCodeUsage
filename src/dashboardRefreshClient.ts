@@ -259,6 +259,9 @@ function ccuCaptureAdvicePreviews(panel) {
       contentType: (preview.querySelector('[data-advice-preview-content-type]') || {}).textContent || '',
       bytes: (preview.querySelector('[data-advice-preview-bytes]') || {}).textContent || '',
       count: (preview.querySelector('[data-advice-preview-count]') || {}).textContent || '',
+      endpoint: preview.getAttribute('data-preview-endpoint'),
+      apiFormat: preview.getAttribute('data-preview-api-format'),
+      model: preview.getAttribute('data-preview-model'),
       sendDisabled: elements.sendButton ? elements.sendButton.disabled : true,
       sendText: elements.sendButton ? elements.sendButton.textContent : '',
       statusText: elements.consentStatus ? elements.consentStatus.textContent : ''
@@ -289,6 +292,9 @@ function ccuDiscardCapturedAdvicePreview(saved) {
   saved.contentType = '';
   saved.bytes = '';
   saved.count = '';
+  saved.endpoint = '';
+  saved.apiFormat = '';
+  saved.model = '';
   saved.sendText = '';
   saved.statusText = '';
 }
@@ -301,7 +307,8 @@ function ccuRestoreAdvicePreviews(previews, adviceSnapshotIds) {
       (saved.provider !== 'claude' && saved.provider !== 'codex') ||
       typeof saved.snapshotId !== 'string' ||
       !/^snapshot-[a-f0-9]{24}$/.test(saved.snapshotId) ||
-      active[saved.provider] !== saved.snapshotId
+      active[saved.provider] !== saved.snapshotId ||
+      !ccuVerifyRequestDestination(saved)
     ) {
       ccuDiscardCapturedAdvicePreview(saved);
       return;
@@ -319,7 +326,11 @@ function ccuRestoreAdvicePreviews(previews, adviceSnapshotIds) {
     setText('[data-advice-preview-content-type]', saved.contentType);
     setText('[data-advice-preview-bytes]', saved.bytes);
     setText('[data-advice-preview-count]', saved.count);
+    setText('[data-advice-preview-destination]', ccuRequestDestinationText(saved));
     preview.setAttribute('data-snapshot-id', saved.snapshotId);
+    preview.setAttribute('data-preview-endpoint', saved.endpoint);
+    preview.setAttribute('data-preview-api-format', saved.apiFormat);
+    preview.setAttribute('data-preview-model', saved.model);
     preview.hidden = saved.hidden === true;
     preview.open = saved.open === true;
     if (elements.sendButton) {
@@ -455,8 +466,10 @@ function ccuRestoreDashboardUiAfterPatch(context, panel, tab, adviceSnapshotIds)
   restoreHourlyOverviewSelections(panel);
   initializeStatusRegions(panel);
   restoreCombinedHeatmapConfig();
+  restoreShareCardDraft();
   restoreProjectMatrixState(panel);
   ccuRestoreTransientControls(context, panel);
+  scSyncPreviewStatus();
   restoreAdviceEffectivenessState();
   ccuRestoreAdvicePreviews(context.advicePreviews, adviceSnapshotIds);
   formatOptSettings();
@@ -504,6 +517,42 @@ function ccuApplyDashboardDataPatch(message) {
     __ccuUiReady = true;
     vscode.postMessage({ command: 'dashboardDataPatchAck', revision: revision, ok: false });
     return false;
+  }
+}
+
+// A full provider-panel swap during wheel/trackpad motion forces layout on the
+// scrolling frame. Keep the newest patch in memory until the burst quiets;
+// the cap ensures a long continuous gesture cannot starve live data forever.
+var __ccuLastScrollEventAt = -Infinity;
+var __ccuScrollPatchPending = null;
+var __ccuScrollPatchQuietTimer = 0;
+var __ccuScrollPatchMaxTimer = 0;
+function ccuFlushScrollPatch() {
+  if (__ccuScrollPatchQuietTimer) { clearTimeout(__ccuScrollPatchQuietTimer); }
+  if (__ccuScrollPatchMaxTimer) { clearTimeout(__ccuScrollPatchMaxTimer); }
+  __ccuScrollPatchQuietTimer = 0;
+  __ccuScrollPatchMaxTimer = 0;
+  var latest = __ccuScrollPatchPending;
+  __ccuScrollPatchPending = null;
+  if (latest) { ccuApplyDashboardDataPatch(latest); }
+}
+function ccuScheduleScrollPatchQuiet() {
+  if (__ccuScrollPatchQuietTimer) { clearTimeout(__ccuScrollPatchQuietTimer); }
+  __ccuScrollPatchQuietTimer = setTimeout(ccuFlushScrollPatch, 120);
+}
+window.addEventListener('scroll', function() {
+  __ccuLastScrollEventAt = performance.now();
+  if (__ccuScrollPatchPending) { ccuScheduleScrollPatchQuiet(); }
+}, { passive: true });
+function ccuQueueDashboardDataPatch(message) {
+  if (!__ccuScrollPatchPending && performance.now() - __ccuLastScrollEventAt >= 120) {
+    ccuApplyDashboardDataPatch(message);
+    return;
+  }
+  __ccuScrollPatchPending = message;
+  ccuScheduleScrollPatchQuiet();
+  if (!__ccuScrollPatchMaxTimer) {
+    __ccuScrollPatchMaxTimer = setTimeout(ccuFlushScrollPatch, 500);
   }
 }
 `;

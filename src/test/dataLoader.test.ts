@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { scanUsageManifest } from '../claudeUsageFiles';
-import { ClaudeDataLoader } from '../dataLoader';
+import { ClaudeDataLoader, compactUsageRecord } from '../dataLoader';
 import { I18n } from '../i18n';
 import { ClaudeUsageRecord, ContentAnalysis } from '../types';
 
@@ -673,4 +673,36 @@ test('a sinceTs scope honours the exact boundary instant, not its civil day', ()
     Math.abs(card.totalCost - tabTotal) < 1e-6,
     `card (${card.totalCost}) must equal the tab total (${tabTotal})`
   );
+});
+
+test('compacting a record keeps the fields that drive billing and thinking totals', () => {
+  // The loader compacts every parsed record before aggregation. Dropping these
+  // three silently prices fast mode and US-only inference at standard rates and
+  // empties the thinking-tokens tile, with every pricing test still green
+  // because those call calculateCostBreakdown on raw tokens.
+  const compact = compactUsageRecord({
+    timestamp: '2026-10-01T12:00:00Z',
+    message: {
+      model: 'claude-opus-4-8',
+      usage: {
+        input_tokens: 1_000_000,
+        output_tokens: 0,
+        speed: 'fast',
+        inference_geo: 'us',
+        output_tokens_details: { thinking_tokens: 1_234 },
+      },
+    },
+  } as ClaudeUsageRecord);
+
+  assert.equal(compact.message.usage.speed, 'fast');
+  assert.equal(compact.message.usage.inference_geo, 'us');
+  assert.equal(compact.message.usage.output_tokens_details?.thinking_tokens, 1_234);
+
+  // Fast mode ($10/MTok input for Opus 4.8) with the 1.1x US multiplier.
+  const aggregate = ClaudeDataLoader.calculateUsageData([compact]);
+  assert.ok(
+    Math.abs(aggregate.totalCost - 11) < 1e-9,
+    `expected ~11 (fast + us), got ${aggregate.totalCost}`
+  );
+  assert.equal(aggregate.totalThinkingTokens, 1_234);
 });
