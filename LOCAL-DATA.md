@@ -20,6 +20,8 @@ v2.3.1 normative field-level contract is in
 | Share destination | User-entered GitHub target | One versioned `ccu.heatmapDestination.v1` object containing optional `owner/repository/path`; no GitHub credential | Until sharing preferences are reset | Only after an explicit publish action and exact destination confirmation. A successful write is reported even if saving this convenience preference fails |
 | Advice evidence | Derived local aggregates and explicit feedback | Coarse observations, recommendations, ratings, snoozes, comparable-task metrics, coverage, and versions | Bounded local ledger; clear independently | Nothing by default; only the exact previewed request is sent after a separate action |
 | Advice API key | User-provided secret | Secret value in VS Code SecretStorage only | Until the key or all derived data is cleared | Used only as the authorization credential for the explicitly configured endpoint |
+| OpenRouter credit observations | The user's own OpenRouter account, read with their key | `{observedAt, totalCredits, totalUsage}` snapshots this extension recorded itself; at most 400 points, identical consecutive readings dropped | Until all derived data is cleared | `GET https://openrouter.ai/api/v1/credits` only, and only while the feature is enabled and a key is stored |
+| OpenRouter API key | User-provided secret | Secret value in VS Code SecretStorage only | Until all derived data is cleared | Used only as the authorization credential for `openrouter.ai` |
 
 ## What is never cached
 

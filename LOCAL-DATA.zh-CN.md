@@ -19,6 +19,8 @@ Claude Code Usage 采用本地优先设计。插件只读取供应商拥有的�
 | 分享目标 | 用户输入的 GitHub 目标 | 单个版本化 `ccu.heatmapDestination.v1` 对象，包含可选 `owner/repository/path`；不保存 GitHub 凭据 | 保留到重置分享偏好 | 仅在用户明确发布并确认精确目标后发生；即使保存此便利偏好失败，成功写入仍会如实报告 |
 | 建议证据 | 本地派生聚合与明确反馈 | 粗粒度观察、建议、评分、暂停、可比任务指标、覆盖率和版本 | 有界本地台账；可独立清除 | 默认不发送；只有单独确认后才发送精确预览过的请求 |
 | 建议 API Key | 用户自备密钥 | 仅存于 VS Code SecretStorage | 保留到清除密钥或全部派生数据 | 只作为用户明确配置端点的授权凭据 |
+| OpenRouter 额度观测 | 用户自己的 OpenRouter 账号，使用其密钥读取 | 插件自行记录的 `{observedAt, totalCredits, totalUsage}` 快照；最多 400 条，连续相同读数不重复记录 | 保留到清除全部派生数据 | 仅 `GET https://openrouter.ai/api/v1/credits`，且仅在功能启用并已存密钥时 |
+| OpenRouter API Key | 用户自备密钥 | 仅存于 VS Code SecretStorage | 保留到清除全部派生数据 | 只作为 `openrouter.ai` 的授权凭据 |
 
 ## 绝不缓存什么
 

@@ -54,6 +54,19 @@ export async function openClaude(
   await page.locator('.tab-content.active').waitFor();
 }
 
+export async function openOpenRouter(
+  page,
+  { locale = 'en', theme = 'light', fixture = 'openrouter-tracked', timeZone = 'Asia/Hong_Kong', width = 1280, height = 900 } = {},
+) {
+  await page.setViewportSize({ width, height });
+  await page.goto(
+    `${uiBaseUrl}/?provider=openrouter&locale=${encodeURIComponent(locale)}&theme=${theme}&fixture=${encodeURIComponent(fixture)}&timeZone=${encodeURIComponent(timeZone)}`,
+    { waitUntil: 'load' },
+  );
+  await page.locator('#provider-panel').waitFor();
+  await expect(page.locator('#provider-tab-openrouter')).toHaveAttribute('aria-selected', 'true');
+}
+
 export async function openCompare(
   page,
   { locale = 'en', theme = 'light', fixture = 'default', autoRefresh = false, weeklyValue = true, shareStudio = true, commandTemplate = '', commandAfterReset = false, width = 1280, height = 900 } = {},

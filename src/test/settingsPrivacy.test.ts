@@ -258,7 +258,10 @@ test('BYOK protocol upgrade pins the old implicit format before advice can prepa
   const context = fakeContext({ secrets: new Map([['claudeCodeUsage.secret.advice.apiKey', 'synthetic-old-key']]) });
   let secretReads = 0;
   const readSecret = context.secrets.get;
-  context.secrets.get = async (key: string) => { secretReads++; return readSecret(key); };
+  context.secrets.get = async (key: string) => {
+    if (key === 'claudeCodeUsage.secret.advice.apiKey') secretReads++;
+    return readSecret(key);
+  };
   const store = new SettingsStore(context);
   assert.equal(await store.initializeSecretsForActivation(), null);
   assert.equal(store.get('advice.apiFormat'), 'anthropic');

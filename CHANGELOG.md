@@ -4,6 +4,27 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.16.0] — 2026-10-04
+
+### Added (fork-specific)
+
+- **OpenRouter provider tab (off by default)** — a third provider tab beside Claude and Codex, with its own data, its own panel and its own settings. It never contributes to a Claude or Codex aggregate, and nothing happens until you enable `openrouter.enabled` and store a key. The panel shows credits used, credits remaining and a chart of observed spend, drawn on the existing chart CSS contract rather than a new one.
+- **Observed-spend series derived from snapshots this extension records itself** — OpenRouter publishes `GET /api/v1/credits` (lifetime `total_credits` and `total_usage`) and nothing else: there is no endpoint that returns usage by day or by model, so history cannot be back-filled. Each poll appends `{observedAt, totalCredits, totalUsage}` to a capped 400-point series in `globalState`, identical consecutive readings are dropped, and per-day spend is the difference between consecutive `total_usage` readings bucketed on the later reading's civil day in the configured timezone. A decrease — an account reset or a credit purchase — contributes zero instead of negative spend and marks that day as a discontinuity, so a figure on the chart is always a lower bound and never an invented refund.
+- **The key is a secret, and is treated as one** — `openrouter.apiKey` is stored in VS Code SecretStorage exactly like `advice.apiKey`: never in `settings.json`, never in `globalState`, never in a dashboard message, the output channel, diagnostics or the share card. The client logs nothing at all, and its only network destination is `openrouter.ai`.
+- **Four distinct, actionable empty states** — tracking disabled, no key stored, a key that cannot read credits (OpenRouter requires a *management* key; an ordinary inference key answers 403), and no readings yet. Each names what to do next instead of reporting a generic failure. A visible disclosure states that history starts when tracking was enabled and that OpenRouter offers no backfill.
+- **Tests** — node coverage for the day-series derivation (including the clamped decrease and two readings sharing a civil day), history capping, deduplication and load-time validation, and every client error mapping; one Playwright spec covering the panel, the flagged discontinuity, all four empty states and the absence of any OpenRouter surface inside the Claude dashboard. Every locator list in the spec is proved non-empty before it is iterated and every hidden-element assertion proves the element exists first.
+
+### Changed (fork-specific)
+
+- **`updateData` is untouched** — the OpenRouter view arrives through a separate `updateOpenRouterData` setter, so the positional contract (`weekData` in slot 3, `allRecords` as parameter 11, `weekResetsAt` last) and every call site, including the Playwright harness and the reuse benchmark, are unchanged.
+- **Clear-all covers the new data** — `ccu.openrouter.creditHistory.v1` joins the exact clear-all allowlist, and the confirmation text names the second SecretStorage entry.
+
+### Upstream alignment
+
+Unchanged from 2.15.1 — aligned with `jack21/ClaudeCodeUsage` v2.4.0 (`298b2e1`).
+
+---
+
 ## [2.15.1] — 2026-10-04
 
 ### Added (fork-specific)
