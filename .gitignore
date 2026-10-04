@@ -33,6 +33,8 @@ CLAUDE.local.md
 docs/
 
 # Agent-local state and in-repository worktrees are never source artifacts.
+# .audit/ holds review and handoff notes: working material, not shipped source.
+.audit/
 .claude/
 .agents/
 .codex/
