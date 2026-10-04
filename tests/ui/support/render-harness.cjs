@@ -47,6 +47,7 @@ Module._load = function load(request, parent, isMain) {
 
 const { UsageWebviewProvider } = require('../../../out/webview.js');
 const { I18n } = require('../../../out/i18n.js');
+const { dayKeyInZone } = require('../../../out/dateKeys.js');
 const { SETTINGS } = require('../../../out/settings.js');
 const { buildCodexUsageView } = require('../../../out/providers/codex/codexUsage.js');
 const { buildScopedCodexInsights } = require('../../../out/providers/codex/codexInsights.js');
@@ -192,10 +193,12 @@ function settingsStore({
 
 // Four days after CODEX_WEBVIEW_NOW, so the countdown is always positive and
 // the fixture's daily rows fall inside the window.
-// Day -1 of the week-records fixture, in UTC, matching how the dashboard keys days.
-const WEEK_FIXTURE_EXPANDABLE_DAY = new Date(CODEX_WEBVIEW_NOW - 24 * 60 * 60_000)
-  .toISOString()
-  .slice(0, 10);
+// Day -1 of the week-records fixture, keyed in the dashboard's configured zone
+// (NOT UTC: the two agree only because CODEX_WEBVIEW_NOW happens to be midday).
+const WEEK_FIXTURE_EXPANDABLE_DAY = dayKeyInZone(
+  new Date(CODEX_WEBVIEW_NOW - 24 * 60 * 60_000),
+  I18n.getTimezone(),
+);
 
 const WEEK_RESETS_AT = new Date(CODEX_WEBVIEW_NOW + 4 * 24 * 60 * 60_000).toISOString();
 

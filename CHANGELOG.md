@@ -6,6 +6,17 @@ upstream merge: 2.4.0 / `298b2e1`). Format follows [Keep a Changelog](https://ke
 
 ## [2.15.0] — 2026-10-04
 
+### Fixed (review follow-up)
+
+- **The week tab's plumbing is now tested** — every week UI spec ran downstream of `updateData`, which the Playwright harness calls directly, so nothing exercised `weekAggregate` or asserted a non-null week slot. A dropped trailing argument or a changed quota-window kind would have emptied the tab in production with the whole suite green. A node test now refreshes with a `weekly_all` window present and asserts the aggregate reaches `updateData`, excludes usage from before the window opens, is reused across an unchanged poll, keeps object identity when a recompute is equal, and recomputes when in-window usage changes. Verified to fail when the aggregate silently yields nothing.
+- **Two week specs could not fail** — the drilldown id-collision spec looped over an empty list when the tab rendered no containers, so it passed while the feature was dead; the hidden-row assertion was satisfied by a row that did not exist. Both now assert presence first.
+- **The week aggregate is released with the corpus** — it was dropped only when the Claude source was cleared, so the pricing-backend switch, `refreshPricing` and the clear-local-data path left the previous record array pinned.
+- **The week aggregate keeps object identity when nothing changed** — a refresh touching a file outside the window produced an equal aggregate from a new array, which re-rendered all seven Claude panels. The previous object is reused while the memo keys on the new array, so the old corpus is still released.
+- **The week reset countdown no longer freezes** — the panel cache buckets every non-Today panel hourly, so once the week panel became cacheable its "Xd Yh Zm" figure could sit up to 59 minutes stale. Today and This Week now bucket per minute; everything else stays hourly.
+- **The UI job runs the Node its browsers shipped with** — CI installed Node 26 inside the Playwright image, overriding the bundled runtime and pairing a browser build with a Node it was never released against. That combination was never verified locally either.
+- **The week fixture keys its day in the dashboard's timezone** — it used UTC, which agreed only because the fixture clock is midday.
+
+
 ### Added (fork-specific)
 
 - **UI coverage for the "This Week" tab** — the tab had none: the Playwright harness never supplied the billing window's reset instant, so the reset banner, the week usage-tracking card and the entire `week-` drilldown path were unreachable from the suite. That blind spot is how several regressions reached releases with a green run. Four specs now assert the data, not the markup: the window and its charts render, week drilldown ids stay namespaced apart from the 30-day tab's for a shared date, expanding a week day opens that tab's own row and leaves the 30-day row closed, and Codex never shows the Claude-only tab.

@@ -3568,9 +3568,10 @@ export class UsageWebviewProvider {
       I18n.formatNumber(1234567.89), I18n.getDecimalPlaces(), getPricingBackend(),
       vscode.window.activeColorTheme?.kind,
       dayKeyInZone(now, I18n.getTimezone()),
-      // Only Today contains a minute-sensitive quota countdown. Do not make
-      // an ordinary minute tick re-render unrelated hidden history panels.
-      Math.floor(now.getTime() / (name === 'today' ? 60_000 : 3_600_000)),
+      // Today and This Week both carry a minute-sensitive countdown (the quota
+      // window and the weekly billing reset). Every other panel buckets hourly
+      // so an ordinary minute tick cannot re-render hidden history.
+      Math.floor(now.getTime() / (name === 'today' || name === 'week' ? 60_000 : 3_600_000)),
       // Quota reset expiry must not wait for an ordinary data mutation.
       normalizeQuotaWindows(this.usageLimits).map((w) => Date.parse(w.resetsAt) > now.getTime()),
       this.codexView?.limits.map((w) => Boolean(w.resetsAt && w.resetsAt > now.getTime())),

@@ -19,7 +19,7 @@ test('the week tab renders its billing window, charts and usage-tracking card', 
 
   // Summary figures come from weekData (positional slot 3 of updateData). A
   // shifted argument leaves this empty or throws during render.
-  await expect(panel.locator('.summary-item .value.cost')).not.toHaveText('');
+  await expect(panel.locator('.summary-item .value.cost')).toHaveText(/\d/);
 
   // The shared daily-breakdown section, rendered with the 'week-' id prefix.
   await expect(panel.locator('#week-dailyChart')).toBeVisible();
@@ -40,6 +40,9 @@ test('week drilldown ids stay distinct from the 30-day tab', async ({ page }) =>
   const weekIds = await page.locator('#week .hourly-detail-container').evaluateAll(
     (nodes) => nodes.map((node) => node.id),
   );
+  // Without this the loop below asserts nothing when the week tab renders no
+  // containers at all — which is exactly the breakage this spec exists to catch.
+  expect(weekIds.length).toBeGreaterThan(0);
   for (const id of weekIds) {
     expect(id).toMatch(/^hourly-detail-week-\d{4}-\d{2}-\d{2}$/);
   }
@@ -47,6 +50,7 @@ test('week drilldown ids stay distinct from the 30-day tab', async ({ page }) =>
   const monthIds = await page.locator('#month .hourly-detail-container').evaluateAll(
     (nodes) => nodes.map((node) => node.id),
   );
+  expect(monthIds.length).toBeGreaterThan(0);
   for (const id of monthIds) {
     expect(id).toMatch(/^hourly-detail-\d{4}-\d{2}-\d{2}$/);
   }
@@ -71,7 +75,11 @@ test('expanding a week day opens that tab own drilldown row', async ({ page }) =
   // toggleHourlyDetail scopes to the active tab, so the 30-day row for the same
   // date must stay closed.
   await page.locator('#tab-month').click();
-  await expect(page.locator(`#month .hourly-detail-row[data-date="${date}"]`)).toBeHidden();
+  // toBeHidden() alone is satisfied by a missing element, so prove the row
+  // exists before asserting it stayed closed.
+  const monthRow = page.locator(`#month .hourly-detail-row[data-date="${date}"]`);
+  await expect(monthRow).toHaveCount(1);
+  await expect(monthRow).toBeHidden();
 });
 
 test('Codex never shows the Claude-only week tab', async ({ page }) => {

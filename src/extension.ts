@@ -1747,6 +1747,7 @@ export class ClaudeCodeUsageExtension {
       this.claudeWeeklyQuotaHistory = [];
       this.cache.usageLimits = null;
       this.cache.usageLimitsLastUpdate = new Date(0);
+      this.weekMemo = null;
       this.cache.records = [];
       this.cache.contentAnalysis = null;
       this.cache.claudeIndex = createClaudeUsageIndex();
@@ -3557,6 +3558,7 @@ export class ClaudeCodeUsageExtension {
    * leaving totalCost/modelBreakdown.cost at the old rates.
    */
   private invalidateClaudeUsagePricingCache(): void {
+    this.weekMemo = null;
     this.claudeIndexGeneration = (this.claudeIndexGeneration ?? 0) + 1;
     this.claudeRenderSnapshot = undefined;
     this.cache.claudeIndex = createClaudeUsageIndex();
@@ -4619,8 +4621,18 @@ export class ClaudeCodeUsageExtension {
       records,
       new Date(new Date(resetsAt).getTime() - 7 * 24 * 60 * 60 * 1000),
     );
-    this.weekMemo = { records, resetsAt, data };
-    return { data, resetsAt };
+    // A refresh that touched a file outside the window produces an equal
+    // aggregate from a new array. Hand back the previous object so the panel
+    // cache holds, but key the memo on the NEW array so the old corpus is
+    // released: the earlier attempt kept the old entry wholesale and served a
+    // replaced corpus.
+    const reusable = this.weekMemo?.resetsAt === resetsAt
+      && isDeepStrictEqual(this.weekMemo?.data, data)
+      ? this.weekMemo?.data
+      : undefined;
+    const value = reusable ?? data;
+    this.weekMemo = { records, resetsAt, data: value };
+    return { data: value, resetsAt };
   }
 
   /** Compare the complete, time-aware render contract, not token totals alone.
@@ -4870,6 +4882,9 @@ export class ClaudeCodeUsageExtension {
       const contentAnalysis = loaded.contentAnalysis;
 
       if (records.length === 0) {
+        // An empty corpus never reaches weekAggregate, so release the memo here
+        // rather than letting it pin the previous records array.
+        this.weekMemo = null;
         const error = 'No usage records found. Make sure Claude Code is running.';
         this.statusBar.updateUsageData(null, null, error);
         this.statusBar.updateContext(null);

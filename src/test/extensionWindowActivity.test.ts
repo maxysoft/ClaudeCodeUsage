@@ -2789,6 +2789,138 @@ test('unchanged Claude history republishes Today and rolling 30 days at configur
   }
 });
 
+test('the weekly billing window reaches updateData and is reused across unchanged polls', async () => {
+  // The This Week tab is fork-exclusive and every UI spec is downstream of
+  // updateData, so nothing else proves weekAggregate actually produces data or
+  // that its memo reuses. A rename inside normalizeQuotaWindows, or a dropped
+  // trailing argument at either publish site, would empty the tab in production
+  // with the rest of the suite green.
+  const extension = bareExtension();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccu-week-slot-'));
+  const project = path.join(root, 'projects', '-fixture');
+  fs.mkdirSync(project, { recursive: true });
+  const resetsAt = '2030-03-14T12:00:00.000Z';
+  const usageLine = (id: string, timestamp: string, input: number): string =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp,
+      cwd: '/fixture/project',
+      requestId: `request-${id}`,
+      message: {
+        id: `message-${id}`,
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: input, output_tokens: 1 },
+      },
+    });
+  fs.writeFileSync(
+    path.join(project, 'session-week.jsonl'),
+    [
+      // Inside the window (resetsAt - 7d = 2030-03-07T12:00Z) and before "now".
+      usageLine('in-window', '2030-03-09T09:00:00.000Z', 40),
+      // Before the window opens: proves the slot carries a scoped aggregate
+      // rather than the whole corpus.
+      usageLine('before-window', '2030-03-01T09:00:00.000Z', 900),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+
+  const originalNow = Date.now;
+  const originalTimeZone = I18n.getTimezone();
+  let now = Date.parse('2030-03-10T15:59:30.000Z');
+  Date.now = () => now;
+  I18n.setTimezone('Asia/Hong_Kong');
+  extension.localDataClearedRequiresReload = false;
+  extension.refreshGate = new RefreshSingleFlight();
+  extension.quotaColdRetryDone = true;
+  extension.cache = {
+    records: [],
+    contentAnalysis: null,
+    claudeIndex: createClaudeUsageIndex(),
+    manifest: null,
+    lastUpdate: new Date(0),
+    dataDirectory: null,
+    usageLimits: { five_hour: null, seven_day: { utilization: 10, resets_at: resetsAt } },
+    usageLimitsLastUpdate: new Date(now),
+    usageLimitsBackoffUntil: new Date(0),
+    usageLimitsFailStreak: 0,
+  };
+  extension.getConfiguration = () => ({
+    dataDirectory: root,
+    dashboardAutoRefresh: true,
+    enableContentAnalysis: false,
+    advicePromptWindowDays: 30,
+    projectGroupingMode: 'git',
+    contextWindowOverride: 0,
+    timezone: 'Asia/Hong_Kong',
+  });
+  extension.refreshCodexData = () => undefined;
+  extension.maybeFetchUsageLimits = async () => extension.cache.usageLimits;
+  extension.syncProviderUi = () => undefined;
+  extension.outputChannel = { appendLine: () => undefined };
+  extension.statusBar = {
+    setLoading: () => undefined,
+    updateQuota: () => undefined,
+    updateContext: () => undefined,
+    updateUsageData: () => undefined,
+  };
+  const weekSlots: Array<{ data: { totalInputTokens?: number } | null; resetsAt: unknown }> = [];
+  extension.webviewProvider = {
+    setLoading: () => undefined,
+    updateQuota: () => undefined,
+    updateData: (...args: unknown[]) => {
+      weekSlots.push({
+        data: args[2] as { totalInputTokens?: number } | null,
+        // weekResetsAt is the final positional argument.
+        resetsAt: args[args.length - 1],
+      });
+    },
+  };
+
+  try {
+    await extension.refreshData(true, 'manual');
+    now += 60_000;
+    await extension.refreshData(false, 'poll');
+
+    assert.ok(weekSlots.length >= 2, 'both refreshes published');
+    const [first, second] = weekSlots;
+    assert.ok(first.data, 'the week aggregate reaches updateData');
+    assert.equal(first.resetsAt, resetsAt, 'the reset instant travels in the last slot');
+    // 40, not 940: the pre-window record must be excluded.
+    assert.equal(first.data?.totalInputTokens, 40);
+    assert.equal(
+      second.data,
+      first.data,
+      'an unchanged poll reuses the same object, so the dashboard keeps its panel cache',
+    );
+
+    // A new array holding the same in-window usage recomputes, finds the result
+    // equal and hands back the previous object, so the panel cache holds. The
+    // memo now points at the new array, so the old corpus is released.
+    const replacedArray = [...extension.cache.records];
+    extension.cache.records = replacedArray;
+    const replaced = extension.weekAggregate(replacedArray);
+    assert.equal(replaced.data, first.data, 'an equal recompute keeps object identity');
+    assert.equal(extension.weekMemo.records, replacedArray, 'the old array is released');
+
+    // Usage that actually lands inside the window produces a different object.
+    const grown = [...replacedArray, {
+      timestamp: '2030-03-10T10:00:00.000Z',
+      message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 5, output_tokens: 1 } },
+    }];
+    const changed = extension.weekAggregate(grown);
+    assert.notEqual(changed.data, first.data, 'changed usage recomputes');
+    assert.equal(changed.data?.totalInputTokens, 45);
+
+    // Releasing the source releases the memo with it.
+    extension.invalidateClaudeUsagePricingCache();
+    assert.equal(extension.weekMemo, null);
+  } finally {
+    Date.now = originalNow;
+    I18n.setTimezone(originalTimeZone);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('credentials watcher counts unnamed events without exposing filenames', async () => {
   const extension = bareExtension();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ccu-credentials-watch-event-'));
