@@ -43,6 +43,7 @@ Lima gambar v2.3 ini menggunakan renderer produksi, data sintetis, dan variabel 
 - Codex menampilkan **token terpakai hari ini** dan **sisa kuota** secara terpisah: penggunaan mingguan 36% berarti `wk 64%`. Tooltip tetap menampilkan bilah penggunaan, waktu reset, dan catatan berbaris. Kuota berasal dari pengamatan lokal terakhir, bukan saldo langsung.
 - Detail periode tertutup secara default; pengaturan berbagi berada di bawah pratinjau. Berbagi aktif secara default dan dapat dimatikan, dengan intensitas kuantil, logaritmik, atau linear.
 - Panggilan CLI dihitung hanya jika sesi persisten menyimpan log dengan usage. Panggilan tanpa log tidak dapat dipulihkan; Hari ini dan 30 hari terakhir memakai zona waktu yang dikonfigurasi.
+- Setelah indeks riwayat Codex selesai, tambahan log atau file baru tidak lagi memunculkan pemberitahuan pengisian berulang. Identitas sesi ambigu tetap menjadi peringatan kualitas tanpa mengulang pekerjaan yang tidak dapat menyelesaikannya. Progres indeks yang benar-benar belum selesai dan percobaan ulang tetap terlihat.
 - Projects menambahkan heatmap Token 30/90 hari “proyek × tanggal” dan tren harian bertumpuk untuk kedua penyedia, dengan tooltip presisi, cakupan eksplisit, baris terbatas, dan ekor “Proyek lain”.
 
 ## Fitur
@@ -57,10 +58,27 @@ Lima gambar v2.3 ini menggunakan renderer produksi, data sintetis, dan variabel 
 - **Harga multi-vendor** — Opus 4.x / Sonnet 4.x / Haiku 4.5 diverifikasi terhadap harga publik Anthropic; tarif referensi untuk OpenAI / Gemini / DeepSeek / Kimi / GLM / Qwen dengan fallback berbasis family model. `Refresh Token Pricing` menarik data LiteLLM langsung.
 - **Personalisasi** — bahasa, zona waktu, angka desimal, angka ringkas, pengelompokan proyek, toggle penyegaran otomatis dashboard.
 
+## Yang baru di v2.5
+
+- **Pencapaian lokal** — lihat lencana, progres, dan target berikutnya. Aktif secara default;
+  nonaktifkan Local achievements di pengaturan (`enableAchievements`). Tanggal berasal dari
+  log tersimpan, bukan seluruh riwayat akun; kalibrasi manual memperbarui tanggal yang didukung.
+- **Kartu pencapaian** — pilih lencana yang diperoleh, periksa pratinjau, lalu ekspor secara
+  eksplisit sebagai SVG lokal. Tanpa login GitHub atau unggahan otomatis.
+- **Berbagi peta panas** — pilih Claude, Codex, atau keduanya, dengan Token atau nilai setara
+  API opsional. Nilai berupa estimasi, bukan tagihan; nilai tiap penyedia ditampilkan terpisah.
+- **Laju kuota mingguan** — prakiraan opsional, nonaktif secara default, berdasarkan pengamatan
+  mingguan yang sudah ada. Memerlukan data baru dan tepercaya; log Codex saat ini belum mendukung prakiraan.
+- **Riwayat Codex terkompresi** — baca `.jsonl.zst` bersama `.jsonl` secara lokal tanpa mengubah
+  log sumber, menyimpan salinan hasil dekompresi, atau menghitung riwayat yang sama dua kali.
+
+Lihat [catatan perubahan](CHANGELOG.md) dan [data lokal dan privasi](LOCAL-DATA.md)
+untuk batas cakupan tanggal, ekspor, penyimpanan, dan kuota.
+
 ## Yang baru di v2.4
 
-<details open>
-<summary>Perubahan utama rilis terbaru</summary>
+<details>
+<summary>Perubahan utama v2.4</summary>
 
 - **Penyegaran dan pemulihan lebih jelas** — jeda otomatis berlaku pada kedua
   halaman, bukan pengumpulan latar atau status bar. Kegagalan mempertahankan
@@ -171,10 +189,13 @@ retensi, migrasi, penghapusan, dan batas interaksi jarak jauh.
 | Data | Retensi lokal | Perilaku jarak jauh |
 |---|---|---|
 | Log sumber | Milik penyedia, hanya-baca, tidak disalin utuh | Tidak ada secara default |
-| Indeks Codex | Agregat numerik/struktur pseudonim yang terbatas | Tidak ada |
+| Indeks Codex | Agregat pseudonim terbatas, terpisah menurut direktori log, salt profil dan zona waktu; bangun ulang hanya indeks aktif, Hapus Semua mencakup semua keluarga berkas indeks yang cocok persis | Tidak ada |
 | Riwayat kuota | Pengamatan jendela anonim terbatas, tanpa ID akun mentah | Hanya kuota Claude saat aktif; Codex tetap lokal |
 | UI/berbagi | Filter serta judul/rentang/tujuan GitHub opsional | Publikasi hanya setelah konfirmasi tepat |
 | Saran/kunci | Bukti agregat terbatas; kunci hanya di SecretStorage | Hanya permintaan yang dipratinjau persis setelah tindakan Kirim terpisah |
+
+Perubahan zona waktu dapat memakai checkpoint lengkap yang terbukti berasal dari sumber yang sama secara hanya-baca.
+Hanya bucket tanggal/jam yang dimigrasikan, tanpa membangun ulang riwayat utama dari nol.
 
 Reset tanpa bukti terstruktur tidak dapat direkonstruksi. Riwayat beberapa login
 yang ambigu memakai pengamatan nyata terbaru untuk estimasi gabungan periode berjalan

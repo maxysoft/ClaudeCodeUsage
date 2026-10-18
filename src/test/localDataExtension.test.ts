@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import Module = require('node:module');
 
 import { createEmptyQuotaObservationStore } from '../quotaObservationStore';
+import { ACHIEVEMENT_RECORD_FILE, ACHIEVEMENT_LEGACY_RECORD_FILE, loadAchievementRecords } from '../achievementRecordStore';
 
 type ExtensionModule = typeof import('../extension');
 
@@ -28,6 +29,28 @@ function loadExtensionModule(): ExtensionModule {
 }
 
 const { ClaudeCodeUsageExtension } = loadExtensionModule();
+
+test('namespaced inventory and clearing cover exact families without deleting another source', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-scoped-clear-'));
+  const a = `codex-index-v1-${'a'.repeat(64)}.json`;
+  const b = `codex-index-v1-${'b'.repeat(64)}.json`;
+  const extension = Object.create(ClaudeCodeUsageExtension.prototype) as any;
+  extension.context = { globalStorageUri: { fsPath: root } };
+  const names = [a, b, `${a}.tmp-200-123e4567-e89b-12d3-a456-426614174000`,
+    a.replace('.json', '.corrupt-100-200.json'), `${a}.bak`, `${b}.lock`,
+    `codex-index-v1-${'z'.repeat(64)}.json`, 'source.jsonl'];
+  try {
+    await Promise.all(names.map(name => writeFile(path.join(root, name), 'preserve', 'utf8')));
+    assert.equal((await extension.derivedFileFamilyNames(path.join(root, a), 'codex-index')).length, 3);
+    assert.equal((await extension.localFileFamilyInventory(path.join(root, a), 'codex-index')).itemCount, 4);
+    assert.deepEqual(await extension.codexDerivedIndexPaths(), [a, b].map(name => path.join(root, name)));
+    await extension.removeDerivedFileFamilyWithLease(path.join(root, a), 'codex-index');
+    assert.equal((await extension.derivedFileFamilyNames(path.join(root, a), 'codex-index')).length, 0);
+    for (const name of [b, `${a}.bak`, `${b}.lock`, names[6], 'source.jsonl']) {
+      assert.equal(await readFile(path.join(root, name), 'utf8'), 'preserve');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 function memoryGlobalState(initial: Record<string, unknown>) {
   const state = new Map(Object.entries(initial));
@@ -104,7 +127,7 @@ test('host inventory exposes only value-free location classes and random quota s
   const serialized = JSON.stringify(inventory);
   assert.equal(inventory.schemaVersion, 1);
   assert.deepEqual(inventory.rows.map((row: any) => row.id), [
-    'R1', 'R2', 'P1', 'P2', 'P3-P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11',
+    'R1', 'R2', 'P1', 'P2', 'P3-P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
   ]);
   assert.doesNotMatch(serialized, /Users\/private|private-owner|private-repo/);
   assert.doesNotMatch(serialized, /fingerprint-private-canary|window-private-canary|machine-salt-canary/);
@@ -303,20 +326,44 @@ test('reset replay is serialized with newly requested local-data actions', async
   assert.equal(newerActionStarted, true);
 });
 
-test('clear-all uses the exact allowlist and preserves unrelated state', async () => {
+test('clear-all uses the exact allowlist and preserves unrelated state', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-clear-all-scoped-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const owned = ['codex-index-v1.json', `codex-index-v1-${'a'.repeat(64)}.json`,
+    `codex-index-v1-${'b'.repeat(64)}.corrupt-100-200.json`,
+    `codex-index-v1-${'c'.repeat(64)}.json.tmp-200-123e4567-e89b-12d3-a456-426614174000`];
+  const preserved = ['source.jsonl', 'codex-index-v1.json.bak', 'unrelated.json'];
+  await Promise.all([...owned, ...preserved].map(name => writeFile(path.join(root, name), 'fixture')));
   const globalState = memoryGlobalState({
     'ccu.setting.showCost': true,
     'ccu.setting.unknown-canary': 'must-survive',
     'ccu.lastSeenVersion': '2.3.0',
     'ccu.heatmapRepo': 'owner/repo',
     'ccu.adviceEffectiveness.localState': { schemaVersion: 3 },
+    'ccu.achievements.grants.v1': ['active-days-7'],
+    'ccu.achievements.grants.v2': ['sonnet-main'],
+    'ccu.achievements.grants.v3': ['fable-volume-bronze'],
+    'ccu.achievements.grants.v4': ['fable-volume-bronze'],
+    'ccu.achievements.grants.v5': ['hundred-million-club'],
+    'ccu.achievements.hours.v3': { schemaVersion: 3, maxStreak: 24 },
+    'ccu.achievements.structuralAudit.v1': true,
+    'ccu.achievements.tokenAudit.v1': true,
+    'ccu.achievements.bucketAudit.v1': true,
+    'ccu.achievements.manifestAudit.v1': true,
+    'ccu.achievements.calendarAudit.v1': true,
+    'ccu.achievements.calibrationAudit.v1': true,
+    'ccu.achievements.calibrationPending.v1': { schemaVersion: 1, grants: [] },
+    'ccu.achievements.calendarPeak.v1': { schemaVersion: 1, peakFourWeekAverage: 2_000_000_000 },
+    'ccu.achievements.future-canary': 'must-survive',
+    'ccu.achievements.activity.v2': { schemaVersion: 2, settingKeys: [], features: [] },
+    'ccu.achievements.hours.v2': { schemaVersion: 2, maxStreak: 12 },
     'claudeCodeUsage.adviceEffectiveness.feedback.v1': { schemaVersion: 1 },
     'ccu.unrelated.canary': 'must-survive',
     'provider.credentials.canary': 'must-survive',
   });
   const resetSettings: string[] = [];
   const extension = Object.create(ClaudeCodeUsageExtension.prototype) as any;
-  extension.context = { globalState, globalStorageUri: { fsPath: '/synthetic/global-storage' } };
+  extension.context = { globalState, globalStorageUri: { fsPath: root } };
   extension.settings = {
     preflightResetAllOwnedData: () => undefined,
     resetAllOwnedData: async () => { resetSettings.push('advice.apiKey'); },
@@ -341,13 +388,28 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
     codexClearCalls += 1;
   };
   extension.quotaObservationRepository = {
-    clear: async () => createEmptyQuotaObservationStore(),
+    clear: async () => {
+      const store = createEmptyQuotaObservationStore();
+      await writeFile(path.join(root, 'quota-observations-v2.json'), JSON.stringify(store));
+      return store;
+    },
   };
-  extension.removeDerivedFileFamilyWithLease = async () => undefined;
   extension.quotaObservationStore = createEmptyQuotaObservationStore();
   let adviceClearCalls = 0;
   extension.webviewProvider = {
     clearAdviceLocalData: async () => { adviceClearCalls += 1; return true; },
+    clearAchievementGrants: async (options: { holdUntilReload?: boolean }) => {
+      assert.equal(options.holdUntilReload, true,
+        'clear-all must not reopen stale achievement evidence before reload');
+      await globalState.update('ccu.achievements.grants.v1', undefined);
+      await globalState.update('ccu.achievements.grants.v2', undefined);
+      await globalState.update('ccu.achievements.grants.v3', undefined);
+      await globalState.update('ccu.achievements.grants.v4', undefined);
+      await globalState.update('ccu.achievements.activity.v2', undefined);
+      await globalState.update('ccu.achievements.hours.v2', undefined);
+      await new (require('../achievementRecordStore').AchievementRecordRepository)(
+        path.join(root, ACHIEVEMENT_RECORD_FILE)).clear();
+    },
     clearSharingRuntimeState: () => undefined,
     updateOpenRouterData: () => undefined,
   };
@@ -365,7 +427,6 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
   extension.codexHasData = false;
   extension.refreshQuotaObservationViews = () => undefined;
   extension.syncProviderUi = () => undefined;
-  extension.verifyClearAllPostcondition = async () => undefined;
 
   const pendingResult = extension.clearAllExtensionDerivedData();
   await new Promise((resolve) => setImmediate(resolve));
@@ -375,6 +436,15 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
 
   assert.equal(result.ok, true);
   assert.equal(result.clientAction, 'clear-all-client-state');
+  const current = await loadAchievementRecords(path.join(root, ACHIEVEMENT_RECORD_FILE));
+  const legacy = await loadAchievementRecords(path.join(root, ACHIEVEMENT_LEGACY_RECORD_FILE));
+  assert.equal(current?.schemaVersion, 2);
+  assert.deepEqual(current?.records, []);
+  assert.deepEqual(current?.legacyRecords, []);
+  assert.equal(legacy?.schemaVersion, 1);
+  assert.deepEqual(legacy?.records, []);
+  assert.deepEqual(await extension.codexDerivedIndexPaths(), []);
+  for (const name of preserved) assert.equal(await readFile(path.join(root, name), 'utf8'), 'fixture');
   assert.equal(codexClearCalls, 1);
   assert.equal(adviceClearCalls, 1);
   assert.ok(resetSettings.includes('advice.apiKey'));
@@ -383,8 +453,39 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
   assert.equal(globalState.state.has('ccu.lastSeenVersion'), false);
   assert.equal(globalState.state.has('ccu.heatmapRepo'), false);
   assert.equal(globalState.state.has('ccu.adviceEffectiveness.localState'), false);
+  assert.equal(globalState.state.has('ccu.achievements.grants.v1'), false);
+  assert.equal(globalState.state.has('ccu.achievements.grants.v2'), false);
+  assert.equal(globalState.state.has('ccu.achievements.grants.v3'), false);
+  assert.equal(globalState.state.has('ccu.achievements.grants.v4'), false);
+  assert.equal(globalState.state.has('ccu.achievements.activity.v2'), false);
+  assert.equal(globalState.state.has('ccu.achievements.hours.v2'), false);
+  for (const key of [
+    'ccu.achievements.grants.v5', 'ccu.achievements.hours.v3',
+    'ccu.achievements.structuralAudit.v1', 'ccu.achievements.tokenAudit.v1',
+    'ccu.achievements.bucketAudit.v1',
+    'ccu.achievements.manifestAudit.v1',
+    'ccu.achievements.calendarAudit.v1',
+    'ccu.achievements.calibrationAudit.v1',
+    'ccu.achievements.calibrationPending.v1',
+    'ccu.achievements.calendarPeak.v1',
+  ]) assert.equal(globalState.state.has(key), false, key);
+  assert.equal(globalState.state.get('ccu.achievements.future-canary'), 'must-survive');
   assert.equal(globalState.state.has('ccu.codex.machineSalt'), false);
   assert.equal(globalState.state.has('claudeCodeUsage.adviceEffectiveness.feedback.v1'), false);
   assert.equal(globalState.state.get('ccu.unrelated.canary'), 'must-survive');
   assert.equal(globalState.state.get('provider.credentials.canary'), 'must-survive');
+});
+
+test('clear-all postcondition requires the bounded empty achievement tombstone, not an absent or populated journal', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-record-postcondition-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const extension = Object.create(ClaudeCodeUsageExtension.prototype) as any;
+  extension.context = { globalStorageUri: { fsPath: root }, globalState: memoryGlobalState({}) };
+  await writeFile(path.join(root, 'quota-observations-v2.json'), JSON.stringify(createEmptyQuotaObservationStore()));
+  await assert.rejects(extension.verifyClearAllPostcondition(), /achievement/);
+  const repository = new (require('../achievementRecordStore').AchievementRecordRepository)(path.join(root, ACHIEVEMENT_RECORD_FILE));
+  await repository.initialize(['hundred-million-club']);
+  await assert.rejects(extension.verifyClearAllPostcondition(), /achievement/);
+  await repository.clear();
+  await extension.verifyClearAllPostcondition();
 });

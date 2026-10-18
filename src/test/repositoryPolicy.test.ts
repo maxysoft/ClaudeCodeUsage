@@ -7,6 +7,13 @@ import * as ts from 'typescript';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 
+test('TypeScript source discovery excludes private evidence snapshots outside src', () => {
+  const parsed = ts.parseJsonConfigFileContent(JSON.parse(repoFile('tsconfig.json')), ts.sys, REPO_ROOT);
+  assert.equal(parsed.errors.length, 0);
+  assert.ok(parsed.fileNames.length > 0);
+  for (const file of parsed.fileNames) assert.ok(file.startsWith(resolve(REPO_ROOT, 'src') + '/'), file);
+});
+
 test('hotfix polling documentation retains the hourly Content boundary and cache release semantics', () => {
   assert.match(repoFile('CHANGELOG.md'), /hourly hidden-panel refresh still computes Content attribution once/);
   assert.match(repoFile('ARCHITECTURE.md'), /撤销来源和释放时清除旧引用/);
@@ -82,12 +89,11 @@ function workflowStepValues(workflow: string, key: 'run' | 'uses'): WorkflowStep
 }
 
 function assertExactVscePin(commands: readonly WorkflowStepValue[]): void {
-  const tokens = commands.flatMap(({ value }) =>
-    value.match(/@vscode\/vsce(?:@[^\s]+)?/g) ?? [],
-  );
-  assert.ok(tokens.length > 0, 'workflow must invoke VSCE');
-  for (const token of tokens) {
-    assert.equal(token, '@vscode/vsce@4.0.0', `unexpected VSCE invocation ${token}`);
+  const invocations = commands.filter(({ value }) => /vsce/.test(value));
+  assert.ok(invocations.length > 0, 'workflow must invoke locked VSCE');
+  for (const { value } of invocations) {
+    assert.doesNotMatch(value, /\bnpx\b|@vscode\/vsce@/, 'never download CLI dependencies at execution time');
+    assert.match(value, /(?:\.github\/build-tools|\$CCU_RELEASE_TOOLS)\/node_modules\/\.bin\/vsce/);
   }
 }
 
@@ -883,6 +889,32 @@ test('AGENTS links a faithful Simplified-Chinese review copy', () => {
   assert.match(chinese, /推送、创建 PR、合并或发布 Release/);
 });
 
+test('new visual systems require compared mockups and approval before implementation', () => {
+  const english = repoFile('AGENTS.md'), chinese = repoFile('AGENTS.zh-CN.md');
+  assert.match(english, /New visual systems: design before implementation/);
+  assert.match(english, /imagegen[\s\S]*2–3[\s\S]*distinct/i);
+  assert.match(english, /maintainer[\s\S]*approve[\s\S]*before production UI implementation/i);
+  assert.match(english, /approved design[\s\S]*red-green TDD/i);
+  assert.match(english, /mockups are not[\s\S]*acceptance evidence/i);
+  assert.match(english, /Small copy[\s\S]*spacing fixes[\s\S]*do not/i);
+  assert.match(chinese, /全新可视化：先定稿，再实现/);
+  assert.match(chinese, /imagegen[\s\S]*2–3[\s\S]*不同/);
+  assert.match(chinese, /维护者[\s\S]*明确确认[\s\S]*生产 UI 实现/);
+  assert.match(chinese, /已批准设计[\s\S]*red-green TDD/);
+  assert.match(chinese, /设计图不是[\s\S]*验收证据/);
+  assert.match(repoFile('CONTRIBUTING.md'), /AGENTS\.md#new-visual-systems-design-before-implementation/);
+});
+
+test('public release notes focus on user outcomes rather than internal requests', () => {
+  const english = repoFile('AGENTS.md'), chinese = repoFile('AGENTS.zh-CN.md');
+  assert.match(english, /Release notes focus on user-visible outcomes/);
+  assert.match(english, /merge strateg[\s\S]*test counts[\s\S]*rank[\s\S]*threshold/i);
+  assert.match(english, /internal[\s\S]*PR[\s\S]*handoff/i);
+  assert.match(chinese, /Release 说明聚焦用户可感知的变化/);
+  assert.match(chinese, /合并策略[\s\S]*测试数量[\s\S]*档位[\s\S]*门槛/);
+  assert.match(repoFile('CONTRIBUTING.md'), /Do not turn internal implementation requests into release highlights/);
+});
+
 test('AGENTS allow only the guarded Codex session-index title lookup', () => {
   const agents = repoFile('AGENTS.md');
   const chinese = repoFile('AGENTS.zh-CN.md');
@@ -925,6 +957,66 @@ test('CLAUDE is a compatibility entry point, not a conflicting policy source', (
   assert.match(claude, /AGENTS\.md.*canonical repository policy/);
   assert.match(claude, /polling always follows\s+`refreshInterval`/);
   assert.doesNotMatch(claude, /activity-aware: ~15 s|never writes to `~\/\.claude\/`/);
+});
+
+test('current documentation separates task authority, rendering acceptance and replay exceptions', () => {
+  const english = repoFile('AGENTS.md'), chinese = repoFile('AGENTS.zh-CN.md');
+  for (const [document, patterns] of [
+    [english, [/maintainer owns user value/i, /Agents own implementation/i,
+      /Read documentation by task/i, /ordinary verified single-file append/i,
+      /UUID first-owner changes[\s\S]*ordered wider[\s\S]*replay/i,
+      /window or worktree alone[\s\S]*not isolation/i,
+      /necessary rendering-fidelity guard, not native acceptance/i,
+      /full-page replacement or a provider-panel live patch/i]],
+    [chinese, [/维护者裁决用户价值/, /负责实现、反例/, /按任务读取文档/,
+      /普通已验证单文件 append/, /UUID first-owner[\s\S]*有序重放/,
+      /单独窗口或工作树不等于隔离/, /必要的渲染保真守卫，不证明原生/,
+      /整页替换[\s\S]*live patch/]],
+  ] as const) for (const pattern of patterns) assert.match(document, pattern);
+});
+
+test('current data inventory supplements the historical baseline and dates only proven live awards', () => {
+  for (const suffix of ['', '.zh-CN']) {
+    const inventory = repoFile(`LOCAL-DATA${suffix}.md`);
+    assert.ok(inventory.includes('achievements-v2.json'));
+    assert.ok(inventory.includes('ccu.combinedHeatmap.'));
+    for (const suffix of ['provider', 'metric', 'showAmounts']) {
+      assert.ok(inventory.includes('`' + suffix + '`'));
+    }
+  }
+  const english = repoFile('ARCHITECTURE.md'), chinese = repoFile('ARCHITECTURE-zh-CN.md');
+  assert.match(english, /historical field-level baseline[\s\S]*LOCAL-DATA\.md/);
+  assert.match(chinese, /字段级历史基线[\s\S]*LOCAL-DATA\.zh-CN\.md/);
+  assert.match(english, /Proven Claude\/Codex Token crossings[\s\S]*cumulative[\s\S]*independent\s+receipts/);
+  assert.match(chinese, /Claude／Codex Token 跨级[\s\S]*累计 API 等价跨级[\s\S]*独立收据/);
+  for (const file of ['docs/superpowers/specs/2026-09-02-v2.3.1-local-data-contract.md',
+    'docs/superpowers/specs/2026-09-02-v2.3.1-local-data-contract.zh-CN.md']) {
+    assert.ok(repoFile(file).includes('../../../LOCAL-DATA'));
+  }
+});
+
+test('weekly value documentation explains current-window estimates without promising account balances', () => {
+  const english = repoFile('ARCHITECTURE.md'), chinese = repoFile('ARCHITECTURE-zh-CN.md');
+  for (const document of [english, chinese]) {
+    assert.ok(document.includes('candidateFullEquivalent = pricedUsedEquivalentThroughObservedAt / usedFraction'));
+  }
+  assert.match(english, /current window[\s\S]*low-confidence local estimate/i);
+  assert.match(english, /weighted median/i);
+  assert.match(chinese, /当前周期[\s\S]*低可信本地估算/);
+  assert.match(chinese, /加权中位数/);
+  assert.match(english, /multiple distinct mapped `seriesKey`/);
+  assert.match(english, /single unattributed[\s\S]*after completion/);
+  assert.match(chinese, /多个不同 `seriesKey`[\s\S]*已结束 Codex/);
+  assert.match(chinese, /单一未归属[\s\S]*结束后仍可保留/);
+  assert.match(english, /cumulative known used value exceeds the aggregate candidate/i);
+  assert.match(chinese, /累计已知已用等价值[\s\S]*汇总候选/);
+  assert.doesNotMatch(english, /Current\s+unused value is withheld/i);
+  assert.doesNotMatch(chinese, /当前周期不显示未用值/);
+  assert.match(repoFile('LOCAL-DATA.md'), /74[\s\S]*100[\s\S]*26/);
+  assert.match(repoFile('LOCAL-DATA.zh-CN.md'), /74[\s\S]*100[\s\S]*26/);
+  for (const file of ['LOCAL-DATA.md', 'LOCAL-DATA.zh-CN.md']) {
+    assert.ok(repoFile(file).includes('showWeeklyQuotaPace'));
+  }
 });
 
 test('line endings and tracked file modes are repository-safe', () => {
@@ -1455,7 +1547,7 @@ test('release history stays scannable and human contributors stay discoverable',
     'Credits should not single out first-time contributors');
   for (const login of [
     'Carl723000', 'jack21', 'Dobidop', 'nickearnshaw', 'mxzinke',
-    'Alfiefe10', 'jackieyangjq', 'rsyuzyov', 'projectronic', 'zeyutang',
+    'Alfiefe10', 'jackyyangjq', 'rsyuzyov', 'projectronic', 'zeyutang',
     'chuccv', 'eduardogomezgvp', 'zhaoxiao9302', 'mkgaskin-ops',
   ]) {
     assert.ok(main.includes(`https://github.com/${login}`), `missing contributor ${login}`);
@@ -1561,8 +1653,8 @@ test('v2.3 README editions share release evidence and local-data boundaries', ()
     }
     assert.doesNotMatch(
       body,
-      /local candidate|本地候选|本機候選|ローカル候補|로컬 후보|Kandidat lokal/i,
-      `${readme} still labels v2.3.1 as a local candidate`,
+      /(?:v?2\.3\.1[^\n]{0,30}(?:local candidate|本地候选|本機候選|ローカル候補|로컬 후보|Kandidat lokal))/i,
+      `${readme} still labels released v2.3.1 as a local candidate`,
     );
   }
 
@@ -1602,6 +1694,14 @@ test('v2.4 synthetic preview images are present and carry no text metadata', () 
 });
 
 test('v2.4 README editions describe one preview-first sharing workspace', () => {
+  const assertMinorReleaseHeadings = (body: string, readme: string): void => {
+    // Feature chapters may document a patch release; What's new remains minor-only.
+    const releaseHeadings = body.split(/\r?\n/).filter((line) =>
+      /^#{2,6}\s/.test(line) && /What['’]s new|新功能|新機能|새로운 기능|Yang baru/i.test(line),
+    );
+    assert.doesNotMatch(releaseHeadings.join('\n'), /(?:^|[^\d])2\.4\.\d/,
+      `${readme} must keep What's new at minor-version granularity`);
+  };
   const expectations: Record<string, RegExp[]> = {
     'README.md': [
       /^## What's new in 2\.4$/m,
@@ -1663,11 +1763,10 @@ test('v2.4 README editions describe one preview-first sharing workspace', () => 
       assert.ok(body.includes(publicId), `${readme} is missing compatibility command ${publicId}`);
     }
     assert.match(body, /enableShareCard/, `${readme} is missing the single visible sharing switch`);
-    assert.doesNotMatch(
-      body,
-      /^##[^\n]*2\.4\.\d[^\n]*$/m,
-      `${readme} must keep What's new at minor-version granularity`,
-    );
+    assertMinorReleaseHeadings(body, readme);
+    const patchHeading = body.match(patterns[0])![0].replace('2.4', '2.4.2');
+    assert.throws(() => assertMinorReleaseHeadings(`${body}\n${patchHeading}`, readme),
+      /minor-version granularity/, 'a patch-level release heading must still fail in every edition');
   }
 });
 
@@ -1726,6 +1825,45 @@ test('pull request checklist names the actual eight UI locales', () => {
   assert.match(template, /all nine README files/);
 });
 
+test('issue templates route Claude and Codex reports with privacy-safe evidence', () => {
+  for (const name of ['bug_report', 'feature_request', 'question']) {
+    const form = repoFile(`.github/ISSUE_TEMPLATE/${name}.yml`);
+    assert.match(form, /id: provider/);
+    assert.match(form, /Claude/);
+    assert.match(form, /Codex/);
+    assert.match(form, /Not sure/);
+    assert.match(form, /credentials/);
+    assert.match(form, /conversation logs/);
+    assert.doesNotMatch(form, /Claude-only|Multi-provider dashboards.*out of scope|every model name/i);
+  }
+  const bug = repoFile('.github/ISSUE_TEMPLATE/bug_report.yml');
+  assert.match(bug, /Diagnostic logs \(optional, redacted\)/);
+  assert.match(bug, /anonymous `refresh:`/);
+  assert.match(bug, /\.jsonl\.zst/);
+  assert.doesNotMatch(bug, /Open Dashboard|please paste it|every model name/i);
+  const feature = repoFile('.github/ISSUE_TEMPLATE/feature_request.yml');
+  assert.match(feature, /Sketches.*optional/i);
+  assert.match(feature, /not required to generate/i);
+  const config = repoFile('.github/ISSUE_TEMPLATE/config.yml');
+  assert.match(config, /https:\/\/github\.com\/ClaudeCodeUsage\/ClaudeCodeUsage\/blob\/main\/README\.md/);
+  assert.doesNotMatch(config, /github\.com\/jack21\//);
+  assert.match(config, /blank_issues_enabled: true/);
+  assert.match(repoFile('.github/TEMPLATES.zh-CN.md'), /原始对话|原始日志/);
+});
+
+test('pull request template matches release labels and conditional review gates', () => {
+  const template = repoFile('.github/PULL_REQUEST_TEMPLATE.md');
+  assert.doesNotMatch(template, /`feature` \(minor\)|future.*automated triage/i);
+  assert.match(template, /ordinary[\s\S]*patch[\s\S]*`minor`/i);
+  assert.match(template, /Squash and merge/);
+  assert.match(template, /skip-changelog/);
+  assert.match(template, /imagegen[\s\S]*2–3[\s\S]*approval/i);
+  assert.match(template, /not run[\s\S]*reason/i);
+  assert.match(template, /isolated[\s\S]*state/i);
+  assert.match(template, /user-visible outcome/i);
+  assert.match(template, /maintainer approval[\s\S]*dependencies/i);
+});
+
 // This fork keeps its own CHANGELOG.md (framed as "changes to this fork
 // compared to upstream", see the file header) instead of upstream's
 // Release-Drafter-managed "## [Unreleased]" heading convention, so the
@@ -1741,9 +1879,9 @@ test('changelog documents the current release and its upstream alignment', () =>
   assert.match(changelog, /aligned with `jack21\/ClaudeCodeUsage`/);
 });
 
-test('changelog records the upstream v2.4.0 alignment', () => {
+test('changelog records the upstream v2.5.0 alignment', () => {
   const changelog = repoFile('CHANGELOG.md');
-  assert.match(changelog, /2\.4\.0 \/ `298b2e1`/);
+  assert.match(changelog, /2\.5\.0 \/ `7c3389d`/);
 });
 
 test('changelog separates unreleased changes from published v2.3.3 and v2.3.2 fixes', () => {
@@ -1821,8 +1959,11 @@ test('package lock and Codex UI tooling stay exact and release-safe', () => {
   };
   const root = lock.packages[''];
 
-  assert.equal(pkg.devDependencies['@playwright/test'], '1.61.1');
-  assert.equal(pkg.devDependencies['@axe-core/playwright'], '4.12.1');
+  assert.equal(pkg.devDependencies['@playwright/test'], '1.64.1');
+  // Axe 4.14 activates label-content-name-mismatch for existing achievement
+  // controls. Keep this audited baseline until a separate accessibility fix
+  // has browser and native UI acceptance; do not disable that rule to upgrade.
+  assert.equal(pkg.devDependencies['@axe-core/playwright'], '4.13.0');
   assert.equal(root.version, pkg.version);
   assert.deepEqual(root.devDependencies, pkg.devDependencies);
   assert.equal(pkg.dependencies, undefined);
@@ -1871,7 +2012,7 @@ test('CI has separate Node, browser, and package release gates', () => {
   assert.deepEqual(workflowStepValues('# run: npx -y @vscode/vsce@3.9.1 package', 'run'), []);
   assert.throws(
     () => assertExactVscePin([{ value: 'npx -y @vscode/vsce@latest package', line: 1 }]),
-    /unexpected VSCE invocation/,
+    /never download CLI dependencies at execution time/,
   );
 
   assert.match(workflow, /^name:\s*Test\s*$/m);
@@ -1886,11 +2027,80 @@ test('CI has separate Node, browser, and package release gates', () => {
   assert.match(workflow, /^    name:\s*Node Tests\s*$/m);
   assert.match(workflow, /^    name:\s*UI Test\s*$/m);
   assert.match(workflow, /^    name:\s*Release Package\s*$/m);
-  assert.match(workflow, /image:\s*mcr\.microsoft\.com\/playwright:v1\.61\.1-noble/);
+  assert.match(workflow, /image:\s*mcr\.microsoft\.com\/playwright:v1\.64\.1-noble/);
   assert.match(workflow, /PLAYWRIGHT_BROWSERS_PATH:\s*\/ms-playwright/);
   assert.match(workflow, /needs:\s*\[test, ui\]/);
-  assert.ok(runValues.includes('npm run test:ui'));
-  const packageAt = runValues.indexOf('npx -y @vscode/vsce@4.0.0 package --out /tmp/claude-code-usage-ci.vsix');
+  const assertShardedUiGate = (source: string): void => {
+    // Scope assertions to each job so unrelated commands/comments cannot satisfy a gate.
+    const active = source.split(/\r?\n/).filter((line) => !line.trimStart().startsWith('#')).join('\n');
+    const job = (id: string): string => {
+      const blocks = [...active.matchAll(new RegExp(`^  ${id}:\\s*\n([\\s\\S]*?)(?=^  [\\w-]+:|(?![\\s\\S]))`, 'gm'))];
+      assert.equal(blocks.length, 1, `exactly one ${id} job is required`);
+      return blocks[0][1];
+    };
+    const node = job('test');
+    const shards = job('ui_shards');
+    const ui = job('ui');
+    const packaging = job('package');
+    assert.match(node, /^    name:\s*Node Tests\s*$/m);
+    assert.match(ui, /^    name:\s*UI Test\s*$/m);
+    assert.match(packaging, /^    name:\s*Release Package\s*$/m);
+    for (const [name, block] of [['Node', node], ['UI shards', shards], ['UI gate', ui], ['package', packaging]]) {
+      assert.doesNotMatch(block, /^\s+continue-on-error:/m, `${name} must propagate failures`);
+    }
+    for (const block of [node]) {
+      assert.doesNotMatch(block, /^\s+if:/m, 'required gates must not be conditional or bypass default success checks');
+    }
+    assert.deepEqual(shards.match(/^\s+if:[^\n]*$/gm)?.map(line => line.trim()),
+      ["if: needs.scope.outputs.ui_required == 'true'"]);
+    assert.match(shards, /^    needs: \[scope\]$/m);
+    assert.ok(workflowStepValues(node, 'run').some(({ value }) => value === 'npm test'));
+    assert.match(shards, /^      fail-fast:\s*false\s*$/m);
+    const matrices = [...shards.matchAll(/^      matrix:\s*\n((?:^ {8}[^\n]*\n?)*)/gm)];
+    assert.equal(matrices.length, 1, 'UI requires one complete four-shard matrix');
+    assert.equal(matrices[0][1].trim(), 'shard: [1, 2, 3, 4]', 'no missing, duplicate, excluded or extra shards');
+    assert.deepEqual(workflowStepValues(shards, 'run').map(({ value }) => value), [
+      'npm ci --ignore-scripts',
+      'npm run compile',
+      'node .github/scripts/ui-shards.mjs --shard=${{ matrix.shard }}/4',
+    ], 'each duration-balanced partition must propagate its exit status without extra filters');
+    assert.match(shards, /^      image:\s*mcr\.microsoft\.com\/playwright:v1\.64\.1-noble@sha256:[a-f0-9]{64}\s*$/m);
+    assert.match(shards, /^      PLAYWRIGHT_BROWSERS_PATH:\s*\/ms-playwright\s*$/m);
+    assert.match(ui, /^    needs:\s*\[scope, ui_shards\]\s*$/m);
+    assert.deepEqual(ui.match(/^\s+if:[^\n]*$/gm)?.map((line) => line.trim()), ['if: always()']);
+    assert.deepEqual(workflowStepValues(ui, 'run').map(({ value }) => value), [
+      'node .github/scripts/ci-scope.mjs --gate',
+    ], 'only verified docs-only scope may omit UI; other missing/failed/cancelled shards fail closed');
+    for (const [key, value] of [['SCOPE_RESULT', 'needs.scope.result'],
+      ['UI_REQUIRED', 'needs.scope.outputs.ui_required'], ['SHARDS_RESULT', 'needs.ui_shards.result']]) {
+      assert.ok(ui.includes(`${key}: \${{ ${value} }}`));
+    }
+    assert.match(packaging, /^    needs:\s*\[test, ui\]\s*$/m);
+    assert.deepEqual(packaging.match(/^\s+if:[^\n]*$/gm)?.map(line => line.trim()), [
+      "if: ${{ !cancelled() && needs.test.result == 'success' && needs.ui.result == 'success' }}",
+    ], 'docs-only matrix skips must not suppress packaging, but cancelled/failed gates must block it');
+  };
+  assertShardedUiGate(workflow);
+  for (const [before, after] of [
+    ['shard: [1, 2, 3, 4]', 'shard: [1, 2, 3]'],
+    ['shard: [1, 2, 3, 4]', 'shard: [1, 2, 3, 3]'],
+    ['shard: [1, 2, 3, 4]', 'shard: [1, 2, 3, 4]\n        exclude: [{ shard: 4 }]'],
+    ['--shard=${{ matrix.shard }}/4', '--shard=1/4'],
+    ['--shard=${{ matrix.shard }}/4', '--shard=${{ matrix.shard }}/4 --grep smoke'],
+    ['--shard=${{ matrix.shard }}/4', '--shard=${{ matrix.shard }}/4 || true'],
+    ['  ui_shards:\n', '  ui_shards:\n    continue-on-error: true\n'],
+    ['  ui_shards:\n', '  ui_shards:\n    if: false\n'],
+    ['    needs: [scope, ui_shards]', '    needs: [test]'],
+    ['    if: always()', '    if: success()'],
+    ['SHARDS_RESULT: $'+'{{ needs.ui_shards.result }}', 'SHARDS_RESULT: success'],
+    ['    needs: [test, ui]', '    needs: [test]'],
+    ['  package:\n', '  package:\n    if: always()\n'],
+  ]) {
+    assert.ok(workflow.includes(before), `mutation anchor is missing: ${before}`);
+    assert.throws(() => assertShardedUiGate(workflow.replace(before, after)),
+      { code: 'ERR_ASSERTION' }, `unsafe CI mutation must fail: ${after}`);
+  }
+  const packageAt = runValues.indexOf('.github/build-tools/node_modules/.bin/vsce package --out /tmp/claude-code-usage-ci.vsix');
   const verifyAt = runValues.indexOf('node .github/scripts/verify-vsix.mjs /tmp/claude-code-usage-ci.vsix');
   assert.ok(packageAt >= 0 && verifyAt > packageAt, 'smoke VSIX verification must follow packaging');
   assertExactVscePin(runs);
@@ -1916,7 +2126,9 @@ test('CONTRIBUTING documents provider-aware privacy and three testing layers', (
   assert.match(guide, /Claude session actions are separately gated and disabled by default\./);
   assert.match(guide, /they can resume or delete a selected session\./);
   assert.match(guide, /Deleting the selected session moves its log to the OS trash\./);
-  assert.match(guide, /Codex does not estimate\s+dollar cost/i);
+  assert.match(guide, /Codex provides clearly labelled API-equivalent cost estimates/i);
+  assert.match(guide, /never a bill or subscription charge/i);
+  assert.doesNotMatch(guide, /Codex does not estimate\s+dollar cost/i);
   assert.match(
     guide,
     /usage JSONL is streamed and temporarily parsed for allowlisted\s+metadata/i,
@@ -1945,7 +2157,7 @@ test('CONTRIBUTING documents provider-aware privacy and three testing layers', (
   assert.match(testing, /does not replace the first two layers/i);
   assert.match(testing, /separate gates, with packaging after both test jobs pass/i);
   assert.doesNotMatch(testing, /gates independently/i);
-  assert.match(testing, /mcr\.microsoft\.com\/playwright:v1\.61\.1-noble/);
+  assert.match(testing, /mcr\.microsoft\.com\/playwright:v1\.64\.1-noble/);
   assert.match(testing, /macOS[\s\S]*must not[\s\S]*Linux snapshot/i);
 
   assert.match(guide, /controlled, comment-only\s+first pass/i);

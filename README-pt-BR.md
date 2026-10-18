@@ -12,6 +12,8 @@ dos seus dados. **Não é uma ferramenta de cobrança.**
   não para a coleta em segundo plano nem a barra de status. Falhas mantêm dados
   verificados; preenchimento de histórico e espera de nova tentativa são separados.
   Painéis ocultos sem mudanças reutilizam caches limitados.
+  Históricos Codex concluídos não exibem avisos a cada novo registro; identidades
+  ambíguas continuam como aviso de qualidade, sem repetir o preenchimento.
 - **Prévias exatas e configurações seguras:** destino, formato e modelo de IA ficam
   visíveis, sem trocar de provedor silenciosamente. Share Cards exportam o SVG aprovado;
   controles alterados exigem nova prévia. Restaurar padrões preserva a chave de API,
@@ -51,6 +53,23 @@ dos seus dados. **Não é uma ferramenta de cobrança.**
 A imagem usa dados sintéticos, não informações de uma conta real. Veja mais
 imagens e detalhes na [página principal completa em inglês](README.md).
 
+## Novidades da v2.5
+
+- **Conquistas locais** — veja medalhas, progresso e próximos objetivos. Ativas por padrão;
+  desative em Local achievements nas configurações (`enableAchievements`). As datas vêm dos
+  logs retidos, não do histórico completo da conta; a calibração manual atualiza as datas compatíveis.
+- **Cartões de conquistas** — escolha medalhas conquistadas, confira a prévia e exporte
+  explicitamente como SVG local. Sem login no GitHub ou upload automático.
+- **Compartilhamento de mapa de calor** — escolha Claude, Codex ou ambos, com Tokens ou
+  valores equivalentes de API opcionais. São estimativas, não faturas; os valores ficam separados por provedor.
+- **Ritmo da cota semanal** — previsão opcional, desativada por padrão, baseada nas observações
+  semanais existentes. Exige dados recentes e confiáveis; os logs atuais do Codex não permitem essa previsão.
+- **Histórico Codex comprimido** — leia `.jsonl.zst` junto com `.jsonl` localmente, sem alterar
+  os logs de origem, salvar cópias descomprimidas ou contar o mesmo histórico duas vezes.
+
+Consulte o [histórico de alterações](CHANGELOG.md) e [dados locais e privacidade](LOCAL-DATA.md)
+para os limites de datas, exportação, armazenamento e cotas.
+
 ## Como interpretar os números
 
 No Codex, **processado = entrada + saída** e **uso sem cache = entrada sem
@@ -68,7 +87,13 @@ Procure `Claude Code Usage` em **Extensões** no VS Code ou execute
 ou pelo comando **Show Usage Details**. Idioma, diretório de dados e opções
 de exibição ficam nas configurações. Os registros do Claude são lidos
 localmente; o índice do Codex guarda agregados pseudônimos, não o conteúdo
-das conversas. A orientação por IA é opcional: só envia uma solicitação após
+das conversas. Os índices são separados por diretório de registros, salt do perfil
+e fuso horário. Reconstruir afeta só o índice ativo; Apagar Tudo inclui todas as
+famílias exatas de arquivos de índice nesse armazenamento da extensão.
+Ao mudar de fuso horário, um checkpoint completo e comprovado da mesma origem
+pode ser reutilizado em modo somente leitura; apenas os períodos de data/hora
+são migrados, sem reconstruir o histórico principal do zero.
+A orientação por IA é opcional: só envia uma solicitação após
 prévia e envio explícito, com sua própria chave de API. Detalhes e formas de
 apagar dados derivados: [Dados locais e privacidade](LOCAL-DATA.md).
 

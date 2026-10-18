@@ -1,0 +1,27 @@
+# One weekly batch for ordinary updates, including major/sensitive proposals.
+# Security updates stay independent; compatibility review and merge stay manual.
+version: 2
+multi-ecosystem-groups:
+  weekly-dependencies:
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "build"
+      include: "scope"
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+  - package-ecosystem: "npm"
+    directory: "/.github/build-tools"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "weekly-dependencies"

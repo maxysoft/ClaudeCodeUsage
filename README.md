@@ -179,10 +179,27 @@ real account or an installed-VSIX capture.*
 
 ---
 
+## What's new in 2.5
+
+- **Local achievements** — browse earned badges, progress and next goals. Enabled by default;
+  turn off Local achievements in Settings (`enableAchievements`). Dates reflect retained
+  logs, not complete account history; manual calibration refreshes supported dates.
+- **Achievement sharing cards** — choose earned badges, preview the card and explicitly
+  export it as a local SVG. No GitHub sign-in or automatic upload.
+- **Heatmap sharing** — choose Claude, Codex or Both, with Tokens or optional API-equivalent
+  amounts. Amounts are estimates, not bills; provider amounts stay separate.
+- **Weekly quota pace** — an optional, default-off forecast based on existing weekly quota
+  observations. It needs fresh, trusted data; forecasting is unavailable for current Codex logs.
+- **Compressed Codex history** — read `.jsonl.zst` locally alongside `.jsonl`, without
+  modifying source logs, saving decompressed copies or counting the same history twice.
+
+See the [changelog](CHANGELOG.md) and [local data and privacy](LOCAL-DATA.md)
+for date coverage, export, storage and quota limits.
+
 ## What's new in 2.4
 
-<details open>
-<summary>Current release · status bar, smooth scrolling, and one sharing workspace</summary>
+<details>
+<summary>v2.4 · status bar, smooth scrolling, and one sharing workspace</summary>
 
 - **Bounded pricing diagnostics** — unknown-model warnings are deduplicated
   and capped for each Extension Host lifetime, removing the per-record warning
@@ -200,6 +217,8 @@ real account or an installed-VSIX capture.*
   provider pages, not background indexing or the status bar. Manual refresh
   remains available; failures retain verified data and show a compact recovery
   message. Primary-log coverage, hourly backfill and retry waits are separate.
+  Completed Codex history stays quiet during normal appends/new files; identity
+  ambiguity remains a quality warning, not a repeating backfill attempt.
   Unchanged hidden panels and weekly usage aggregates reuse bounded caches.
 - **Predictable preview and settings** — AI previews show the actual endpoint,
   protocol and model; incompatible settings fail without redirecting to another
@@ -611,15 +630,18 @@ remote boundaries are in [Local data and privacy](LOCAL-DATA.md) ([简体中文]
 | Data | Stored locally | Remote behavior | Clear path |
 |---|---|---|---|
 | Claude/Codex source logs | Provider-owned and read-only; never copied wholesale | None by default | Managed by the provider tools, not deleted by this extension |
-| Codex derived index | Bounded pseudonymous numeric/structural aggregates | None | Rebuild or clear derived index |
+| Codex derived index | Bounded pseudonymous numeric/structural aggregates, isolated by source directory, profile salt and timezone | None | Rebuild the active index; Clear All removes every exact index family in this extension storage |
 | Quota observations | Bounded anonymous window facts; no raw account ID | Claude quota fetch only when enabled; Codex evidence stays local | Clear by provider/account epoch or all |
 | UI/share preferences | Tab/filter state plus optional title/range and GitHub destination strings | Publish only after exact explicit confirmation | Reset UI or sharing preferences independently |
 | Advice data/key | Bounded aggregate evidence; key only in SecretStorage | Exact previewed request only after separate Send | Clear advice data and key independently |
 
+A timezone switch can reuse a complete, proven same-source checkpoint read-only;
+only date/hour buckets migrate, without restarting primary history.
+
 - All **Claude** token / cost / session analysis runs locally by reading your
   `~/.claude/projects/**/*.jsonl` files.
-- Codex usage records are discovered only from `sessions/**/*.jsonl` and
-  `archived_sessions/**/*.jsonl` below your Codex home. Separately, the extension
+- Codex usage records are discovered only from `.jsonl` and `.jsonl.zst` regular
+  files under `sessions` and `archived_sessions` below your Codex home. Separately, the extension
   streams exactly `$CODEX_HOME/session_index.jsonl` for the `id` → `thread_name`
   mapping used by truthful thread titles. Absolute paths in those titles are
   redacted and the titles remain memory-only. Credentials, databases, and unknown
@@ -738,7 +760,7 @@ remote boundaries are in [Local data and privacy](LOCAL-DATA.md) ([简体中文]
 Created by [@jack21](https://github.com/jack21) and maintained by
 [@Carl723000](https://github.com/Carl723000), with community PRs, issue reports,
 reviews, and translations. Thank you to everyone who helped shape the project.
-The lists below cover public PR and issue authors through v2.4.0; a linked PR
+The contributor credits below are reconciled for v2.5.0; a linked PR
 is not a claim that every proposed line shipped. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the release-credit convention.
 
@@ -752,7 +774,7 @@ is not a claim that every proposed line shipped. See
 - [@e7d](https://github.com/e7d) — [Opus 5 context window](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/81).
 - [@henrique-carvalho-dev](https://github.com/henrique-carvalho-dev) — [Brazilian Portuguese](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/48).
 - [@jack21](https://github.com/jack21) — original project; [Codex adaptation guidance](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/96).
-- [@jackieyangjq](https://github.com/jackieyangjq) — [dashboard date-label performance](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/115).
+- [@jackyyangjq](https://github.com/jackyyangjq) — [dashboard date-label performance](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/115).
 - [@mxzinke](https://github.com/mxzinke) — [model pricing](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/5); [German translation](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/6).
 - [@nickearnshaw](https://github.com/nickearnshaw) — localization; loading/quota fixes; test, CI, and docs foundations ([PRs](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pulls?q=is%3Apr+is%3Amerged+author%3Anickearnshaw)).
 - [@oxsean](https://github.com/oxsean) — [session actions and quota resilience](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/pull/43).
@@ -778,7 +800,7 @@ is not a claim that every proposed line shipped. See
 - [@danielboxer](https://github.com/danielboxer) [#26](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/26) · [@lyrzxz](https://github.com/lyrzxz) [#27](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/27) · [@BarisKuzu](https://github.com/BarisKuzu) [#45](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/45), [#87](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/87)
 - [@ekimminau](https://github.com/ekimminau) [#51](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/51) · [@dbookstaber](https://github.com/dbookstaber) [#54](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/54) · [@eduardogomezgvp](https://github.com/eduardogomezgvp) [#55](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/55) · [@chuccv](https://github.com/chuccv) [#70](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/70)
 - [@nsevene](https://github.com/nsevene) [#80](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/80) · [@arhneu](https://github.com/arhneu) [#82](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/82) · [@jcastillooo](https://github.com/jcastillooo) [#84](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/84)
-- [@HoangJN](https://github.com/HoangJN) [#89](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/89) · [@Bozodragon](https://github.com/Bozodragon) [#91](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/91) · [@aaroncvan](https://github.com/aaroncvan) [#94](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/94) · [@mkgaskin-ops](https://github.com/mkgaskin-ops) [#99](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/99)
+- [@HoangJN](https://github.com/HoangJN) [#89](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/89) · [@Bozodragon](https://github.com/Bozodragon) [#91](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/91) · [@aaroncvan](https://github.com/aaroncvan) [#94](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/94) · [@mkgaskin-ops](https://github.com/mkgaskin-ops) [#99](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/99), [#126](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/126)
 - PR authors also reported issues: [@nickearnshaw](https://github.com/nickearnshaw) [#25](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/25), [#33](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/33) · [@oxsean](https://github.com/oxsean) [#40](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/40) · [@projectronic](https://github.com/projectronic) [#74](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues/74). The maintainer's own issues are in the [issue history](https://github.com/ClaudeCodeUsage/ClaudeCodeUsage/issues?q=is%3Aissue+author%3ACarl723000).
 
 </details>

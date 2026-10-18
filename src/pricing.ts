@@ -658,17 +658,26 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
  * @returns Pricing information, or null if not found
  */
 export function getModelPricing(modelName: string | undefined, atMs?: number): ModelPricing | null {
-  const pricing = resolveModelPricing(modelName);
-  // Sonnet 5's $2 / $10 rate is introductory: usage from 2026-09-01 onward is
-  // billed at the standard Sonnet tier. Undated lookups (UI rate display) use
-  // "now" so the shown rate always matches what a request would cost today.
-  if (pricing === SONNET_5_INTRO && (atMs ?? Date.now()) >= SONNET_5_STANDARD_START_MS) {
-    return SONNET;
-  }
-  return pricing;
+  return withSonnet5Cutover(resolveModelPricing(modelName, true, true), atMs);
 }
 
-function resolveModelPricing(modelName: string | undefined): ModelPricing | null {
+/** Current floating estimate coverage: explicit runtime/built-in/family rates
+ * qualify, but the generic default has no model attribution. No diagnostics,
+ * network or price update, and missing component fields remain missing.
+ */
+export function getCurrentEstimatePricing(modelName: string | undefined): ModelPricing | null {
+  return withSonnet5Cutover(resolveModelPricing(modelName, false, false));
+}
+
+// Sonnet 5's $2 / $10 rate is introductory: usage from 2026-09-01 onward is
+// billed at the standard Sonnet tier. Undated lookups (UI rate display) use
+// "now" so the shown rate always matches what a request would cost today.
+function withSonnet5Cutover(pricing: ModelPricing | null, atMs?: number): ModelPricing | null {
+  return pricing === SONNET_5_INTRO && (atMs ?? Date.now()) >= SONNET_5_STANDARD_START_MS ? SONNET : pricing;
+}
+
+function resolveModelPricing(modelName: string | undefined, genericDefault: boolean,
+  diagnostics: boolean): ModelPricing | null {
   if (typeof modelName !== 'string' || !modelName || modelName === '<unknown>') {
     return null;
   }
@@ -710,12 +719,13 @@ function resolveModelPricing(modelName: string | undefined): ModelPricing | null
   // Family-aware fallback for unrecognised (typically newer) snapshots.
   const inferred = inferPricingByFamily(modelName);
   if (inferred) {
-    warnUnknownModelOnce(modelName, inferred.family);
+    if (diagnostics) warnUnknownModelOnce(modelName, inferred.family);
     return inferred.pricing;
   }
 
   // Truly unknown model (no family keyword) — fall back to Sonnet, the most common default.
-  warnUnknownModelOnce(modelName, 'Sonnet');
+  if (!genericDefault) return null;
+  if (diagnostics) warnUnknownModelOnce(modelName, 'Sonnet');
   return SONNET;
 }
 

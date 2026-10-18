@@ -50,6 +50,7 @@ jobs:
   tag:
     name: Create version tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # Run only on default-branch pushes, not on tag pushes or workflow_dispatch.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     outputs:
@@ -83,6 +84,7 @@ jobs:
   build:
     name: Build and package
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [tag]
     # always() lets this job run even when the "tag" job was skipped.
     # skip_build in commit message suppresses the build (e.g. docs-only commits).
@@ -99,12 +101,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26'
 
+      - name: Install locked release tools
+        run: |
+          TOOLING_REF="${{ github.workflow_sha }}"
+          TOOL_DIR="$(mktemp -d "$RUNNER_TEMP/ccu-release-tools.XXXXXX")"
+          git fetch --no-tags --depth=1 origin "$TOOLING_REF"
+          git show "$TOOLING_REF:.github/build-tools/package.json" > "$TOOL_DIR/package.json"
+          git show "$TOOLING_REF:.github/build-tools/package-lock.json" > "$TOOL_DIR/package-lock.json"
+          npm ci --prefix "$TOOL_DIR" --ignore-scripts
+          npm audit --prefix "$TOOL_DIR" --ignore-scripts --audit-level=high
+          echo "CCU_RELEASE_TOOLS=$TOOL_DIR" >> "$GITHUB_ENV"
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Verify tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -127,7 +140,8 @@ jobs:
       - name: Package .vsix
         env:
           VSIX: ${{ steps.ver.outputs.vsix }}
-        run: npx -y @vscode/vsce@3.9.2 package --no-dependencies --out "$VSIX"
+        run: |
+          "$CCU_RELEASE_TOOLS/node_modules/.bin/vsce" package --out "$VSIX"
 
       # Fail closed before the artifact leaves the runner: the verifier rejects
       # a package that carries sources, tests, dotfiles or key material, or that
@@ -153,6 +167,7 @@ jobs:
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || needs.tag.outputs.tag_name }}
           files: ${{ steps.ver.outputs.vsix }}
+          fail_on_unmatched_files: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

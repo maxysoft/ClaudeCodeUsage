@@ -60,10 +60,27 @@ These five v2.3 captures use the production renderer, synthetic fixtures, and VS
 - **Multi-vendor pricing** — Opus 4.x / Sonnet 4.x / Haiku 4.5 verified against Anthropic's public pricing; reference rates for OpenAI / Gemini / DeepSeek / Kimi / GLM / Qwen with family-aware fallback. `Refresh Token Pricing` pulls live LiteLLM data.
 - **Personalisation** — language, timezone, decimal places, compact numbers, project grouping, dashboard auto-refresh toggle.
 
+## What's new in v2.5
+
+- **Local achievements** — browse earned badges, progress and next goals. Enabled by default;
+  turn off Local achievements in Settings (`enableAchievements`). Dates reflect retained
+  logs, not complete account history; manual calibration refreshes supported dates.
+- **Achievement sharing cards** — choose earned badges, preview the card and explicitly
+  export it as a local SVG. No GitHub sign-in or automatic upload.
+- **Heatmap sharing** — choose Claude, Codex or Both, with Tokens or optional API-equivalent
+  amounts. Amounts are estimates, not bills; provider amounts stay separate.
+- **Weekly quota pace** — an optional, default-off forecast based on existing weekly quota
+  observations. It needs fresh, trusted data; forecasting is unavailable for current Codex logs.
+- **Compressed Codex history** — read `.jsonl.zst` locally alongside `.jsonl`, without
+  modifying source logs, saving decompressed copies or counting the same history twice.
+
+See the [changelog](CHANGELOG.md) and [local data and privacy](LOCAL-DATA.md)
+for date coverage, export, storage and quota limits.
+
 ## What's new in v2.4
 
-<details open>
-<summary>Current release: status bar, smoother scrolling, and one sharing workspace</summary>
+<details>
+<summary>v2.4: status bar, smoother scrolling, and one sharing workspace</summary>
 
 - **Bounded pricing diagnostics** — unknown-model warnings are deduplicated
   and capped per Extension Host lifetime, addressing the warning flood in
@@ -79,6 +96,8 @@ These five v2.3 captures use the production renderer, synthetic fixtures, and VS
 - **Quieter updates and recovery** — auto-refresh pause applies to both pages,
   not background collection or the status bar. Manual refresh still works;
   failures retain verified data, and backfill/retry phases are clearly labelled.
+  Completed Codex history stays quiet during normal appends/new files; identity
+  ambiguity remains a quality warning, not a repeating backfill attempt.
   Unchanged hidden panels and weekly aggregates reuse bounded caches.
 - **Exact previews and safe settings** — AI previews include the endpoint,
   protocol and model without silently changing providers. Share Card export
@@ -189,10 +208,13 @@ retention, migration, clearing, and remote-interaction contract.
 | Data | Local retention | Remote behavior |
 |---|---|---|
 | Source logs | Provider-owned, read-only; never copied wholesale | None by default |
-| Codex index | Bounded pseudonymous numeric/structural aggregates | None |
+| Codex index | Bounded pseudonymous aggregates, isolated by source directory, profile salt and timezone; rebuild affects the active index, Clear All includes all exact index families | None |
 | Quota history | Bounded anonymous window observations; no raw account ID | Claude quota lookup only when enabled; Codex evidence stays local |
 | UI/share state | Filters plus optional title/range and GitHub destination strings | Publish only after exact explicit confirmation |
 | Advice state/key | Bounded aggregate evidence; key only in SecretStorage | Exact previewed request only after a separate Send action |
+
+A timezone switch can reuse a complete, proven same-source checkpoint read-only;
+only date/hour buckets migrate, without restarting primary history.
 
 A reset absent from official/local structured evidence cannot be reconstructed.
 Ambiguous multi-login Codex history uses the latest real observation for a

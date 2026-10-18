@@ -22,10 +22,7 @@ const records = Array.from({ length: 50_000 }, (_, i) => ({
     usage: { input_tokens: 200, output_tokens: 40, cache_read_input_tokens: 400 } },
 }));
 prototype.updateData = function (...args) {
-  // allRecords is parameter 11 in this fork (weekData occupies slot 3), so
-  // index 10. Writing index 9 fed dataDirectory instead and benchmarked the
-  // small fixture while reporting 50k records.
-  args[10] = records;
+  args[9] = records;
   provider = this;
   const result = originalUpdate.apply(this, args);
   assert.strictEqual(this.allRecords, records, 'benchmark must measure the synthetic corpus');
@@ -43,6 +40,12 @@ function measured(fn) {
 (async () => {
   try {
     await renderHarness({ provider: 'claude', autoRefresh: false });
+    // Browser screenshot fixtures inline PNGs so they need no resource server.
+    // A real extension uses asWebviewUri instead; measure that installed path.
+    provider.context.extensionPath = process.cwd();
+    provider.panel = { webview: {
+      asWebviewUri: uri => ({ toString: () => 'vscode-resource://synthetic/' + require('node:path').basename(uri.fsPath) }),
+    } };
     Date.now = () => CODEX_WEBVIEW_NOW;
     provider.dataPanelCache.clear();
     provider.weeklyUsageCache = undefined;
@@ -63,6 +66,7 @@ function measured(fn) {
     const medianMs = warm.map((row) => row.ms).sort((a, b) => a - b)[5];
     process.stdout.write(JSON.stringify({
       kind: 'synthetic-host-renderer-not-installed-VSIX-or-native-scroll-FPS',
+      assetMode: 'extension-resource-uri',
       records: records.length, cold, warmMedianMs: medianMs, warm, minute, nextHour,
       dataPanelCalls: calls, cacheEntries: provider.dataPanelCache.size,
       peakSampledRssBytes: process.memoryUsage().rss,

@@ -17,7 +17,7 @@ test('the week tab renders its billing window, charts and usage-tracking card', 
   // The reset banner only renders when weekResetsAt survives the plumbing.
   await expect(panel.locator('.week-reset-banner')).toBeVisible();
 
-  // Summary figures come from weekData (positional slot 3 of updateData). A
+  // Summary figures come from weekData (trailing argument of updateData). A
   // shifted argument leaves this empty or throws during render.
   await expect(panel.locator('.summary-item .value.cost')).toHaveText(/\d/);
 

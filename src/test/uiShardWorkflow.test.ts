@@ -1,0 +1,24 @@
+import {test} from 'node:test';
+import * as assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import * as path from 'node:path';
+test('canonical UI shards cover the full suite and retain a fail-closed stable gate',()=>{
+  const file=readFileSync(path.resolve(__dirname,'../../.github/workflows/test.yml'),'utf8');
+  assert.match(file,/ui_shards:[\s\S]*shard: \[1, 2, 3, 4\]/);
+  assert.match(file,/fail-fast: false/);
+  assert.match(file,/image: mcr\.microsoft\.com\/playwright:v1\.64\.1-noble@sha256:[a-f0-9]{64}/);
+  assert.match(file,/PLAYWRIGHT_BROWSERS_PATH: \/ms-playwright/);
+  assert.ok(file.includes('node .github/scripts/ui-shards.mjs --shard=$'+'{{ matrix.shard }}/4'));
+  assert.match(file,/needs: \[scope\]/);
+  assert.match(file,/if: needs.scope.outputs.ui_required == 'true'/);
+  const aggregate=file.slice(file.indexOf('\n  ui:\n'),file.indexOf('\n  package:\n'));
+  assert.match(aggregate,/name: UI Test/);
+  assert.match(aggregate,/needs: \[scope, ui_shards\]/);
+  assert.match(aggregate,/if: always\(\)/);
+  assert.match(aggregate,/run: node \.github\/scripts\/ci-scope.mjs --gate/);
+  assert.ok(aggregate.includes('SCOPE_RESULT: $'+'{{ needs.scope.result }}'));
+  assert.ok(aggregate.includes('UI_REQUIRED: $'+'{{ needs.scope.outputs.ui_required }}'));
+  assert.ok(aggregate.includes('SHARDS_RESULT: $'+'{{ needs.ui_shards.result }}'));
+  assert.match(file,/needs: \[test, ui\]/);
+  assert.ok(file.includes("if: ${{ !cancelled() && needs.test.result == 'success' && needs.ui.result == 'success' }}"));
+});

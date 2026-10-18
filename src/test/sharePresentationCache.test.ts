@@ -41,7 +41,7 @@ test('sharing renders only the active presentation and reuses materialized daily
     };
     const initialDaily = [{ date: '2026-09-22', data: usage }];
     provider.updateData(
-      null, null, null, null, null, [], [], [], undefined, undefined, initialRecords,
+      null, null, null, null, [], [], [], undefined, undefined, initialRecords,
       [], [], null, [], [], [], {}, null, initialDaily,
     );
     provider.providerAvailability = { claude: true, codex: true, codexData: true };
@@ -69,7 +69,7 @@ test('sharing renders only the active presentation and reuses materialized daily
     const nextRecords: any[] = [];
     const nextDaily = [{ date: '2026-09-23', data: { ...usage, totalInputTokens: 300 } }];
     provider.updateData(
-      null, null, null, null, null, [], [], [], undefined, undefined, nextRecords,
+      null, null, null, null, [], [], [], undefined, undefined, nextRecords,
       [], [], null, [], [], [], {}, null, nextDaily,
     );
     const secondDaily = provider.getClaudeDailyUsageMap(I18n.getTimezone());

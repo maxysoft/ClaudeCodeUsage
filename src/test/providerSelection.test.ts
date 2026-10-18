@@ -424,9 +424,7 @@ test('an unchanged Compare refresh does not assign a new Webview document', () =
     );
 
     now += 60_000;
-    // Fork-exclusive: weekData is the third argument, so the rolling 30-day and
-    // all-time aggregates follow it.
-    provider.updateData(null, usage, usage, usage, usage);
+    provider.updateData(null, usage, usage, usage);
     assert.equal(
       documentAssignments.length,
       1,
@@ -544,7 +542,10 @@ test('Claude dashboard shell markers and provider switching behavior remain inta
   assert.match(source, /onclick="showTab\('content'\)" class="btn-secondary"><svg /);
   assert.doesNotMatch(source, /✨/);
   assert.match(source, /onclick="showTab\('settings'\)" class="btn-secondary">⚙/);
-  assert.match(source, /function showProvider\(provider, tab\) \{\s*vscode\.postMessage\(\{ command: 'providerChanged', provider: provider, tab: tab \|\| '' \}\);\s*\}/);
+  const switching = source.match(/function showProvider\(provider, tab\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(switching, /vscode\.postMessage\(\{ command: 'providerChanged', provider: provider, tab: tab \|\| '' \}\);/);
+  assert.equal((switching.match(/vscode\.postMessage/g) ?? []).length, 1);
+  assert.doesNotMatch(switching, /refresh\(|export|fetch\(|setInterval\(/);
   assert.match(source, /renderProviderTabs\(\)[\s\S]*renderQuotaBanner\(provider\)/);
 });
 

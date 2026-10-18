@@ -46,7 +46,7 @@ grep -cE "VSCE_PAT|OVSX_PAT|vsce publish|ovsx publish" .github/workflows/publish
 grep -rhoE "uses: [^ ]+" .github/workflows/*.yml | sort -u               # all 40-hex SHAs
 ```
 
-`updateData` positional contract: `weekData` is **slot 3**, `weekResetsAt` is **last**. `allRecords` is parameter 11 (index 10) — upstream code and benchmarks assume index 9.
+`updateData` positional contract (since 2.17.0): `weekData` and `weekResetsAt` are the **last two** parameters, after every upstream parameter. `allRecords` is index 9, same as upstream.
 
 ## Known traps, learned the hard way
 

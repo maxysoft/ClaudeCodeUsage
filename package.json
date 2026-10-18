@@ -2,7 +2,7 @@
   "name": "claude-code-usage",
   "displayName": "Claude Code Usage",
   "description": "Monitor Claude Code and Codex token usage, costs and quota in the VS Code status bar. Community fork by maxysoft — original extension by GrowthJack (https://github.com/jack21/ClaudeCodeUsage).",
-  "version": "2.16.0",
+  "version": "2.17.0",
   "publisher": "maxysoft",
   "author": {
     "name": "maxysoft",
@@ -89,6 +89,11 @@
       }
     },
     "commands": [
+      {
+        "command": "claudeCodeUsage.recalibrateAchievements",
+        "title": "Recalibrate Local Achievements",
+        "category": "Claude Code Usage"
+      },
       {
         "command": "claudeCodeUsage.refresh",
         "title": "Refresh Usage Data",
@@ -192,10 +197,10 @@
     "test:release": "npm run test:node && npm run test:ui"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.12.1",
-    "@playwright/test": "1.61.1",
-    "@types/node": "24.0.15",
-    "@types/vscode": "^1.74.0",
-    "typescript": "^5.8.3"
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "@types/vscode": "1.74.0",
+    "typescript": "5.9.3"
   }
 }

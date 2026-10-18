@@ -2,7 +2,8 @@
 #
 # What this does:
 #   1. Runs the compiled Node logic and repository-policy suite.
-#   2. Runs the complete Webview gate in the canonical Playwright container.
+#   2. Runs the complete Webview gate; only verified docs-only PRs may omit it.
+#      Main pushes always run full UI, including after cancelling an older run.
 #   3. Packages and verifies a smoke VSIX only after both test jobs pass.
 #
 # To block merging, require all three checks under the repository's branch
@@ -19,7 +20,30 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  scope:
+    name: Change Scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ui_required: ${{ steps.scope.outputs.ui_required }}
+    steps:
+      - name: Checkout the tested revision with range history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+      - name: Classify actual checked-out changes
+        id: scope
+        run: node .github/scripts/ci-scope.mjs
+
   test:
     name: Node Tests
     runs-on: ubuntu-latest
@@ -28,21 +52,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            .github/build-tools/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+      - name: Install locked build tools
+        run: npm ci --prefix .github/build-tools --ignore-scripts
+      - name: Audit root dependencies
+        run: npm audit --audit-level=high --ignore-scripts
+      - name: Audit build tools
+        run: npm audit --prefix .github/build-tools --audit-level=high --ignore-scripts
       - name: Run Node tests
         run: npm test
+      - name: Setup Node.js for native Zstd coverage
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Verify native compressed-log compatibility
+        run: |
+          node -e "if (!require('./out/providers/codex/codexZstd').supportsCodexZstd()) throw new Error('Native Zstd is unavailable')"
+          node --test out/test/codexZstd.test.js out/test/codexManifest.test.js out/test/codexCompressed*.test.js
 
-  ui:
-    name: UI Test
+  ui_shards:
+    name: UI Shard ${{ matrix.shard }}/4
+    needs: [scope]
+    if: needs.scope.outputs.ui_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf
       options: --ipc=host
     env:
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
@@ -54,29 +101,60 @@ jobs:
       # runtime it was never released against. The image's own Node is what
       # local verification exercises.
       - name: Install dependencies
-        run: npm ci
-      - name: Run full Webview gate
-        run: npm run test:ui
+        run: npm ci --ignore-scripts
+      - name: Compile
+        run: npm run compile
+      - name: Run complete duration-balanced Webview partition
+        run: node .github/scripts/ui-shards.mjs --shard=${{ matrix.shard }}/4
+
+  # Only a successful, explicit docs-only classification permits skipped shards.
+  # Unknown scope and failed/cancelled/unexpected shard results fail closed.
+  ui:
+    name: UI Test
+    needs: [scope, ui_shards]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+      - name: Require the expected complete verification result
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          UI_REQUIRED: ${{ needs.scope.outputs.ui_required }}
+          SHARDS_RESULT: ${{ needs.ui_shards.result }}
+        run: node .github/scripts/ci-scope.mjs --gate
 
   package:
     name: Release Package
     needs: [test, ui]
+    # Explicit status check avoids the skipped UI matrix propagating through
+    # successful docs gates. Cancellation or either failed gate still blocks this job.
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.ui.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # @vscode/vsce 4 requires Node >=22.
           node-version: '26'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            .github/build-tools/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+      - name: Install locked build tools
+        run: npm ci --prefix .github/build-tools --ignore-scripts
       - name: Compile
         run: npm run compile
       - name: Package smoke VSIX
-        run: npx -y @vscode/vsce@4.0.0 package --out /tmp/claude-code-usage-ci.vsix
+        run: .github/build-tools/node_modules/.bin/vsce package --out /tmp/claude-code-usage-ci.vsix
       - name: Verify smoke VSIX
         run: node .github/scripts/verify-vsix.mjs /tmp/claude-code-usage-ci.vsix

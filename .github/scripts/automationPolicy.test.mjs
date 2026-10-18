@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
 const CHECKOUT_SHA = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
@@ -90,22 +91,69 @@ test('publish workflow tags, packages, and releases without any Marketplace/Open
   // Fork-only hardening ported from upstream's release flow: the packaged
   // artifact is verified before it is attached, without any registry publish.
   assert.match(workflow, /node \.github\/scripts\/verify-vsix\.mjs/);
+  assert.doesNotMatch(workflow, /\bnpx\b|@vscode\/vsce@/);
+  assert.match(workflow, /npm ci[^\n]*--ignore-scripts/);
+  assert.match(workflow, /npm audit[^\n]*--audit-level=high/);
+  assert.match(workflow, /"\$CCU_RELEASE_TOOLS\/node_modules\/\.bin\/vsce" package/);
 });
 
-// Upstream structural check kept verbatim: it is about the release draft, not
-// about registry publishing, and applies to this fork's release-drafter.yml.
-test('release draft gets a post-merge reconciliation pass', () => {
-  const workflow = read('.github/workflows/release-drafter.yml');
-  assert.match(
-    workflow,
-    /pull_request_target:\s*\n\s+types: \[[^\]]*closed[^\]]*\]/,
-    'the merge-complete event must refresh the draft after the main push race',
-  );
-  assert.match(
-    workflow,
-    /if: >-\s*\n\s+github\.event_name != 'pull_request_target' \|\|\s*\n\s+github\.event\.action != 'closed' \|\|\s*\n\s+github\.event\.pull_request\.merged == true/,
-    'closing an unmerged PR must not rewrite the release draft',
-  );
+function releaseRouting(source) {
+  const workflow = source.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
+  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request_target:\n    branches: \[main\]\n    types: \[opened, reopened, synchronize, edited, closed\]\n\npermissions:/m);
+  return ['autolabel', 'update_release_draft'].map(id => {
+    const expression = workflow.match(new RegExp(`^  ${id}:\\n    if: >-\\n((?:      [^\\n]+\\n)+)`, 'm'))?.[1];
+    assert.ok(expression, `missing condition for ${id}`);
+    // Only this workflow's boolean/equality subset is evaluated, not arbitrary
+    // Actions expressions. Fixtures use strings/booleans, avoiding coercion differences.
+    const remainder = expression.replace(/github\.(?:event_name|ref|event\.action|event\.pull_request\.(?:merged|base\.ref))\b/g, '')
+      .replace(/'[^'\n]*'|\btrue\b|\bfalse\b|==|!=|&&|\|\||[\s()]/g, '');
+    assert.equal(remainder, '', 'unsupported condition syntax');
+    return github => runInNewContext(expression, { github }, { timeout: 100 });
+  });
+}
+
+function assertReleaseRouting(source) {
+  const conditions = releaseRouting(source);
+  const check = (event_name, action, merged, base, ref, expected) => {
+    const github = { event_name, ref, event: { action, pull_request: { merged, base: { ref: base } } } };
+    assert.deepEqual(conditions.map(condition => condition(github)), expected,
+      `${event_name}/${action}/${merged}/${base}/${ref}`);
+  };
+  check('push', '', false, '', 'refs/heads/main', [false, true]);
+  check('push', '', false, '', 'refs/heads/feature', [false, false]);
+  check('push', '', false, '', 'refs/tags/v1.0.0', [false, false]);
+  for (const event of ['pull_request_target', 'pull_request', 'workflow_dispatch']) {
+    for (const base of ['main', 'feature']) {
+      for (const action of ['opened', 'reopened', 'synchronize', 'edited', 'labeled', 'closed']) {
+        for (const merged of [false, true]) {
+          const allowed = event === 'pull_request_target' && base === 'main';
+          check(event, action, merged, base, 'refs/heads/main', [
+            allowed && ['opened', 'reopened', 'synchronize', 'edited'].includes(action),
+            allowed && action === 'closed' && merged,
+          ]);
+        }
+      }
+    }
+  }
+  // Real push payloads do not contain a pull_request; conditions must short-circuit.
+  assert.deepEqual(conditions.map(condition => condition({ event_name: 'push', ref: 'refs/heads/main', event: {} })), [false, true]);
+}
+
+test('v7 labels only active main-target PR events and drafts only main pushes or merged closures', () => {
+  assertReleaseRouting(read('.github/workflows/release-drafter.yml'));
+});
+
+test('release routing rejects unmerged closure, wrong-target and broad-event regressions', () => {
+  const source = read('.github/workflows/release-drafter.yml');
+  for (const [before, after] of [
+    ['github.event.pull_request.merged == true', 'true'],
+    ["github.event.pull_request.base.ref == 'main'", 'true'],
+    ["github.event.action == 'opened'", 'true'],
+    ["github.ref == 'refs/heads/main'", 'true'],
+  ]) {
+    assert.ok(source.includes(before), `mutation anchor: ${before}`);
+    assert.throws(() => assertReleaseRouting(source.replaceAll(before, after)), { code: 'ERR_ASSERTION' });
+  }
 });
 
 test('maintainer-only mention workflow retains its privileged Claude boundary', () => {

@@ -12,6 +12,8 @@ jeweils passender Bedeutung an. Sie ist **kein Abrechnungswerkzeug**.
   Seiten, nicht für Hintergrunderfassung und Statusleiste. Fehler behalten geprüfte
   Daten; Nachindizierung und Wiederholungswartezeit sind getrennt. Unveränderte,
   ausgeblendete Panels verwenden begrenzte Caches.
+  Vollständig indizierte Codex-Historien bleiben bei neuen Protokolldaten ruhig;
+  mehrdeutige Sitzungen bleiben ein Qualitätshinweis, kein wiederholter Nachlauf.
 - **Genaue Vorschauen und sichere Einstellungen:** KI-Ziel, Format und Modell sind
   sichtbar, ohne stillen Anbieterwechsel. Share Cards exportieren das bestätigte SVG;
   geänderte Optionen verlangen eine neue Vorschau. Zurücksetzen behält den API-Schlüssel,
@@ -54,6 +56,25 @@ jeweils passender Bedeutung an. Sie ist **kein Abrechnungswerkzeug**.
 Das Bild nutzt synthetische Daten, nicht das Konto einer Person. Weitere
 Abbildungen und Details stehen in der [ausführlichen englischen Hauptseite](README.md).
 
+## Neu in v2.5
+
+- **Lokale Erfolge** — Abzeichen, Fortschritt und nächste Ziele im Überblick. Standardmäßig
+  aktiv; in den Einstellungen unter „Local achievements“ abschaltbar (`enableAchievements`).
+  Daten beruhen auf vorhandenen Logs, nicht auf der gesamten Kontohistorie; manuelle
+  Kalibrierung aktualisiert unterstützte Datumsangaben.
+- **Erfolgskarten teilen** — verdiente Abzeichen wählen, die Karte prüfen und ausdrücklich
+  als lokale SVG-Datei exportieren. Ohne GitHub-Anmeldung oder automatischen Upload.
+- **Heatmaps teilen** — Claude, Codex oder beide sowie Token oder optionale API-Äquivalenzbeträge
+  wählen. Beträge sind Schätzungen, keine Rechnungen; Anbieterbeträge bleiben getrennt.
+- **Wöchentliches Quotentempo** — optionale Prognose aus vorhandenen Wochenquoten-Beobachtungen,
+  standardmäßig aus. Sie braucht aktuelle, verlässliche Daten; für aktuelle Codex-Logs
+  ist keine Prognose verfügbar.
+- **Komprimierte Codex-Historie** — `.jsonl.zst` neben `.jsonl` lokal lesen, ohne Quelllogs
+  zu ändern, entpackte Kopien zu speichern oder dieselbe Historie doppelt zu zählen.
+
+Details zu Datumsabdeckung, Export, Speicherung und Quoten stehen im
+[Changelog](CHANGELOG.md) und unter [lokale Daten und Datenschutz](LOCAL-DATA.md).
+
 ## Daten richtig lesen
 
 Bei Codex gilt **verarbeitet = Eingabe + Ausgabe** und **nicht gecachte Nutzung
@@ -73,6 +94,12 @@ sich über die Statusleiste oder den Befehl **Show Usage Details**.
 Sprache, Datenverzeichnis und Anzeigeoptionen können in den Einstellungen
 angepasst werden. Claude-Protokolle werden lokal gelesen; der Codex-Index
 speichert abgeleitete, pseudonyme Nutzungsdaten statt Gesprächsinhalten.
+Die Indizes sind nach Protokollverzeichnis, Profil-Salt und Zeitzone getrennt.
+Ein Neuaufbau betrifft nur den aktiven Index; „Alle löschen“ umfasst alle exakt
+zugehörigen Indexdateien in diesem Erweiterungsspeicher.
+Ein Zeitzonenwechsel kann einen vollständigen, nachweislich quellengleichen
+Checkpoint schreibgeschützt wiederverwenden; nur Tages-/Stundenwerte werden
+migriert, ohne die Haupthistorie neu aufzubauen.
 KI-Beratung ist optional und sendet erst nach Vorschau und ausdrücklichem
 Senden mit einem eigenen API-Schlüssel. Einzelheiten und Löschwege:
 [Lokale Daten und Datenschutz](LOCAL-DATA.md).
