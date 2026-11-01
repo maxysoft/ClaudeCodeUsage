@@ -538,7 +538,8 @@ test('real paused host routes worker tail proof through the facade into shared u
     assert.equal(extension.codexView.coverage.complete, true);
     assert.equal(extension.codexView.coverage.identity.complete, false);
     assert.equal(extension.codexAchievementSignals.familyProcessedTokens.astra, 600_000_000);
-    assert.equal((await loadAchievementRecords(file)).records.find((row: any) => row.id === 'astra-regular').origin, 'history');
+    const historyRecords = (await loadAchievementRecords(file)).records;
+    assert.equal(historyRecords.find((row: any) => row.id === 'astra-regular').origin, 'history');
     fs.appendFileSync(log, token(5_500_000_000, 1_100_000_000, Date.now()) + '\n');
     await extension.runCodexRefresh('poll');
     await owner.achievementWrite;
@@ -546,11 +547,14 @@ test('real paused host routes worker tail proof through the facade into shared u
     const silver = (await loadAchievementRecords(file)).records.find((row: any) => row.id === 'astra-regular-silver');
     assert.equal(silver.origin, 'usage'); assert.equal(silver.unread, true);
     assert.equal(silver.timeZone, 'UTC'); assert.match(silver.recordedDay, /^\d{4}-\d{2}-\d{2}$/);
-    const weekly = (await loadAchievementRecords(file)).records.find((row: any) => row.id === 'weekly-volume-bronze');
-    assert.ok(weekly, 'witnessed positive date subset may prove the volume milestone despite the unrelated conflict');
-    assert.equal(weekly.origin, 'history');
-    assert.equal(weekly.unread, false, 'recovered calendar proof is not a live calendar origin');
-    assert.equal(weekly.recordedDay, null);
+    const afterTail = (await loadAchievementRecords(file)).records;
+    const weekly = afterTail.find((row: any) => row.id === 'weekly-volume-bronze');
+    assert.equal(weekly, undefined, "today's positive date subset cannot establish a closed seven-day window");
+    for (const row of historyRecords) assert.ok(afterTail.some((saved: any) => saved.id === row.id),
+      'closing-window semantics do not revoke existing nonrolling history: ' + row.id);
+    for (const id of ['billion-token-club', 'codex-output-gold']) assert.ok(afterTail.some((row: any) => row.id === id),
+      'the same verified tail still qualifies cumulative and output milestones: ' + id);
+    assert.equal(owner.achievementResults().find((row: any) => row.id === 'weekly-volume-bronze').unlocked, false);
     await extension.runCodexRefresh('poll'); await owner.achievementWrite;
     assert.equal(responses[responses.length - 1].diagnostic.bodyReads, 0);
     assert.equal(responses[responses.length - 1].achievementUsageDelta, undefined);
@@ -4751,6 +4755,9 @@ test('a quota response from the previous profile is discarded after a switch', a
   };
 
   const pending = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+  // The shared-quota lookup runs first; switch once the request is in flight.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(releaseOldRequest, 'the old request is in flight');
   extension.apiClient = { fetchUsageLimits: async () => null };
   extension.claudeProfileGeneration += 1;
   releaseOldRequest?.({ five_hour: { utilization: 77, resets_at: null } });
@@ -4784,6 +4791,8 @@ test('a same-path credential rotation cannot persist the stale in-flight quota r
   extension.refreshData = async () => undefined;
 
   const pending = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(releaseRequest, 'the request is in flight');
   extension.handleCredentialsChange();
   releaseRequest?.({
     limits: [{
@@ -4839,9 +4848,11 @@ test('concurrent quota callers share one in-flight fetch until it settles', asyn
   };
   extension.isActive = () => false;
   extension.recordClaudeQuotaObservation = async () => undefined;
+  extension.adoptSharedQuota = async () => null;
 
   const first = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
   const second = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(fetches, 1);
   const limits = { five_hour: { utilization: 10, resets_at: null } };
   release(limits);

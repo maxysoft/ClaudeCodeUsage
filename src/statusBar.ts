@@ -57,6 +57,7 @@ export class StatusBarManager {
   // (@wheelbarrel00), which named a single model; the API now scopes these caps
   // itself, so the label follows whatever it reports.
   private showScopedWeekly: boolean = false;
+  private codexUsageFormat: string = '';
   private showWeeklyQuotaPace: boolean = false;
   private lastClaudePace: QuotaPaceAdapterSnapshot | null = null;
   // Quota display preferences.
@@ -157,6 +158,7 @@ export class StatusBarManager {
     resetCountdownFormat: ResetCountdownFormat = 'decimal',
     quotaFormat: string = '',
     showWeeklyQuotaPace: boolean = false,
+    codexUsageFormat: string = '',
   ): void {
     this.showCost = showCost;
     this.showContext = showContext;
@@ -167,6 +169,7 @@ export class StatusBarManager {
     this.showResetInBar = showResetInBar;
     this.resetCountdownFormat = resetCountdownFormat;
     this.quotaFormat = quotaFormat;
+    this.codexUsageFormat = codexUsageFormat;
     this.showWeeklyQuotaPace = showWeeklyQuotaPace && usageLimitTracking;
     if (!this.showWeeklyQuotaPace) {
       this.lastClaudePace = null;
@@ -462,7 +465,7 @@ export class StatusBarManager {
     pace: QuotaPaceAdapterSnapshot | null = null,
   ): void {
     const now = Date.now();
-    const quotaOptions = { quotaFiveHourOnly: this.quotaFiveHourOnly };
+    const quotaOptions = { quotaFiveHourOnly: this.quotaFiveHourOnly, usageFormat: this.codexUsageFormat };
     const formatted = formatCodexStatus(
       scope,
       metric,

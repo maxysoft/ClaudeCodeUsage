@@ -43,7 +43,7 @@ Codex effort 统计及仅累计范围的金额新活动收据已完成接入。
 | 模块 | 职责 |
 |---|---|
 | `extension.ts` | 激活、命令、设置、provider 生命周期、刷新编排、watcher、状态栏/webview 接线和匿名诊断。 |
-| `claudeApiClient.ts` | 既有 Claude OAuth／额度请求及最近成功请求所用凭证的运行期单向身份信号；周节奏只读取该信号，不新增请求或凭证查询。 |
+| `claudeApiClient.ts` | 既有 Claude OAuth／额度请求及最近成功请求所用凭证的运行期单向身份信号；周节奏只读取该信号，不新增请求或凭证查询。另以只读方式为所选 Claude profile 当前持有的凭证派生同一信号，用于匹配其他窗口已核验的观测。 |
 | `dataLoader.ts` | 为精确兼容保留的 Claude 解析、校验、归因和内容分析 primitive。 |
 | `claudeIncrementalIndex.ts` | 生产环境 Claude 内存 per-file 索引：append-tail 解析、精确跨文件 response 去重、受影响 group 聚合、内容分析 contribution 和已物化 dashboard row。 |
 | `achievements.ts`、`achievementCalendar.ts`、`achievementHours.ts` | 带版本的规则与数值 Token／日／周／小时证据；`codexAchievementCalendarProjection` 先解析全清单祖先关系，再选择有见证的日期，区分正向子集与全清单完整性。 |
@@ -55,6 +55,7 @@ Codex effort 统计及仅累计范围的金额新活动收据已完成接入。
 | `achievementModels.ts` | 协作／彩虹及 Claude 家族的非金额模型标签识别，独立于固定计价别名；识别不证明远端型号身份或价格。 |
 | `achievementReferenceBooks.ts` | 三个明确已发布的 v1 参考价标签，用于读取已存金额记录，独立于当前价表选择与新增写入授权。 |
 | `achievementTitles.ts` | 公开共用标题助手：等级单独显示时，仅移除由目录中点分隔的匹配本地化等级或其旧名后缀；ID 和固定项不变。 |
+| `achievementUnit.ts` | 图鉴与正式 SVG 共用的本地化单位选择；数值门槛仍由原目录定义，不改变授奖资格。 |
 | `achievementDetailPresentation.ts`、`achievementHistoryDates.ts`、`achievementCalibration.ts` | 精确共同条件展示、仅运行期逐级日志日期归约及受 guard 保护的本地增量校准；不新增持久存储或来源解析器。 |
 | `achievementEffortStatistics.ts`、`achievementCollaboration.ts` | 当前完整索引的 Codex 根任务 × effort 统计及既有联合等级条件；可选 `CodexAchievementSignals.effortStatistics` 按证明修订缓存，仅在已有 effort 广度详情显示。 |
 | `apiHeatmapDaily.ts`、`pricing.ts#getCurrentEstimatePricing` | 最多 366 日只读投影，按次缓存选中型号／组件的内存单价准入；保留当前成本标量，排除通用未知型号回退覆盖，不联网、不读全量记录。 |
@@ -135,6 +136,10 @@ Claude aggregate + Codex scope ──> 并列 Compare（不跨 provider 求和�
 既有成功原始额度 + 原始 observedAt + 已核验本机账号 HMAC
   ──> 运行期连续性所有者 ──> 有界每周数值 DTO ──> 周期平均节奏
   ──> 既有刷新回调 ──> 绑定文档／供应商的页面补丁 + 状态栏提示
+其他窗口已核验的 Claude 额度观测 + 相同账号 HMAC + 额度 TTL 内
+  ──> 保留原始 observedAt 的仅显示额度值 ──> 不发请求，不作节奏输入
+  ──> 范围上限名称取自共享的最多 16 项名称列表，每项须与已存窗口 HMAC 匹配
+  ──> 选中匹配的账号指纹，并用同一快照刷新该账号的每周历史
 既有 Codex 本地额度 ──> 账号可信度未知 ──> 预测不可用
 已物化 Claude 聚合
   ──> 统一分享选择器 ──> 旧版分享卡或 Claude token 热力图预览
@@ -146,6 +151,12 @@ Claude aggregate + Codex scope ──> 并列 Compare（不跨 provider 求和�
   ──> 可选 host-owned Prepared 请求 ──> 预览 ──> 显式 BYOK 发送
   ──> 本地反馈 ──> 净化可比 pair ──> 冻结 comparison envelope
 ```
+
+共享额度快照的读取完全只读，包括无效文件处理：不会隔离或重命名文件，文件身份未变化时
+复用已解析快照。成功响应的观测与范围名称在同一共享 lease 内持久化。宿主将清除／取消
+所有权传入排队写入，在 lease 内读取后重新核验，并在发布历史前再次核验；清除前的异步
+任务恢复执行时，不能重新填入已清除的宿主状态，也不能另行发起延后的名称写入。
+
 
 任一 provider unavailable 或 partial 时，不清空另一 provider 最近验证的 snapshot。
 Claude-only 保持 v2.2.1 行为；Codex-only 默认显示 Codex；两者都有时 dashboard 默认 Claude。
@@ -209,7 +220,7 @@ Codex 只在同一解析后的数据目录内保留失败前统计；切换目�
 revision，并把它作为独立的 live intent；Webview 应用后 ACK 精确 revision，host 随即删除 live intent，
 但不回退 revision 历史。因此，已确认的命令不会在普通重绘、分享重置或同一 provider 的
 dispose/reopen 后重放。「重置分享偏好」复用既有的确认式本地数据动作：host 发送带 request-id 的
-client action，Webview 验证十二个 allowlist localStorage key 均已删除；只有匹配 ACK 为 true 才算成功，
+client action，Webview 验证十三个 allowlist localStorage key 均已删除；只有匹配 ACK 为 true 才算成功，
 否则 host 报错并保留恢复 tombstone。
 
 在窄 Webview 中，1200×680 Claude 分享卡在可键盘聚焦的局部横向滚动区内保留原始宽度，
@@ -348,16 +359,17 @@ schema、来源解析器、依赖或软件包版本。
 24 个 API 等价条件分属 Claude／Codex 各自累计、已结束周及单次会话／任务六个主题。
 `achievementMoney.ts` 固定 `api-reference-2026-10-{backend}-v1`（2026-10-09），
 精确十进制组件求和后才向下取整为 microUSD。仅精确型号及完整价格（含 Claude 已知
-缓存写入 TTL）合格；未知型号未定价，可信已定价子集只证明下界。周范围为当前数据
-时区内已结束的周一自然周；单次须为一个 Claude 会话或独立核验的 Codex 任务树。
-历史补认静默；累计金额跨级已使用核验的新追加收据，已结束周及单次会话／任务金额
-范围仍静默且日期未知。仪表盘浮动计价及显示币种不改变这些规则。
+缓存写入 TTL）合格；未知型号未定价，可信已定价子集只证明下界。已发布基线的周范围为
+周一自然周；下文未发布峰值规则迁移改用当前数据时区内已闭合连续七自然日。单次须为
+一个 Claude 会话或独立核验的 Codex 任务树。历史补认静默；累计金额跨级已使用核验的
+新追加收据，峰值及单次会话／任务金额范围仍静默。新连续窗口日期须满足下文完整闭窗
+证据规则，不能改写首次记录日。仪表盘浮动计价及显示币种不改变这些规则。
 
 `claude-api-week` 与 `codex-api-week` 各有五级：铜 $100、银 $500、金 $2,500、
 铂金 $10,000、传奇 $25,000。仅新增四个铂金／传奇 ID，原三级 ID／门槛、系列归属、
-图案、已结束周边界及固定价表来源不变。四项历史注册将清单增至 138 项；受支持的
+图案及固定价表来源不变；下文后续连续窗口迁移覆盖当时的已结束周边界。四项历史注册将清单增至 138 项；受支持的
 日志日期注释仍不同于已存首次记录日。旧封套拒绝新 ID，扩展前的读取器遇未知等级拒绝
-操作，不改写或清除任一封套。schema／catalog 版本和 65,536 字节上限不变；已报告的
+操作，不改写或清除任一封套。对当时的等级扩展，schema／catalog 版本和 65,536 字节上限不变；已报告的
 最大封套夹具为 37,374 字节。这些合成检查不构成原生／F5 验收。
 
 `achievementModels.ts` 将协作／彩虹等非金额模型识别与 `achievementMoney.ts` 的固定计价别名分开。
@@ -545,7 +557,8 @@ microUSD 及合格已处理 Token。IPC 边界固定字段重建，固定价表�
 `recordUsage` 原子保存 `usage` 来源、首次记录日／时区及未读；仅同价表且序号晚于
 已接受基线的其他窗口历史可修复并生成新序号，不同价表或已有历史保留原依据／日期。
 同次已接受更新的 Token／金额写入合并为一个既有五分钟提示批次，不新增定时器；
-隐藏面板／未读摘要行为不变。已结束周、单次会话／任务及其他未支持新活动范围仍静默且日期未知。
+隐藏面板／未读摘要行为不变。峰值、单次会话／任务及其他未支持新活动范围仍静默，
+不因此补造首次记录日；连续窗口的运行期核验日期遵循下文独立证据规则。
 
 `CodexAchievementSignals.effortStatistics` 是完整当前规范索引的可选证据。
 `extension.ts` 只在证明修订变化时计算；未变化暖更新复用同一信号对象／结果，不再次
@@ -827,7 +840,8 @@ foreground/background worker profile；通用失败路径无法确认模式时�
 宿主保留一份不可变已接受产物、不透明预览 ID、文档身份及已物化来源引用。修改控件
 即退役；请求序号及文档检查拒绝旧回复。来源、价格、时区、语言／币种／显示变更作废
 接受状态；价格刷新待完成时不接受金额预览。导出在单次保存对话框前后复核，以已确认
-SVG 原字节写入，不重新构建；复制 Markdown 也须有有效产物。不新增全量记录副本、导出历史、认证或联网。
+SVG 原字节写入，不重新构建；随后读回同一 URI，逐字节比较并再次核验接受回执，
+读回失败、不匹配或回执退役都不报告成功。复制 Markdown 也须有有效产物。不新增全量记录副本、导出历史、认证或联网。
 
 `showWeeklyQuotaPace` 为默认 false 的 STATE 设置，Claude／Codex 共用。关闭时宿主
 在来源 getter、时钟／缓存／client 访问及投影前退出；开启不会启用额度跟踪。开启后
@@ -1123,3 +1137,55 @@ v2.3.0 不推断 20、100 或 200 美元的订阅档位。本地 Codex 日志没
 - 不手工修改 `package.json` 版本。发布已审阅的 Release Drafter draft 后才创建 tag，
   publish workflow 再从 tag 写入包版本。
 - 通过合并贡献者原 PR，或经授权先修改该 PR 分支再合并，保留贡献归属。
+
+## 尚未发布的可视化集成
+
+本节描述当前集成，不代表已发布版本或原生验收。变更在原供应商面板与分享流程内完成，
+不新增应用外壳、来源扫描器、认证通路、后台采集或发布动作。既有另行启用的额度采集及
+明确分享／网络同意边界不变。
+
+`achievementAdornment.ts` 为原成就插画提供统一的有界方框几何；`achievementIcons.ts`
+与 `achievementShare.ts` 在图鉴、展示柜、下一目标、历史／分享缩略图及实际 SVG 导出
+中复用它。等级、已获／目标／锁定状态及中性里程碑分别编码；饰件变化不授奖，也不改变
+已保存日期或固定项。
+
+`projectChartProjection.ts` 消费既有 `ProjectUsageMatrixSnapshot`。项目页在原 30／90 天
+范围中提供日、周一开周、月尺度，项目筛选、热力图／趋势切换和有界详情。热力图最多
+40 行、趋势最多六条系列并包含“其他”长尾；首尾不完整周期明确标示。未知单元格保留
+null，与已核验零值区分；不完整周期保留小计覆盖状态。来源项目日 DTO 只有 Token，
+不会据此虚构项目金额、缓存或推理组成。宿主筛选采用供应商／文档作用域的不透明句柄，
+选择器每个供应商最多列200个项目。按已接受快照索引的 WeakMap 对每个快照最多缓存
+12个投影，不建立持久图表缓存，交互不读源日志。
+
+`apiHeatmap.ts` 继续拥有 canonical 分享产物，并调用同一 `heatmapSvg.ts` renderer。
+`presentation=standard|compact` 默认 standard，仅在主动包含 API 等价金额时生效。
+紧凑版式先全精度汇总 USD，再按显示币种取整，保留可见供应商／范围、按每日峰值比例
+划分的色阶及既有推广链接。未知总额仍为 —，真实零仍为零；干净卡片不恢复覆盖页脚、
+加号或质量描边，图片说明与每日提示保留定价／来源证据。供应商金额分别呈现。带链接的
+紧凑 SVG 使用有名称的 group，使链接可被访问；标准图像语义不变。render version 6
+覆盖外观与可访问结构更新。版式进入客户端配置身份、宿主规范化、接受回执、恢复和重置；
+导出复用已接受字节，并读回同一保存 URI 核验后才报告成功。
+
+`usageDiagnostics.ts` 提供仅数值的单位实际经过小时输出和已观察用量变化。
+两个共用 STATE 开关 `showUsageThroughput`、`showUsageChange` 默认关闭。Claude
+消费已物化每日聚合；Codex 通过仅宿主可用的惰性视图提供最多30日，并核对当前清单、
+时区、谱系及总量。关闭时跳过投影；结果仅按供应商、来源及相关配置在内存中复用。
+
+小时输出使用已结束自然日的实际经过小时数，包含空闲及 DST，不是生成 TPS。
+变化视图比较前两个完整且时长相同的自然日；模型与角色是互有重叠的边际视图，
+不能相加或解释为因果关系。缺失覆盖保持不可用，完整闭合七天峰值只作文字背景。
+本次集成不包含额度下降率适配器、账号校准或新增官方额度采集器。
+
+未发布的连续七天迁移通过 `rollingSevenDay.ts`、`achievementRollingPeak.ts` 消费既有
+自然日聚合。三个 `weekly-volume` ID 及 Claude／Codex 各五个周金额 ID 使用规则版本3，
+金额范围为 `completedRollingSevenDayPeak`，与活跃自然周规则和实际额度重置周期分开。
+只有结束日期早于今天的窗口才已闭合；完整保留日期证据才可补内部空闲日零值，缺失覆盖
+保留未知或有限小计。最早可核验日期要求完整闭窗，运行期日期证据包含 `windowStartDay`／
+`windowEndDay`，日期为窗口结束后的次一自然日，即窗口已闭合之日。已核验的正向小计
+仍可满足门槛，但不完整窗口不补造最早日期。活跃周与四周均值沿用原规则；饰件不改变
+这些证据规则。
+
+成就权威文件／schema 仍为 v2，读取兼容 catalog version 2／3，新写入使用3。旧自然周
+rule-version-1 记录保留原日期／来源及固定项，在详情、选择与 SVG 分享中标注为保留的
+旧规则奖项，不改写成已满足新规则的证明；新授奖使用版本3。现有记录清除和来源所有权
+不变，不新增成就存储或来源扫描。这是实现契约，不代表迁移已通过原生或发布验收。

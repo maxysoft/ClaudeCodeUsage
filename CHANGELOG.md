@@ -2,9 +2,24 @@
 
 All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
-upstream merge: 2.5.0 / `7c3389d`). Format follows [Keep a Changelog](https://keepachangelog.com).
+upstream merge: 2.5.1 / `a5bc41d`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
-## [Unreleased]
+## [2.18.0] — 2026-11-01
+
+### Added (merged from upstream v2.5.1)
+
+- **Shared Claude quota across windows** — VS Code windows on the same Claude account reuse one fresh quota result instead of each sending its own request. Scoped weekly caps keep their names, and clearing quota history cannot be undone by a pending refresh.
+- **Custom Codex status-bar text (off by default)** — `codex.statusBarUsageFormat` shows today's Codex input, output and cache usage with placeholders such as `{input}`, `{output}` and `{cacheHitRate}`. Empty keeps `codex.statusMetric`.
+- **Achievements and sharing** — full badge artwork with rank ornaments, a continuous gallery and centred share layouts. Weekly volume and API-amount badges use completed rolling seven-day windows; earlier calendar-week awards keep their records and are labelled as legacy rules.
+- **Project charts** — grouped range, indexed subtotal and coverage, day/week/month views, filters, and retained scroll positions.
+- **Analysis results first** — key numbers come before evidence and advice. Optional usage diagnostics (output per elapsed hour, usage changes) are off by default.
+
+### Changed (fork-specific)
+
+- **Claude credentials stay read-only** — upstream 2.5.1 restores OAuth token refresh (new endpoint, public client ID, rotated refresh token written back to the credential file or Keychain). The fork keeps refresh and credential writes removed: the merge drops upstream's refresh code, its tests and its documentation. The shared quota only reads credentials.
+- **Release-tool MSAL** — the fork keeps `@azure/identity` 4.14.1, which brings `@azure/msal-node` 7.1.2, instead of upstream's override to 7.1.1. Upstream's compatibility test now checks 7.1.2.
+- **Achievement history list** — the fork derives this list from the catalog. It now includes upstream's rolling seven-day rules (rule version 3), so it keeps its 138 entries.
+- **Get AI Advice icon** — the Codex analysis tab, reordered by upstream, keeps the lightbulb SVG.
 
 ### Fixed
 
@@ -38,6 +53,10 @@ upstream merge: 2.5.0 / `7c3389d`). Format follows [Keep a Changelog](https://ke
 ### Removed (fork-specific)
 
 - **Production-dead upstream code** — unused advice modules, the incremental-index prototype and its benchmarks, the unused Claude provider snapshot, dead achievement, heatmap, weekly-value and quota helpers. The legacy Claude loader now lives in test helpers as the equivalence oracle. No behaviour change; upstream merges touching these files need the deletion re-applied.
+
+### Upstream alignment
+
+Aligned with `jack21/ClaudeCodeUsage` v2.5.1 (`a5bc41d`, 2026-10-29).
 
 ## [2.17.0] — 2026-10-18
 

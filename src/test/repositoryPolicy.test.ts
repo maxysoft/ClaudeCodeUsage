@@ -1879,9 +1879,9 @@ test('changelog documents the current release and its upstream alignment', () =>
   assert.match(changelog, /aligned with `jack21\/ClaudeCodeUsage`/);
 });
 
-test('changelog records the upstream v2.5.0 alignment', () => {
+test('changelog records the upstream v2.5.1 alignment', () => {
   const changelog = repoFile('CHANGELOG.md');
-  assert.match(changelog, /2\.5\.0 \/ `7c3389d`/);
+  assert.match(changelog, /2\.5\.1 \/ `a5bc41d`/);
 });
 
 test('changelog separates unreleased changes from published v2.3.3 and v2.3.2 fixes', () => {

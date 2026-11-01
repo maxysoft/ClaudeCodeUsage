@@ -1,3 +1,4 @@
+import {achievementRollingPeak,type AchievementRollingWindow} from './achievementRollingPeak';
 import {
   getAchievementMoneyPricebook, normalizeAchievementMoneyModel,
   type AchievementMoneyBackend, type AchievementMoneyEvidence,
@@ -9,7 +10,7 @@ import { CODEX_PERIOD_LINEAGE_VERSION } from './providers/codex/codexPeriodIndex
 import type { ProviderTokenCounts, UsageProvider } from './providers/providerTypes';
 import type { UsageData } from './types';
 import { codexAchievementCalendarProjection, type AchievementDayEvidence } from './achievementCalendar';
-import { mondayOf, parseDayKey } from './dateKeys';
+import { parseDayKey } from './dateKeys';
 
 /** Accept existing materialized model rows without their dashboard cost/count.
  * referenceUsage is the admitted TTL-complete subset, never the full bucket. */
@@ -39,12 +40,13 @@ export interface AchievementMoneyScopes {
   readonly backend?: AchievementMoneyBackend;
   readonly pricebookVersion?: string;
   readonly cumulative?: MoneyEvidence;
-  readonly completedMondayWeekPeak?: number;
+  readonly completedRollingSevenDayPeak?: number;
+  readonly rollingSevenDayWindow?: AchievementRollingWindow;
   readonly maxSessionTask?: number;
   readonly coverage: {
     readonly cumulative: MoneyScopeCoverage;
     /** Coverage describes the selected peak, not global coverage. */
-    readonly completedMondayWeekPeak: MoneyScopeCoverage;
+    readonly completedRollingSevenDayPeak: MoneyScopeCoverage;
     readonly maxSessionTask: MoneyScopeCoverage;
     readonly verifiedFiles?: number;
     readonly excludedFiles?: number;
@@ -187,7 +189,7 @@ function coverage(e: MoneyEvidence): MoneyScopeCoverage {
 }
 function base(provider: UsageProvider, book?: AchievementMoneyPricebook): AchievementMoneyScopes {
   return { provider, backend: book?.backend, pricebookVersion: book?.version, coverage: {
-    cumulative: book ? PENDING : INVALID, completedMondayWeekPeak: book ? PENDING : INVALID,
+    cumulative: book ? PENDING : INVALID, completedRollingSevenDayPeak: book ? PENDING : INVALID,
     maxSessionTask: book ? PENDING : INVALID } };
 }
 function dayOrdinal(day: string): number {
@@ -195,7 +197,7 @@ function dayOrdinal(day: string): number {
   if (!Number.isFinite(time)) throw new RangeError('Invalid date');
   return time;
 }
-interface Peak { value?: number; coverage: MoneyScopeCoverage }
+interface Peak { value?: number; coverage: MoneyScopeCoverage; window?: AchievementRollingWindow }
 function peak(parts: Iterable<MoneyEvidence>, provider: UsageProvider, book: AchievementMoneyPricebook): Peak {
   let selected: MoneyEvidence | undefined;
   let fallback = evidence(provider, book, zero());
@@ -208,18 +210,19 @@ function peak(parts: Iterable<MoneyEvidence>, provider: UsageProvider, book: Ach
   }
   return selected ? { value: selected.microUsd ?? undefined, coverage: coverage(selected) } : { coverage: coverage(fallback) };
 }
-function weekPeak(days: Map<string, MoneyEvidence>, provider: UsageProvider, book: AchievementMoneyPricebook, asOfDay: string): Peak {
-  const asOf = dayOrdinal(asOfDay);
-  const weeks = new Map<number, Sum>();
-  let hasOpenWeek = false;
-  for (const [day, amount] of days) {
-    const start = mondayOf(dayOrdinal(day));
-    // End is Sunday's civil date; strictly earlier than caller's asOfDay.
-    if (start + 6 * DAY_MS >= asOf) { hasOpenWeek = true; continue; }
-    const sum = weeks.get(start) ?? zero(); add(sum, fromEvidence(amount)); weeks.set(start, sum);
-  }
-  if (!weeks.size && hasOpenWeek) return { coverage: PENDING };
-  return peak([...weeks.values()].map(sum => evidence(provider, book, sum)), provider, book);
+function weekPeak(days: Map<string, MoneyEvidence>, provider: UsageProvider, book: AchievementMoneyPricebook, asOfDay: string, complete=true): Peak {
+  dayOrdinal(asOfDay);
+  if(!days.size)return {coverage:coverage(evidence(provider,book,zero()))};
+  const rolling=achievementRollingPeak({asOfDay,complete,days:[...days].map(([day,amount])=>({day,
+    units:BigInt(amount.exactMicroUsdUnits),coverage:complete&&(amount.status==='complete'||amount.status==='empty')?'complete':'partial'}))});
+  if(!rolling.window)return {coverage:PENDING};
+  const sum=zero();
+  for(const [day,amount]of days)if(day>=rolling.window.startDay&&day<=rolling.window.endDay)add(sum,fromEvidence(amount));
+  const selected=evidence(provider,book,sum);
+  const value=selected.microUsd??undefined;
+  const cov=coverage(selected);
+  return {value,window:rolling.window,coverage:rolling.lowerBound&&(cov.status==='complete'||cov.status==='partial')
+    ? {...cov,status:'partial',scopeLowerBound:true}:cov};
 }
 function claudeSignature(models: ClaudeMoneyModels): string {
   // Compare only source numeric vectors, including shadow: equal rounded
@@ -257,8 +260,8 @@ export function claudeAchievementMoneyScopes(input: ClaudeMoneyScopesInput): Ach
       task = peak(amounts(), 'claude', book);
     } catch { task = { coverage: INVALID }; }
   }
-  return { ...result, cumulative, completedMondayWeekPeak: week.value, maxSessionTask: task.value,
-    coverage: { cumulative: cumulativeCoverage, completedMondayWeekPeak: week.coverage, maxSessionTask: task.coverage } };
+  return { ...result, cumulative, completedRollingSevenDayPeak: week.value, rollingSevenDayWindow:week.window, maxSessionTask: task.value,
+    coverage: { cumulative: cumulativeCoverage, completedRollingSevenDayPeak: week.coverage, maxSessionTask: task.coverage } };
 }
 
 function fileEvidence(file: CodexFileAggregate, book: AchievementMoneyPricebook): MoneyEvidence {
@@ -377,7 +380,7 @@ export function codexAchievementMoneyScopes(input: CodexMoneyScopesInput): Achie
     if (!Array.isArray(input.files)) throw new RangeError('Missing file census');
     files = verifiedCodexAchievementFiles(input.files);
     if (input.files.length && !files.length) throw new RangeError('No verified files');
-  } catch { return { ...result, coverage: { cumulative: INVALID, maxSessionTask: INVALID, completedMondayWeekPeak: PENDING } }; }
+  } catch { return { ...result, coverage: { cumulative: INVALID, maxSessionTask: INVALID, completedRollingSevenDayPeak: PENDING } }; }
   let cumulative: MoneyEvidence | undefined, cumulativeCoverage: MoneyScopeCoverage = INVALID;
   try {
     const sum = zero(); for (const file of files) add(sum, fromEvidence(fileEvidence(file, book)));
@@ -408,7 +411,7 @@ export function codexAchievementMoneyScopes(input: CodexMoneyScopesInput): Achie
       if (current.sourceRevision!==supplied.sourceRevision || current.complete!==supplied.complete ||
         current.scope!==supplied.scope || signatures(current)!==signatures(supplied)) throw new RangeError('Retired date binding');
       if (current.complete || current.scope==='verified-subset') {
-        week=weekPeak(codexMoneyDays(projection.completeDateFiles,projection.completeDateEvidence,book),'codex',book,input.asOfDay);
+        week=weekPeak(codexMoneyDays(projection.completeDateFiles,projection.completeDateEvidence,book),'codex',book,input.asOfDay,current.complete);
         if (!current.complete) {
           // Only a positive lower bound is meaningful for an incomplete scope.
           // Do not certify zero/empty weeks, or replace overflow/unpriced states.
@@ -423,7 +426,7 @@ export function codexAchievementMoneyScopes(input: CodexMoneyScopesInput): Achie
     try { week = weekPeak(codexMoneyDays(files, input.dayEvidence, book), 'codex', book, input.asOfDay); }
     catch { week = { coverage: INVALID }; }
   }
-  return { ...result, cumulative, completedMondayWeekPeak: week.value, maxSessionTask: task.value,
-    coverage: { cumulative: cumulativeCoverage, maxSessionTask: task.coverage, completedMondayWeekPeak: week.coverage,
+  return { ...result, cumulative, completedRollingSevenDayPeak: week.value, rollingSevenDayWindow:week.window, maxSessionTask: task.value,
+    coverage: { cumulative: cumulativeCoverage, maxSessionTask: task.coverage, completedRollingSevenDayPeak: week.coverage,
       verifiedFiles: files.length, excludedFiles: input.files.length - files.length } };
 }

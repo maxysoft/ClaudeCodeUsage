@@ -45,6 +45,7 @@ const server = createServer(async (request, response) => {
     const theme = ['dark', 'highContrast'].includes(requestedTheme) ? requestedTheme : 'light';
     const requestedFixture = url.searchParams.get('fixture') ?? 'default';
     const fixture = [
+      'usage-diagnostics-on', 'usage-diagnostics-off', 'usage-diagnostics-updated',
       'default',
       'complete-index',
       'rootless-cycle',
@@ -71,6 +72,8 @@ const server = createServer(async (request, response) => {
       'openrouter-no-observations',
       'achievement-token-stages',
       'achievement-share-resources',
+      'visual-correction-approved',
+      'achievement-rolling-seven',
       'achievement-calendar-subset',
       'achievement-review-loading',
       'achievement-review-failure',

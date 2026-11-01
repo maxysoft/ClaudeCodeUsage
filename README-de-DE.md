@@ -6,6 +6,17 @@
 Die Erweiterung liest lokale Nutzungsprotokolle und zeigt Anbieter-Daten mit
 jeweils passender Bedeutung an. Sie ist **kein Abrechnungswerkzeug**.
 
+## Visualisierungs- und Quotenupdates
+
+- Die Auszeichnungsseiten von Claude und Codex verwenden ein klareres gemeinsames Layout. Grafiken behalten ihre volle Größe mit Rangverzierungen am Rand; Freigabekarten stellen die Grafiken in zentrierten Abzeichenreihen heraus. Vergabekriterien bleiben erhalten.
+- Projektdiagramme bündeln den gewählten 30/90-Tage-Zeitraum, die indizierte Token-Teilsumme und die Abdeckung über ausgerichteten Legenden und Diagrammen. Zuerst erscheinen aktuelle Daten; die gewählte Scrollposition bleibt erhalten. Tages-, Wochen- und Monatsansichten, Projektfilter sowie unbekannte Werte, Nullen und Teilsummen bleiben verfügbar.
+- Für Beträge gibt es ein optionales kompaktes Layout; Standard bleibt voreingestellt. Claude und Codex werden getrennt dargestellt. Änderungen erfordern eine neue bestätigte Vorschau; gespeicherte SVG-Bytes werden zurückgelesen und mit ihr verglichen.
+- Siebentägige Mengen- und anbieterbezogene Betragsauszeichnungen verwenden abgeschlossene rollierende Fenster aus sieben Kalendertagen. Vorhandene Auszeichnungen behalten ihre Aufzeichnungen und werden als frühere Regeln gekennzeichnet; fehlende Evidenz erzeugt keine Daten. Tatsächliche Quoten-Resetzyklen bleiben unverändert.
+- Die Analyse von Claude und Codex zeigt zuerst Kennzahlen desselben Zeitraums, danach Beobachtungen, Belege und Hinweise. Ausgabe pro verstrichener Stunde und beobachtete Nutzungsänderungen bleiben standardmäßig aus; Teilabdeckung bleibt sichtbar. Stundenausgabe ist keine Generierungs-TPS, Änderungen belegen keine Ursachen.
+- Codex kann Eingabe, Ausgabe und Cache gemeinsam über das optionale `codex.statusBarUsageFormat` anzeigen; leer bleibt die bisherige Metrik. Siehe [Formatdetails](CHANGELOG.md).
+
+Diese Updates bewahren die lokale Nutzungsverarbeitung. Claude-Zugangsdaten bleiben schreibgeschützt; die Erweiterung erneuert sie nie. Siehe [lokale Daten und Löschung](LOCAL-DATA.md).
+
 ## Auf einen Blick
 
 - **Ruhigere Aktualisierung und klare Wiederherstellung:** Die Pause gilt für beide

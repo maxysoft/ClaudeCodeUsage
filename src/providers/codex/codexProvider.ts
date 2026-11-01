@@ -359,6 +359,7 @@ function snapshotFromIndex(
       const { achievementPeriodWitness: _witness, ...aggregate } = file.aggregate;
       return {
         ...aggregate,
+        cacheInputComplete: file.parserState.cacheInputComplete === true,
         ...(witnessed ? {
           achievementPeriodWitness: { size: file.size, offset: file.offset, expectedPrefixEvents, timeZone },
         } : {}),
