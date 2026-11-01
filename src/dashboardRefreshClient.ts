@@ -152,7 +152,7 @@ function ccuRefreshScrollerBaseKey(element, panel) {
   if (!element || !element.matches) { return ''; }
   var scope = ccuRefreshScope(element, panel);
   var allowedScopeIds = [
-    'today', 'month', 'all', 'sessions', 'projects', 'content',
+    'today', 'week', 'month', 'all', 'sessions', 'projects', 'content',
     'branches', 'workflows', 'settings'
   ];
   var scopeId = scope !== panel && allowedScopeIds.indexOf(scope.id) !== -1
@@ -525,8 +525,8 @@ function ccuApplyDashboardDataPatch(message) {
     (message.provider === 'claude' || message.provider === 'codex' || message.provider === 'compare') &&
     message.provider === ccuProviderName() &&
     (message.provider === 'compare' ? message.tab === 'all' :
-      ['today', 'month', 'all', 'sessions', 'projects', 'content', 'branches', 'workflows', 'achievements', 'settings']
-        .indexOf(message.tab) !== -1) &&
+      ['today', 'week', 'month', 'all', 'sessions', 'projects', 'content', 'branches', 'workflows', 'achievements', 'settings']
+        .indexOf(message.tab) !== -1 && (message.tab !== 'week' || message.provider === 'claude')) &&
     typeof message.html === 'string' &&
     message.html.length <= 32 * 1024 * 1024 &&
     !/<script(?:\\s|>)/i.test(message.html) &&

@@ -4,6 +4,7 @@ import { appendFile, mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promi
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { claudeUsageDashboardSnapshot, createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import { I18n } from '../i18n';
 import { calculateCostBreakdown } from '../pricing';
@@ -177,7 +178,7 @@ test('normal Full and incremental parsing retain unknown or malformed TTL exclus
     await writeFile(file, rows.map(line).join(''));
     const expected = { ...vector, inputTokens: 33, outputTokens: 21, cacheReadTokens: 39,
       cacheCreation5mTokens: 8, cacheCreation1hTokens: 8 };
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
     const fullData = ClaudeDataLoader.calculateUsageData(full.records);
     assert.deepEqual(reference(fullData), expected);
     assert.deepEqual(primary(fullData), primary(ClaudeDataLoader.calculateUsageData(rows)));
@@ -213,7 +214,7 @@ test('workflow referenceUsage follows canonical response replacements and compac
       malformed.map((usage, id) => line(record(`malformed-${id}`, usage))).join(''));
     let result = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
     const check = async (expected: unknown) => {
-      const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
       const expectedData = ClaudeDataLoader.calculateUsageData(full.records);
       assert.deepEqual(stable(result.index.aggregates.allTime), stable(expectedData));
       assert.deepEqual(stable(result.index.aggregates.byWorkflow.get('wf_reference')), stable(expectedData));
@@ -274,18 +275,18 @@ test('incremental referenceUsage matches Full across dedup, append, truncate, de
     await writeFile(duplicateFile, line(record('known')));
     let result = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
     const check = async () => {
-      const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
       assert.equal(full.diagnostics.filesFailed, 0);
       assert.deepEqual(stable(result.index.aggregates.allTime), stable(ClaudeDataLoader.calculateUsageData(full.records)));
       const snapshot = claudeUsageDashboardSnapshot(result.index, { now: new Date(Date.now()), projectGroupingMode: 'flat' });
       assert.deepEqual(stable(snapshot.sessions), stable(ClaudeDataLoader.getSessionBreakdown(full.records)));
-      assert.deepEqual(stable(snapshot.projects), stable(ClaudeDataLoader.getProjectBreakdown(full.records, 60, 'flat')));
-      assert.deepEqual(stable(snapshot.dailyForAllTime), stable(ClaudeDataLoader.getDailyDataForSpecificMonth(full.records, '2026-10')));
-      assert.deepEqual(stable(snapshot.hourlyForToday), stable(ClaudeDataLoader.getHourlyDataForDate(full.records, '2026-10-09')));
-      assert.deepEqual(stable(snapshot.branches), stable(ClaudeDataLoader.getBranchBreakdown(full.records)));
+      assert.deepEqual(stable(snapshot.projects), stable(LegacyClaudeLoader.getProjectBreakdown(full.records, 60, 'flat')));
+      assert.deepEqual(stable(snapshot.dailyForAllTime), stable(LegacyClaudeLoader.getDailyDataForSpecificMonth(full.records, '2026-10')));
+      assert.deepEqual(stable(snapshot.hourlyForToday), stable(LegacyClaudeLoader.getHourlyDataForDate(full.records, '2026-10-09')));
+      assert.deepEqual(stable(snapshot.branches), stable(LegacyClaudeLoader.getBranchBreakdown(full.records)));
       const groups: [Map<string, UsageData>, (row: ClaudeUsageRecord) => string][] = [
         [result.index.aggregates.bySession, row => row._sessionId || 'unknown'],
-        [result.index.aggregates.byProject, row => (row._projectPath || row._projectName || 'unknown').toLowerCase()],
+        [result.index.aggregates.byProject, row => ClaudeDataLoader.normalizePath(row._projectPath || row._projectName || 'unknown')],
         [result.index.aggregates.byLocalDay, row => row.timestamp.slice(0, 10)],
         [result.index.aggregates.byDay, row => row.timestamp.slice(0, 10)],
         [result.index.aggregates.byMonth, row => row.timestamp.slice(0, 7)],
@@ -364,7 +365,7 @@ test('referenceUsage snapshot clones own nested vectors, including historical ho
     const snapshot = claudeUsageDashboardSnapshot(result.index, { now: new Date(now), projectGroupingMode: 'flat' });
     assert.equal(JSON.stringify(prior), priorJson);
     assert.deepEqual(reference(snapshot.hourlyForToday[0].data), vector);
-    assert.deepEqual(stable(snapshot.hourlyForToday), stable(ClaudeDataLoader.getHourlyDataForDate(result.records, '2026-08-01')));
+    assert.deepEqual(stable(snapshot.hourlyForToday), stable(LegacyClaudeLoader.getHourlyDataForDate(result.records, '2026-08-01')));
     const original = result.index.aggregates.allTime.modelBreakdown[model].referenceUsage!;
     for (const data of [snapshot.allTime, snapshot.today, snapshot.month, snapshot.last30Days,
       snapshot.dailyForAllTime[0].data, snapshot.dailyForMonth[0].data,
@@ -381,7 +382,7 @@ test('referenceUsage snapshot clones own nested vectors, including historical ho
     assert.equal(result.diagnostics.bodyReads, 0, 'existing timezone reaggregation uses retained records');
     const rebucketed = claudeUsageDashboardSnapshot(result.index, { now: new Date(now), projectGroupingMode: 'flat' });
     assert.deepEqual(reference(rebucketed.today), vector);
-    assert.deepEqual(stable(rebucketed.hourlyForToday), stable(ClaudeDataLoader.getHourlyDataForDate(result.records, '2026-08-01')));
+    assert.deepEqual(stable(rebucketed.hourlyForToday), stable(LegacyClaudeLoader.getHourlyDataForDate(result.records, '2026-08-01')));
     assert.equal(JSON.stringify(prior), priorJson);
   } finally {
     Date.now = savedNow;

@@ -15,7 +15,7 @@ const providers=['claude','codex'] as const;
 const ranks=['bronze','silver','gold','platinum','legendary'];
 const targets=[100_000_000,500_000_000,2_500_000_000,10_000_000_000,25_000_000_000];
 const base:any={claudeTokens:0,codexTokens:0,activeDays:0,claudeFamilies:[],
-  codex:{modelCount:0,efforts:[],familyRootCounts:{astra:0,sol:0,luna:0}}};
+  codex: {}};
 const models=(n:number)=>({'claude-opus-5-5':{inputTokens:n,outputTokens:0,cacheReadTokens:0,cacheCreationTokens:0,
   referenceUsage:{inputTokens:n,outputTokens:0,cacheReadTokens:0,cacheCreation5mTokens:0,cacheCreation1hTokens:0}}});
 const amount=(provider:'claude'|'codex',microUsd:number)=>({provider,backend:provider==='claude'?'anthropic':'openai',

@@ -11,15 +11,19 @@
 // one file is intentionally a single illustrative example; follow the same
 // pattern to cover aggregation, quota-window handling, and i18n next.
 
+import { EventEmitter } from 'node:events';
+import * as https from 'node:https';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 
 import {
-  calculateCostFromTokens,
   calculateCostBreakdown,
+  fetchLatestPricing,
+  getExactModelPricing,
   getModelPricing,
   setPricingBackend,
 } from '../pricing';
+import { calculateCostFromTokens } from './helpers/costTotal';
 
 test('calculateCostFromTokens prices a known model from its per-token rates', () => {
   // Opus current tier: $5 / $25 / $6.25 / $0.50 per million in/out/write/read.
@@ -278,4 +282,73 @@ test('an unknown model is reported once, not once per priced record', () => {
     ['Unknown model: claude-opus-99-test-once, using Opus (current tier) pricing as fallback'],
     ['Unknown model: unlabelled-model-test-once, using Sonnet pricing as fallback'],
   ]);
+});
+
+const SONNET_5_LAST_INTRO_MS = Date.parse('2026-08-31T23:59:59Z');
+const SONNET_5_FIRST_STANDARD_MS = Date.parse('2026-09-01T00:00:00Z');
+
+test('getExactModelPricing applies the Sonnet 5 cutover at the record time', () => {
+  assert.equal(getExactModelPricing('claude-sonnet-5', SONNET_5_LAST_INTRO_MS)!.input_cost_per_token, 2 / 1_000_000);
+  assert.equal(getExactModelPricing('claude-sonnet-5', SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 3 / 1_000_000);
+  assert.equal(getExactModelPricing('claude-sonnet-5[1m]', SONNET_5_FIRST_STANDARD_MS)!.output_cost_per_token, 15 / 1_000_000);
+  assert.equal(getExactModelPricing('claude-sonnet-5-5', SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 2 / 1_000_000,
+    'Sonnet 5.5 has no introductory cutover');
+});
+
+test('Sonnet 5 cutover applies to bare, prefixed and dated labels only', () => {
+  for (const label of ['claude-sonnet-5', 'anthropic/claude-sonnet-5', 'claude-sonnet-5-20260715', 'sonnet-5']) {
+    assert.equal(getModelPricing(label, SONNET_5_LAST_INTRO_MS)!.input_cost_per_token, 2 / 1_000_000, label);
+    assert.equal(getModelPricing(label, SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 3 / 1_000_000, label);
+  }
+  assert.equal(getModelPricing('claude-sonnet-5-5', SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 2 / 1_000_000);
+  assert.equal(getModelPricing('claude-sonnet-5-6', SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 2 / 1_000_000,
+    'unknown 5.x label keeps the family fallback, not the Sonnet 5 cutover');
+});
+
+test('Sonnet 5 cutover covers Vertex, Bedrock and multi-segment proxy labels', () => {
+  const labels = [
+    'claude-sonnet-5@20260715',
+    'us.anthropic.claude-sonnet-5-v1:0',
+    'anthropic.claude-sonnet-5-20260715-v1:0',
+    'openrouter/anthropic/claude-sonnet-5',
+  ];
+  for (const label of labels) {
+    assert.equal(getModelPricing(label, SONNET_5_LAST_INTRO_MS)!.input_cost_per_token, 2 / 1_000_000, label);
+    assert.equal(getModelPricing(label, SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 3 / 1_000_000, label);
+  }
+  setPricingBackend('aws-bedrock-in-region');
+  try {
+    for (const label of labels) {
+      assert.equal(getModelPricing(label, SONNET_5_LAST_INTRO_MS)!.input_cost_per_token, 3.3 / 1_000_000, label);
+      assert.equal(getModelPricing(label, SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 3.3 / 1_000_000, label);
+    }
+  } finally {
+    setPricingBackend('anthropic');
+  }
+});
+
+// Keep last: LiteLLM overrides are module state for the rest of this file.
+test('a LiteLLM override cannot replace the dated Sonnet 5 tiers', async (context) => {
+  class Response extends EventEmitter { statusCode = 200; headers = {}; setEncoding() {} resume() {} destroy() {} }
+  class Request extends EventEmitter { destroy() {} }
+  const response = new Response();
+  context.mock.method(https, 'get', (_url: unknown, _options: unknown, callback: (r: Response) => void) => {
+    queueMicrotask(() => callback(response));
+    return new Request();
+  });
+  const fetched = fetchLatestPricing();
+  await Promise.resolve();
+  response.emit('data', JSON.stringify({
+    'claude-sonnet-5': { input_cost_per_token: 7 / 1_000_000, output_cost_per_token: 70 / 1_000_000 },
+    'claude-opus-5': { input_cost_per_token: 9 / 1_000_000 },
+    'claude-sonnet-5-6': { input_cost_per_token: 8 / 1_000_000 },
+  }));
+  response.emit('end');
+  await fetched;
+
+  assert.equal(getModelPricing('claude-sonnet-5', SONNET_5_LAST_INTRO_MS)!.input_cost_per_token, 2 / 1_000_000);
+  assert.equal(getModelPricing('claude-sonnet-5', SONNET_5_FIRST_STANDARD_MS)!.output_cost_per_token, 15 / 1_000_000);
+  assert.equal(getModelPricing('claude-opus-5')!.input_cost_per_token, 9 / 1_000_000, 'other overrides still apply');
+  assert.equal(getModelPricing('claude-sonnet-5-6', SONNET_5_FIRST_STANDARD_MS)!.input_cost_per_token, 8 / 1_000_000,
+    'an unlisted Sonnet 5.x label honours its LiteLLM override');
 });

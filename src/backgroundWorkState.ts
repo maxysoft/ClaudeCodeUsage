@@ -21,7 +21,6 @@ export const BACKGROUND_WORK_REASONS = [
 export const BACKGROUND_WORK_PAUSED_REASONS = [
   'failure-backoff',
   'no-progress',
-  'user',
   'corrupt-state',
 ] as const;
 
@@ -198,7 +197,7 @@ function validStatusFields(value: Record<string, unknown>): boolean {
         (value.pausedReason === 'failure-backoff' || value.pausedReason === 'no-progress');
     case 'paused':
       return value.nextEligibleAt === null &&
-        (value.pausedReason === 'user' || value.pausedReason === 'corrupt-state');
+        value.pausedReason === 'corrupt-state';
     default:
       return false;
   }
@@ -291,7 +290,7 @@ export function canStartBackgroundWork(
   if (!isBackgroundWorkState(state)) return false;
   if (state.status === 'complete' || state.status === 'running') return false;
   if (state.status === 'paused') {
-    return state.pausedReason === 'user' && options.trigger === 'manual';
+    return false;
   }
   if (options.trigger === 'manual') return true;
   return state.nextEligibleAt !== null && options.now >= state.nextEligibleAt;
@@ -444,23 +443,6 @@ export function recordBackgroundWorkProgress(
     progress,
     nextEligibleAt: safeTimestampAfter(options.now, policy.noProgressCooldownMs),
     pausedReason: 'no-progress',
-    updatedAt: options.now,
-  };
-}
-
-export function pauseBackgroundWork(
-  state: BackgroundWorkState,
-  options: { now: number },
-): BackgroundWorkState {
-  assertSafeNonNegativeInteger(options.now, 'now');
-  if (!isBackgroundWorkState(state)) throw new TypeError('background work state is invalid');
-  if (state.status === 'complete' || state.pausedReason === 'corrupt-state') return state;
-  if (state.status === 'paused' && state.pausedReason === 'user') return state;
-  return {
-    ...cloneState(state),
-    status: 'paused',
-    nextEligibleAt: null,
-    pausedReason: 'user',
     updatedAt: options.now,
   };
 }

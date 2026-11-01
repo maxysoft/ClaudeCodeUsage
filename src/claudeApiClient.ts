@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFile, type ExecFileException } from 'child_process';
 import { createHmac } from 'node:crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6,6 +6,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { HttpResponse, requestViaCurl, requestViaFetch } from './httpClient';
 import { ClaudeApiUsageResponse, ClaudeCredentials } from './types';
+
+const SECURITY_ITEM_NOT_FOUND = 44;
 
 export interface ResolvedClaudeProfile {
   configDirectory: string;
@@ -64,8 +66,8 @@ export function resolveClaudeProfile(
     credentialsPath: path.join(configDirectory, '.credentials.json'),
     source,
     // Claude Code exposes one global macOS Keychain item. It is safe only for
-    // the default profile; using it for a custom profile can show and refresh
-    // a different account's credentials (#89).
+    // the default profile; using it for a custom profile can show a different
+    // account's quota (#89).
     allowKeychainFallback: configDirectory === defaultDirectory,
   };
 }
@@ -89,13 +91,16 @@ export class ClaudeApiClient {
   private readonly credentialsPath: string;
   private readonly allowKeychainFallback: boolean;
   private credentials: ClaudeCredentials | null = null;
-  private credentialsSource: 'file' | 'keychain' | null = null;
+  private keychainRead: Promise<ClaudeCredentials | null> | null = null;
+  private keychainChild: AbortController | null = null;
   private rateLimitedUntil: number = 0;
   private out: vscode.OutputChannel | null;
   // Once curl has succeeded after fetch failed, remember so we don't keep
   // paying the cost of a doomed fetch attempt on every refresh.
   private preferCurl: boolean = false;
   private lastQuotaIdentitySignal: string | null = null;
+  /** True when the last fetchUsageLimits made no request because credentials were missing or expired. */
+  lastFetchCredentialsUnavailable = false;
 
   constructor(
     out: vscode.OutputChannel | null = null,
@@ -115,25 +120,28 @@ export class ClaudeApiClient {
     }
   }
 
-  private async loadCredentials(): Promise<ClaudeCredentials | null> {
+  private async loadCredentials(signal?: AbortSignal): Promise<ClaudeCredentials | null> {
     try {
-      if (!fs.existsSync(this.credentialsPath)) {
-        this.log(`credentials: missing at ${this.credentialsPath}`);
-        return this.allowKeychainFallback
-          ? this.loadCredentialsFromKeychain()
-          : null;
-      }
       const content = await fs.promises.readFile(this.credentialsPath, 'utf-8');
       const parsed = JSON.parse(content) as ClaudeCredentials;
       if (!parsed || !parsed.claudeAiOauth || !parsed.claudeAiOauth.accessToken) {
         this.log('credentials: file present but no claudeAiOauth.accessToken');
+        this.credentials = null;
         return null;
       }
       this.credentials = parsed;
-      this.credentialsSource = 'file';
       return parsed;
     } catch (e) {
-      this.log(`credentials: read failed: ${(e as Error).message}`);
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.log(`credentials: missing at ${this.credentialsPath}`);
+        if (this.allowKeychainFallback && process.platform === 'darwin') {
+          return this.loadCredentialsFromKeychain(signal);
+        }
+        this.credentials = null;
+        return null;
+      }
+      // Never log the message: a JSON.parse error quotes part of the token.
+      this.log(`credentials: read failed (${(e as NodeJS.ErrnoException).code ?? (e as Error).name})`);
       return null;
     }
   }
@@ -153,136 +161,72 @@ export class ClaudeApiClient {
     return this.lastQuotaIdentitySignal;
   }
 
-  private loadCredentialsFromKeychain(): ClaudeCredentials | null {
-    if (process.platform !== 'darwin') {
-      return null;
-    }
-    try {
-      const content = execFileSync('/usr/bin/security', [
-        'find-generic-password',
-        '-s',
-        'Claude Code-credentials',
-        '-w'
-      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-      const parsed = JSON.parse(content) as ClaudeCredentials;
-      if (!parsed || !parsed.claudeAiOauth || !parsed.claudeAiOauth.accessToken) {
-        this.log('credentials: keychain item present but no claudeAiOauth.accessToken');
-        return null;
-      }
-      this.log('credentials: loaded from macOS Keychain');
-      this.credentials = parsed;
-      this.credentialsSource = 'keychain';
-      return parsed;
-    } catch (e) {
-      this.log(`credentials: keychain read failed: ${(e as Error).message}`);
-      return null;
-    }
-  }
-
-  private async saveCredentials(credentials: ClaudeCredentials): Promise<void> {
-    if (this.credentialsSource === 'keychain' && process.platform === 'darwin') {
-      try {
-        execFileSync('/usr/bin/security', [
-          'add-generic-password',
-          '-a',
-          os.userInfo().username,
+  private loadCredentialsFromKeychain(signal?: AbortSignal): Promise<ClaudeCredentials | null> {
+    if (!this.keychainRead) {
+      const child = new AbortController();
+      this.keychainChild = child;
+      this.keychainRead = new Promise<string>((resolve, reject) => {
+        execFile('/usr/bin/security', [
+          'find-generic-password',
           '-s',
           'Claude Code-credentials',
-          '-w',
-          JSON.stringify(credentials),
-          '-U'
-        ], { stdio: ['ignore', 'ignore', 'pipe'] });
-        this.credentials = credentials;
-        this.log('credentials: refreshed in macOS Keychain');
-        return;
-      } catch (e) {
-        this.log(`credentials: keychain write failed: ${(e as Error).message}`);
-      }
+          '-w'
+        ], { encoding: 'utf8', signal: child.signal }, (error, stdout) => error ? reject(error) : resolve(stdout));
+      }).then((content) => {
+        const parsed = JSON.parse(content.trim()) as ClaudeCredentials;
+        if (!parsed || !parsed.claudeAiOauth || !parsed.claudeAiOauth.accessToken) {
+          this.log('credentials: keychain item present but no claudeAiOauth.accessToken');
+          this.credentials = null;
+          return null;
+        }
+        this.log('credentials: loaded from macOS Keychain');
+        this.credentials = parsed;
+        return parsed;
+      }).catch((e: ExecFileException) => {
+        // Never log the message: it carries security's stderr or a JSON.parse token excerpt.
+        this.log(`credentials: keychain read failed (${e.code ?? e.name})`);
+        if (e.code === SECURITY_ITEM_NOT_FOUND) this.credentials = null;
+        return null;
+      }).finally(() => {
+        this.keychainRead = null;
+        this.keychainChild = null;
+      });
     }
-    await fs.promises.writeFile(this.credentialsPath, JSON.stringify(credentials), 'utf-8');
-    this.credentials = credentials;
-    this.credentialsSource = 'file';
+    const read = this.keychainRead;
+    if (!signal) return read;
+    return Promise.race([read, new Promise<null>((resolve) => {
+      if (signal.aborted) resolve(null);
+      else signal.addEventListener('abort', () => resolve(null), { once: true });
+    })]);
+  }
+
+  /** Kills a pending Keychain read. Window blur must not call this: it dismisses the Keychain prompt. */
+  cancelCredentialRead(): void {
+    this.keychainChild?.abort();
   }
 
   private isTokenExpired(credentials: ClaudeCredentials): boolean {
     return Date.now() >= credentials.claudeAiOauth.expiresAt - 60 * 1000;
   }
 
-  private async refreshAccessToken(
-    credentials: ClaudeCredentials,
-    signal?: AbortSignal,
-  ): Promise<ClaudeCredentials> {
-    if (signal?.aborted) throw new Error('Request cancelled');
-    const r = await this.request('https://console.anthropic.com/v1/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        refresh_token: credentials.claudeAiOauth.refreshToken,
-        grant_type: 'refresh_token'
-      }),
-      signal,
-    });
-    if (signal?.aborted) throw new Error('Request cancelled');
-    if (r.status !== 200) {
-      throw new Error(`Token refresh failed: ${r.status}`);
-    }
-    const data = JSON.parse(r.body) as { access_token: string; expires_in: number };
-    const updated: ClaudeCredentials = {
-      ...credentials,
-      claudeAiOauth: {
-        ...credentials.claudeAiOauth,
-        accessToken: data.access_token,
-        expiresAt: Date.now() + data.expires_in * 1000
-      }
-    };
-    await this.saveCredentials(updated);
-    return updated;
-  }
-
   private async getValidCredentials(signal?: AbortSignal): Promise<ClaudeCredentials | null> {
     if (signal?.aborted) throw new Error('Request cancelled');
     // Re-read from disk/keychain on every call so switching Claude accounts is
-    // honoured without a window reload. #45: a switched-in account has a *valid*
-    // (non-expired) token, so the expiry-only re-read below never noticed it and
-    // we kept serving the previous account's quota until the host restarted.
-    // loadCredentials refreshes this.credentials; fall back to the cached copy
-    // only if the fresh read transiently fails.
-    let credentials = (await this.loadCredentials()) || this.credentials;
+    // honoured without a window reload (#45), and a token Claude Code has
+    // refreshed since the last call is picked up. loadCredentials refreshes
+    // this.credentials; fall back to the cached copy only if the fresh read
+    // transiently fails.
+    const credentials = (await this.loadCredentials(signal)) || this.credentials;
     if (signal?.aborted) throw new Error('Request cancelled');
     if (!credentials) {
       return null;
     }
     if (this.isTokenExpired(credentials)) {
-      // Claude Code refreshes ~/.claude/.credentials.json itself. Re-read from
-      // disk FIRST — it has very likely already rotated the token — before
-      // attempting our own refresh. Without this, a cached-in-memory expired
-      // token would stick until the extension host restarts, which is exactly
-      // why "quota only comes back after I restart VS Code" was happening.
-      const fresh = await this.loadCredentials();
-      if (fresh && !this.isTokenExpired(fresh)) {
-        this.log('token: expired in memory, re-read a fresh one from disk');
-        return fresh;
-      }
-      this.log('token: expired, refreshing');
-      try {
-        credentials = await this.refreshAccessToken(fresh || credentials, signal);
-      } catch (e) {
-        this.log(`token: refresh failed: ${(e as Error).message}`);
-        return null;
-      }
+      // Never refresh or write here: using Claude Code's rotating refresh token logs Claude Code out.
+      this.log('token: expired; waiting for Claude Code to refresh it');
+      return null;
     }
     return credentials;
-  }
-
-  /**
-   * A valid OAuth access token (refreshed if needed), or null when not signed
-   * in. This credential is used for Claude Code account/quota APIs. It is not a
-   * default AI-advice backend; the old keyless Messages prototype is dormant
-   * after 403 responses and production advice remains user-configured BYOK.
-   */
-  async getAccessToken(): Promise<string | null> {
-    const credentials = await this.getValidCredentials();
-    return credentials?.claudeAiOauth?.accessToken ?? null;
   }
 
   /** Run an HTTP request via fetch, falling back to curl on TLS-fingerprint
@@ -299,7 +243,7 @@ export class ClaudeApiClient {
     if (opts.signal?.aborted) throw new Error('Request cancelled');
     if (!this.preferCurl) {
       try {
-        const r = await requestViaFetch(url, opts);
+        const r = await requestViaFetch(url, { ...opts, timeoutMs: 15_000 });
         if (r.status === 403 && r.body.includes('Request not allowed')) {
           this.log(`fetch: 403 "Request not allowed" → falling back to curl (Anthropic TLS-fingerprint gate)`);
           this.preferCurl = true;
@@ -337,6 +281,7 @@ export class ClaudeApiClient {
    * "Claude Code Usage" output channel for diagnosis.
    */
   async fetchUsageLimits(signal?: AbortSignal): Promise<ClaudeApiUsageResponse | null> {
+    this.lastFetchCredentialsUnavailable = false;
     if (signal?.aborted) return null;
     if (Date.now() < this.rateLimitedUntil) {
       this.log(`skip: cooling down for ${Math.round((this.rateLimitedUntil - Date.now()) / 1000)}s after 429`);
@@ -344,13 +289,14 @@ export class ClaudeApiClient {
     }
 
     try {
-      let credentials = await this.getValidCredentials(signal);
+      const credentials = await this.getValidCredentials(signal);
       if (!credentials) {
+        this.lastFetchCredentialsUnavailable = true;
         return null;
       }
 
       if (signal?.aborted) return null;
-      let response = await this.callUsageApi(
+      const response = await this.callUsageApi(
         credentials.claudeAiOauth.accessToken,
         signal,
       );
@@ -363,22 +309,6 @@ export class ClaudeApiClient {
         this.rateLimitedUntil = Date.now() + 60 * 1000;
         this.log('429: rate-limited, cooling down 60s');
         return null;
-      }
-
-      // One retry after a forced token refresh on 401.
-      if (response.status === 401) {
-        this.log('401: forcing token refresh and retrying once');
-        try {
-          const refreshed = await this.refreshAccessToken(credentials, signal);
-          credentials = refreshed;
-          response = await this.callUsageApi(
-            refreshed.claudeAiOauth.accessToken,
-            signal,
-          );
-        } catch (e) {
-          this.log(`401 retry: refresh failed: ${(e as Error).message}`);
-          return null;
-        }
       }
 
       if (response.status !== 200) {

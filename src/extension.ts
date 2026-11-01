@@ -10,6 +10,7 @@ import { ClaudeDataLoader } from './dataLoader';
 import {
   ClaudeUsageIndex,
   claudeUsageDashboardSnapshot,
+  claudeWeekUsage,
   createClaudeUsageIndex,
   updateClaudeUsageIndex,
 } from './claudeIncrementalIndex';
@@ -106,6 +107,7 @@ import {
 } from './providers/codex/codexProvider';
 import {
   CodexIndexProgress,
+  codexCoverageSettled,
   createEmptyCodexIndex,
   saveCodexIndexAtomic,
 } from './providers/codex/codexIndex';
@@ -178,7 +180,6 @@ import {
   LOCAL_DATA_GLOBAL_STATE_KEYS,
   LOCAL_DATA_GLOBAL_STATE_PREFIXES,
   LOCAL_DATA_PENDING_CLIENT_RESET_KEY,
-  LOCAL_DATA_SOURCE_EXCLUSIONS,
   LEGACY_ADVICE_LOCAL_STATE_KEYS,
   LocalDataAction,
   LocalDataActionResult,
@@ -192,7 +193,6 @@ import {
   approximateJsonBytes,
   finiteTimestampRange,
   groupQuotaAccountEpochs,
-  localDataActionTitle,
 } from './localDataControls';
 
 interface LocalizedReleaseAnnouncement {
@@ -470,11 +470,7 @@ const WHATS_NEW: ReleaseAnnouncementCatalog<LocalizedReleaseAnnouncement> = {
 // Upstream announced default-on achievements in its 2.5.0; this fork ships them in 2.17.0.
 const ACHIEVEMENT_ANNOUNCEMENT_VERSIONS = new Set(['2.5.0', '2.17.0']);
 
-const EMPTY_CODEX_ACHIEVEMENT_SIGNALS: CodexAchievementSignals = Object.freeze({
-  modelCount: 0,
-  efforts: [],
-  familyRootCounts: Object.freeze({ astra: 0, sol: 0, luna: 0 }),
-});
+const EMPTY_CODEX_ACHIEVEMENT_SIGNALS: CodexAchievementSignals = Object.freeze({});
 
 interface AchievementCalibrationRefresh {
   current(): boolean;
@@ -579,12 +575,8 @@ export class ClaudeCodeUsageExtension {
   // startAutoRefresh runs so any older timer chain (e.g. left mid-flight by a
   // config change) stops instead of running concurrently with the new one.
   private refreshGen: number = 0;
-  // One-shot cold-start retry for the quota fetch: when a window opens on a
-  // flaky network and the very first /usage fetch fails, try once more shortly
-  // after so the indicator appears without waiting for the next regular tick.
-  private quotaColdRetryDone: boolean = false;
-  private quotaColdRetryTimer: NodeJS.Timeout | undefined;
-  private quotaColdRetryTimerLease: ResourceLease | undefined;
+  private quotaFetchInFlight:
+    { generation: number; pending: Promise<ClaudeApiUsageResponse | null> } | undefined;
   private claudeProfileGeneration: number = 0;
   private claudeWeeklyQuotaHistory: WeeklyQuotaObservation[] = [];
   private readonly quotaObservationRepository: QuotaObservationRepository;
@@ -611,6 +603,7 @@ export class ClaudeCodeUsageExtension {
   private codexSkipPersistedHydration = false;
   private claudeDashboardHydrated = false;
   private claudeRenderSnapshot?: ReturnType<typeof claudeUsageDashboardSnapshot>;
+  private claudeRenderSnapshotIndex?: ClaudeUsageIndex;
   private claudeUsageSource?: string;
   private codexDashboardHydrated = false;
   private providerRefreshStates: Record<'claude' | 'codex', ProviderRefreshState> = {
@@ -1274,13 +1267,13 @@ export class ClaudeCodeUsageExtension {
 
   private buildQuotaScopeOptions(): LocalDataQuotaScopeOption[] {
     this.localDataQuotaScopes.clear();
-    const locale = I18n.getLocale();
-    const zh = locale === 'zh-CN';
+    const copy = I18n.localData;
     const observations = this.quotaObservationStore.observations;
     const revision = this.quotaObservationRevision();
     const createdAt = Date.now();
     const result: LocalDataQuotaScopeOption[] = [];
     const add = (
+      key: string,
       label: string,
       scope: ResolvedQuotaScope,
       itemCount: number,
@@ -1295,11 +1288,12 @@ export class ClaudeCodeUsageExtension {
         createdAt,
         revision,
       });
-      result.push({ token, label, provider, itemCount, oldestAt, newestAt });
+      result.push({ token, key, label, provider, itemCount, oldestAt, newestAt });
     };
     const allRange = finiteTimestampRange(observations.map((item) => item.observedAt));
     add(
-      zh ? `全部额度观测（${observations.length} 项）` : `All quota observations (${observations.length})`,
+      'all',
+      copy.allQuota(observations.length),
       {},
       observations.length,
       allRange.oldestAt,
@@ -1311,9 +1305,8 @@ export class ClaudeCodeUsageExtension {
       if (selected.length === 0) continue;
       const range = finiteTimestampRange(selected.map((item) => item.observedAt));
       add(
-        zh
-          ? `${provider === 'claude' ? 'Claude' : 'Codex'} 全部观测（${selected.length} 项）`
-          : `${provider === 'claude' ? 'Claude' : 'Codex'} observations (${selected.length})`,
+        provider,
+        copy.providerQuota(provider === 'claude' ? 'Claude' : 'Codex', selected.length),
         { provider },
         selected.length,
         range.oldestAt,
@@ -1327,9 +1320,8 @@ export class ClaudeCodeUsageExtension {
       epochNumber.set(epoch.provider, index);
       const providerLabel = epoch.provider === 'claude' ? 'Claude' : 'Codex';
       add(
-        zh
-          ? `${providerLabel} 本地匿名账号周期 ${index}（${epoch.itemCount} 项）`
-          : `${providerLabel} local anonymous account epoch ${index} (${epoch.itemCount})`,
+        `${epoch.provider}:${createHash('sha256').update(epoch.accountFingerprint).digest('hex').slice(0, 16)}`,
+        copy.epochQuota(providerLabel, index, epoch.itemCount),
         {
           provider: epoch.provider,
           accountFingerprint: epoch.accountFingerprint,
@@ -1352,9 +1344,7 @@ export class ClaudeCodeUsageExtension {
   private async buildLocalDataInventory(
     client: LocalDataClientSummary,
   ): Promise<LocalDataInventory> {
-    const zh = I18n.getLocale() === 'zh-CN';
-    const local = (english: string, chinese: string): string =>
-      zh ? chinese : english;
+    const copy = I18n.localData;
     const indexPath = path.join(this.context.globalStorageUri.fsPath, 'codex-index-v1.json');
     const quotaPath = path.join(this.context.globalStorageUri.fsPath, QUOTA_OBSERVATION_FILE);
     const achievementPath = path.join(this.context.globalStorageUri.fsPath, ACHIEVEMENT_RECORD_FILE);
@@ -1415,63 +1405,47 @@ export class ClaudeCodeUsageExtension {
     const rows: LocalDataInventoryRow[] = [
       {
         id: 'R1',
-        category: local('R1 · Claude provider-owned source logs', 'R1 · Claude 自有源日志'),
-        locationClass: local('Claude Code data directory (read-only source)', 'Claude Code 数据目录（只读源）'),
+        ...copy.rows['R1'],
         schema: 'provider-owned JSONL',
         approximateBytes: null,
         itemCount: null,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('None by default; exact preview only for separately consented advice', '默认无；仅另行同意的建议会发送精确预览内容'),
-        clearability: local('Never touched by these controls; opt-in Session Actions is separate', '这些控制绝不触碰；另行启用的会话操作相互独立'),
       },
       {
         id: 'R2',
-        category: local('R2 · Codex provider-owned source logs', 'R2 · Codex 自有源日志'),
-        locationClass: local('Codex home sessions/archives (read-only source)', 'Codex home 会话/归档（只读源）'),
+        ...copy.rows['R2'],
         schema: 'provider-owned JSONL',
         approximateBytes: null,
         itemCount: null,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('None', '无'),
-        clearability: local('Never cleared by this extension', '插件绝不清除'),
       },
       {
         id: 'P1',
-        category: local('P1 · Codex incremental index', 'P1 · Codex 增量索引'),
-        locationClass: local('Extension global storage / codex index', '插件全局存储 / Codex 索引'),
+        ...copy.rows['P1'],
         schema: 'internal schema 3',
         ...indexFile,
-        networkInteraction: local('None', '无'),
-        clearability: local('Clear and rebuild from R2', '清除后从 R2 重建'),
       },
       {
         id: 'P2',
-        category: local('P2 · Quota observation history', 'P2 · 额度观测历史'),
-        locationClass: local('Extension global storage / quota observations', '插件全局存储 / 额度观测'),
+        ...copy.rows['P2'],
         schema: 'schema 2',
         approximateBytes: quotaFile.approximateBytes,
         itemCount: this.quotaObservationStore.observations.length,
         ...quotaRange,
-        networkInteraction: local('Claude official quota request; Codex local structured events', 'Claude 官方额度请求；Codex 本地结构化事件'),
-        clearability: local('Clear by provider, anonymous account epoch, or all', '按供应商、匿名账号 epoch 或全部清除'),
       },
       {
         id: 'P3-P4',
-        category: local('P3/P4 · Legacy quota migration inputs', 'P3/P4 · 旧版额度迁移输入'),
-        locationClass: local('Extension globalState (legacy, migration-only)', '插件 globalState（旧版，仅迁移）'),
+        ...copy.rows['P3-P4'],
         schema: 'legacy',
         ...this.globalStateAggregate(legacyQuotaKeys),
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('None', '无'),
-        clearability: local('Imported transactionally, then removed; included in clear-all', '事务导入后删除；纳入清除全部'),
       },
       {
         id: 'P5',
-        category: local('P5 · Codex legacy quota migration input', 'P5 · Codex 旧额度迁移输入'),
-        locationClass: local('Embedded in the P1 Codex index (migration-only)', '嵌入 P1 Codex 索引（仅迁移）'),
+        ...copy.rows['P5'],
         schema: 'legacy quotaHistory + exact migration marker',
         approximateBytes: null,
         itemCount: this.context.globalState.get<boolean>(QUOTA_P5_MIGRATION_KEY) === true
@@ -1479,76 +1453,56 @@ export class ClaudeCodeUsageExtension {
           : null,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('None', '无'),
-        clearability: local('Migrated once into P2; P1 rebuild never deletes migrated P2 history', '一次性迁入 P2；重建 P1 不删除已迁移的 P2 历史'),
       },
       {
         id: 'P6',
-        category: local('P6 · Extension preferences and migration state', 'P6 · 插件偏好与迁移状态'),
-        locationClass: local('VS Code configuration + extension globalState', 'VS Code 配置 + 插件 globalState'),
+        ...copy.rows['P6'],
         schema: 'typed settings + versioned flags',
         ...this.globalStateAggregate(preferenceKeys),
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('VS Code Settings Sync may apply to configuration', '配置可能参与 VS Code Settings Sync'),
-        clearability: local('Reset settings or clear all extension-derived data', '重置设置或清除全部插件派生数据'),
       },
       {
         id: 'P7',
-        category: local('P7 · Machine-local pseudonymization material', 'P7 · 本机匿名化材料'),
-        locationClass: local('Extension globalState', '插件 globalState'),
+        ...copy.rows['P7'],
         schema: 'random salts / HMAC v1',
         approximateBytes: null,
         itemCount: saltKeys.length,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('Never', '永不'),
-        clearability: local('Included in clear-all; invalidates prior local fingerprints', '纳入清除全部；旧本机 fingerprint 随即失效'),
       },
       {
         id: 'P8',
-        category: local('P8 · BYOK advice credential', 'P8 · BYOK 建议凭证'),
-        locationClass: 'VS Code SecretStorage',
+        ...copy.rows['P8'],
         schema: 'host SecretStorage',
         approximateBytes: null,
         itemCount: byokConfigured ? 1 : 0,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('Only to the configured endpoint after explicit Send', '仅在明确点击发送后用于所配置端点'),
-        clearability: local('Clear BYOK secret or clear all; value is never inventoried', '清除 BYOK 密钥或清除全部；清单绝不读取值'),
       },
       {
         id: 'P9',
-        category: local('P9 · Advice-effectiveness ledger', 'P9 · 建议效果台账'),
-        locationClass: local('Extension globalState', '插件 globalState'),
+        ...copy.rows['P9'],
         schema: 'schema 3',
         ...adviceSummary,
-        networkInteraction: local('Only exact previewed payload after explicit Send', '仅在明确点击发送后发送精确预览载荷'),
-        clearability: local('Clear Advice Data', '清除建议数据'),
       },
       {
         id: 'P10',
-        category: local('P10 · Dashboard UI preferences', 'P10 · 仪表板界面偏好'),
-        locationClass: local('Webview state + allowlisted localStorage keys', 'Webview 状态 + 白名单 localStorage 键'),
+        ...copy.rows['P10'],
         schema: 'ephemeral UI state',
         approximateBytes: null,
         itemCount: client.uiPreferenceKeys + client.webviewStateFields,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('Never', '永不'),
-        clearability: local('Reset UI State', '重置界面状态'),
       },
       {
         id: 'P11',
-        category: local('P11 · Heatmap/share preferences', 'P11 · 热力图/分享偏好'),
-        locationClass: local('Webview localStorage + extension globalState', 'Webview localStorage + 插件 globalState'),
+        ...copy.rows['P11'],
         schema: 'bounded title/range/privacy + destination strings',
         approximateBytes: this.globalStateAggregate(sharingKeys).approximateBytes,
         itemCount: sharingKeys.length + client.sharingPreferenceKeys,
         oldestAt: null,
         newestAt: null,
-        networkInteraction: local('Local export: none; GitHub publish: explicit confirmed action only', '本地导出：无；GitHub 发布：仅明确确认的动作'),
-        clearability: local('Reset Sharing Preferences', '重置分享偏好'),
       },
       {
         id: 'P12', category: 'P12 · ' + achievementCopy.category,
@@ -1565,14 +1519,7 @@ export class ClaudeCodeUsageExtension {
       generatedAt: Date.now(),
       rows,
       quotaScopes: this.buildQuotaScopeOptions(),
-      exclusions: zh
-        ? [
-            'Claude 自有源日志',
-            'Codex 自有源日志',
-            '供应商自有 OAuth 凭证与 cookie',
-            '外部账号额度与订阅状态',
-          ]
-        : [...LOCAL_DATA_SOURCE_EXCLUSIONS],
+      exclusions: [...copy.exclusions],
     };
   }
 
@@ -1585,10 +1532,10 @@ export class ClaudeCodeUsageExtension {
     const picked = await vscode.window.showQuickPick(
       inventory.quotaScopes.map((scope) => ({
         label: scope.label,
-        description: `${scope.itemCount} observations`,
+        description: I18n.localData.quotaPickDescription(scope.itemCount),
         token: scope.token,
       })),
-      { placeHolder: 'Select the exact quota-history scope to clear' },
+      { placeHolder: I18n.localData.quotaPickPlaceholder },
     );
     if (!picked) return;
     await this.runLocalDataActionInteractive('clear-quota-history', picked.token);
@@ -1728,8 +1675,7 @@ export class ClaudeCodeUsageExtension {
     quotaScopeToken?: string,
   ): Promise<LocalDataActionResult> {
     return this.serializeLocalDataAction(async () => {
-      const locale = I18n.getLocale();
-      const zh = locale === 'zh-CN';
+      const copy = I18n.localData;
       let quotaSelection: {
         scope: ResolvedQuotaScope;
         label: string;
@@ -1748,12 +1694,12 @@ export class ClaudeCodeUsageExtension {
         ) {
           return {
             ok: false,
-            message: zh ? '额度历史范围已过期，请刷新清单后重试。' : 'The quota-history scope expired. Refresh the inventory and try again.',
+            message: copy.scopeExpired,
           };
         }
         quotaSelection = { ...selected, token: quotaScopeToken as string };
       }
-      const title = localDataActionTitle(action, locale);
+      const title = copy.actionTitles[action];
       const targets = LOCAL_DATA_ACTION_TARGETS[action].map((target) => `• ${target}`);
       if (quotaSelection) targets.unshift(`• ${quotaSelection.label}`);
       const preflightNotes: string[] = [];
@@ -1773,19 +1719,17 @@ export class ClaudeCodeUsageExtension {
           !registered.has(key),
         );
         preflightNotes.push(
-          zh
-            ? `仅预检（若存在则在任何删除前停止）：${inspectedOnly.map((key) => `claudeCodeUsage.${key}`).join(', ')}`
-            : `Preflight only (if present, stop before any deletion): ${inspectedOnly.map((key) => `claudeCodeUsage.${key}`).join(', ')}`,
+          copy.preflight(inspectedOnly.map((key) => `claudeCodeUsage.${key}`).join(', ')),
         );
       }
-      const exclusions = LOCAL_DATA_SOURCE_EXCLUSIONS.map((target) => `• ${target}`);
-      const proceed = zh ? '继续' : 'Continue';
+      const exclusions = copy.exclusions.map((target) => `• ${target}`);
+      const proceed = copy.proceed;
       const detail = [
-        zh ? '精确目标：' : 'Exact targets:',
+        copy.exactTargets,
         ...targets,
         ...(preflightNotes.length > 0 ? ['', ...preflightNotes] : []),
         '',
-        zh ? '始终排除：' : 'Always excluded:',
+        copy.alwaysExcluded,
         ...exclusions,
       ].join('\n');
       const picked = await vscode.window.showWarningMessage(
@@ -1797,7 +1741,7 @@ export class ClaudeCodeUsageExtension {
         return {
           ok: false,
           cancelled: true,
-          message: zh ? '已取消；未更改任何本地数据。' : 'Cancelled; no local data was changed.',
+          message: copy.cancelled,
         };
       }
       if (quotaSelection) {
@@ -1814,13 +1758,13 @@ export class ClaudeCodeUsageExtension {
         ) {
           return {
             ok: false,
-            message: zh ? '额度历史在确认期间发生变化，请刷新清单后重试。' : 'Quota history changed while confirming. Refresh the inventory and try again.',
+            message: copy.scopeChanged,
           };
         }
         if (!current) {
           return {
             ok: false,
-            message: zh ? '额度历史范围已使用或过期，请刷新后重试。' : 'The quota-history scope was already used or expired. Refresh and try again.',
+            message: copy.scopeUsed,
           };
         }
       }
@@ -1831,9 +1775,7 @@ export class ClaudeCodeUsageExtension {
         if (error instanceof SettingsLocalDataClearError) {
           result = {
             ok: false,
-            message: zh
-              ? '检测到当前清单无法通过 VS Code API 安全删除的旧版 settings.json 项；尚未删除任何设置或密钥，请先手动移除这些旧项后重试。'
-              : 'Legacy settings.json entries cannot be removed safely through the current VS Code API. No setting or secret was deleted; remove those legacy entries manually, then retry.',
+            message: copy.legacySettingsBlocked,
           };
         } else if (
           error instanceof QuotaObservationScopedClearBlockedError ||
@@ -1841,14 +1783,12 @@ export class ClaudeCodeUsageExtension {
         ) {
           result = {
             ok: false,
-            message: zh
-              ? '所选按账号/供应商范围无法与隔离或待迁移的额度数据安全对应；尚未做范围删除。请选择“全部额度观测”并再次明确确认。'
-              : 'The selected account/provider scope cannot be mapped safely while quarantined or pending-migration quota data exists. Nothing was scope-cleared; choose All quota observations and confirm again.',
+            message: copy.scopedClearBlocked,
           };
         } else {
           result = {
             ok: false,
-            message: zh ? '操作未完成；源日志和账号数据均未更改。' : 'The action did not complete; source logs and account data were not changed.',
+            message: copy.incomplete,
           };
         }
       }
@@ -1879,13 +1819,7 @@ export class ClaudeCodeUsageExtension {
           ? { ...result, clientAction: undefined }
           : {
               ok: false,
-              message: zh
-                ? tombstoneStored
-                  ? '宿主数据已处理，但 Webview 未确认本地状态重置；已记录待处理重置，下次打开面板会自动重试。'
-                  : '宿主数据已处理，但 Webview 未确认本地状态重置，且无法写入重试标记；请保持面板打开后重试。'
-                : tombstoneStored
-                  ? 'Host data was handled, but the Webview did not confirm its local reset. A pending reset was recorded and will retry when the panel next opens.'
-                  : 'Host data was handled, but the Webview did not confirm its local reset and a retry marker could not be stored. Keep the panel open and retry.',
+              message: tombstoneStored ? copy.webviewUnconfirmedRetry : copy.webviewUnconfirmedNoMarker,
             };
       }
       if (result.ok) {
@@ -1901,45 +1835,44 @@ export class ClaudeCodeUsageExtension {
     action: LocalDataAction,
     quotaScope: ResolvedQuotaScope | undefined,
   ): Promise<LocalDataActionResult> {
-    const zh = I18n.getLocale() === 'zh-CN';
+    const copy = I18n.localData;
     switch (action) {
       case 'rebuild-codex-index':
         await this.clearCodexDerivedIndex(true);
-        return { ok: true, message: zh ? 'Codex 派生索引已安全重建。' : 'The Codex derived index was safely rebuilt.' };
+        return { ok: true, message: copy.indexRebuilt };
       case 'clear-quota-history':
-        this.stopQuotaColdRetry('settings-change');
         await this.cancelQuotaNetworks('cancelled');
         this.assertScopedQuotaMigrationIsResolved(quotaScope ?? {});
         this.quotaObservationStore = await this.quotaObservationRepository.clear(quotaScope ?? {});
         await this.clearLegacyQuotaMigrationInputs(quotaScope ?? {});
         this.refreshQuotaObservationViews();
-        return { ok: true, message: zh ? '所选额度观测历史已清除；官方额度未受影响。' : 'The selected quota observations were cleared; provider quotas were not changed.' };
+        return { ok: true, message: copy.quotaCleared };
       case 'clear-advice-data': {
         const cleared = await this.webviewProvider.clearAdviceLocalData();
         if (!cleared) throw new Error('advice-clear-failed');
         for (const key of LEGACY_ADVICE_LOCAL_STATE_KEYS) {
           await this.context.globalState.update(key, undefined);
         }
-        return { ok: true, message: zh ? '本地建议台账已清除。' : 'The local advice ledger was cleared.' };
+        return { ok: true, message: copy.adviceCleared };
       }
       case 'reset-ui-state':
         return {
           ok: true,
-          message: zh ? '仪表板界面状态已重置。' : 'Dashboard UI state was reset.',
+          message: copy.uiReset,
           clientAction: 'reset-ui-state',
         };
       case 'reset-sharing-preferences':
         await this.resetSharingPreferencesHost();
         return {
           ok: true,
-          message: zh ? '分享偏好和目标字符串已重置。' : 'Sharing preferences and destination strings were reset.',
+          message: copy.sharingReset,
           clientAction: 'reset-sharing-preferences',
         };
       case 'clear-byok-secret':
         this.webviewProvider.invalidatePreparedAiRequests();
         await this.cancelAdviceNetworks('cancelled');
         await this.settings.clearByokOwnedData();
-        return { ok: true, message: zh ? 'BYOK 建议密钥已从 SecretStorage 清除。' : 'The BYOK advice secret was cleared from SecretStorage.' };
+        return { ok: true, message: copy.byokCleared };
       case 'clear-all-derived-data':
         return this.clearAllExtensionDerivedData();
     }
@@ -1994,7 +1927,6 @@ export class ClaudeCodeUsageExtension {
   }
 
   private async clearAllExtensionDerivedData(): Promise<LocalDataActionResult> {
-    const zh = I18n.getLocale() === 'zh-CN';
     this.settings.preflightResetAllOwnedData();
     this.clearingAllLocalData = true;
     // The in-memory fingerprint salt and repositories deliberately stay
@@ -2003,7 +1935,6 @@ export class ClaudeCodeUsageExtension {
     this.localDataClearedRequiresReload = true;
     try {
       await this.drainInitializationWritesForClear();
-      this.stopQuotaColdRetry('settings-change');
       this.stopAutoRefresh('settings-change');
       this.stopFileWatching('settings-change');
       this.stopCredentialsWatching('settings-change');
@@ -2050,9 +1981,7 @@ export class ClaudeCodeUsageExtension {
       this.syncProviderUi();
       return {
         ok: true,
-        message: zh
-          ? '插件派生数据已按清单清除；Claude/Codex 源日志和账号凭证未更改。请重载窗口以重新初始化。'
-          : 'Extension-derived data was cleared as listed; Claude/Codex source logs and provider credentials were unchanged. Reload the window to reinitialize.',
+        message: I18n.localData.allCleared,
         clientAction: 'clear-all-client-state',
       };
     } finally {
@@ -2472,7 +2401,6 @@ export class ClaudeCodeUsageExtension {
       this.cache.usageLimitsLastUpdate = new Date(0);
       this.cache.usageLimitsBackoffUntil = new Date(0);
       this.cache.usageLimitsFailStreak = 0;
-      this.quotaColdRetryDone = false;
       void this.refreshData(true, 'workspace');
     });
   }
@@ -2784,11 +2712,10 @@ export class ClaudeCodeUsageExtension {
     const windowDays = Math.max(1, Math.round(config.advicePromptWindowDays));
 
     try {
-      const materialized = claudeUsageDashboardSnapshot(this.cache.claudeIndex, {
-        now: new Date(now),
-        adviceWindowDays: windowDays,
-      });
-      const adviceWindow = materialized.adviceWindow;
+      const adviceWindow = this.claudeRenderSnapshotIndex === this.cache.claudeIndex
+        && this.claudeRenderSnapshot?.adviceWindow?.windowDays === Math.min(365, windowDays)
+        ? this.claudeRenderSnapshot.adviceWindow
+        : this.materializeClaudeDashboard(this.cache.claudeIndex, config, new Date(now)).adviceWindow;
       if (adviceWindow && adviceWindow.aggregate.messageCount > 0) {
         const aggregate = buildAdviceAggregateSnapshot(
           adviceWindow.aggregate,
@@ -2883,9 +2810,10 @@ export class ClaudeCodeUsageExtension {
     // Identity completeness describes ambiguous duplicate groups, not a
     // resumable cursor. Retrying cannot settle that quality warning; actual
     // migration work is represented by main, period and hourly coverage.
-    return !coverage.complete ||
-      !coverage.period.allTime.complete ||
-      !snapshot.hourlyCoverage?.complete ||
+    const settled = codexCoverageSettled(coverage);
+    return !settled.complete ||
+      !settled.allTime ||
+      !(snapshot.hourlyCoverage?.complete || ((coverage.terminalFiles ?? 0) > 0 && settled.hourly)) ||
       (this.getConfiguration().enableAchievements !== false &&
         snapshot.outputHourProof?.complete === false &&
         (snapshot.outputHourProof.backfillableFiles === undefined ||
@@ -3033,6 +2961,9 @@ export class ClaudeCodeUsageExtension {
       | 'profile-change'
     >,
   ): Promise<void> {
+    if (condition === 'cancelled' || condition === 'extension-dispose' || condition === 'profile-change') {
+      this.apiClient.cancelCredentialRead();
+    }
     const active = [...this.activeQuotaNetworks.entries()];
     await Promise.all(active.map(async ([controller, operation]) => {
       const { lease, settled } = operation;
@@ -3091,76 +3022,6 @@ export class ClaudeCodeUsageExtension {
         else clearTimeout(timer);
       },
     );
-  }
-
-  private scheduleQuotaColdRetry(): void {
-    if (
-      this.disposed ||
-      this.quotaColdRetryTimer ||
-      !this.windowActivity.focused ||
-      !this.getConfiguration().usageLimitTracking
-    ) {
-      return;
-    }
-    this.quotaColdRetryTimer = setTimeout(() => {
-      const lease = this.quotaColdRetryTimerLease;
-      this.quotaColdRetryTimer = undefined;
-      this.quotaColdRetryTimerLease = undefined;
-      if (lease?.active) {
-        this.trackResourceStop(lease.stop('settled', () => undefined));
-      }
-      if (
-        this.disposed ||
-        !this.windowActivity.focused ||
-        !this.getConfiguration().usageLimitTracking
-      ) {
-        return;
-      }
-      void this.maybeFetchUsageLimits(this.getConfiguration()).then((retry) => {
-        if (retry) {
-          this.statusBar.updateQuota(retry, this.getClaudeQuotaPaceSnapshot());
-          this.webviewProvider.updateQuota(retry);
-          this.webviewProvider.updateQuotaPace?.(this.getClaudeQuotaPaceSnapshot(), this.cache.usageLimits ?? null);
-        }
-      });
-    }, 8_000);
-    this.quotaColdRetryTimerLease = this.resourceOwnership.register({
-      kind: 'timer',
-      capability: 'quota',
-      scope: 'claude',
-      creator: 'refresh-coordinator',
-      stopConditions: [
-        'settled',
-        'window-blur',
-        'feature-disabled',
-        'extension-dispose',
-        'settings-change',
-        'profile-change',
-      ],
-      boundedException: 'none',
-    });
-  }
-
-  private stopQuotaColdRetry(
-    condition: Extract<
-      ResourceStopCondition,
-      | 'window-blur'
-      | 'feature-disabled'
-      | 'extension-dispose'
-      | 'settings-change'
-      | 'profile-change'
-    >,
-  ): void {
-    const timer = this.quotaColdRetryTimer;
-    const lease = this.quotaColdRetryTimerLease;
-    this.quotaColdRetryTimer = undefined;
-    this.quotaColdRetryTimerLease = undefined;
-    if (timer) {
-      if (lease?.active) {
-        this.trackResourceStop(lease.stop(condition, () => clearTimeout(timer)));
-      }
-      else clearTimeout(timer);
-    }
   }
 
   private takeCodexRefreshDiagnosticContext(): CodexRefreshDiagnosticContext {
@@ -3433,7 +3294,6 @@ export class ClaudeCodeUsageExtension {
               'cancelled',
               'feature-disabled',
               'extension-dispose',
-              'user-pause',
               'settings-change',
             ],
             boundedException: persisted ? 'none' : 'first-codex-history',
@@ -3867,12 +3727,27 @@ export class ClaudeCodeUsageExtension {
     'showProjectUsageMatrix',
     'enableAchievements',
     'showAchievementNotices',
+    'showHeatmap',
+    'showEfficiency',
+    'enableShareCard',
+    'showCostliestMessages',
+    'showInsights',
+    'enableSessionActions',
+    'showConversationViewer',
+    'releaseAnnouncements',
+    'workflowQuotaWarnPercent',
+    'analysis.calibrate',
+    'codex.optimization.enabled',
   ]);
 
-  // These values only reformat already-materialized USD estimates. They must
+  // These values only reformat already-materialized values. They must
   // not restart file watchers, recreate providers, or rescan either corpus.
   private static readonly COST_DISPLAY_SETTINGS = new Set([
-    'decimalPlaces', 'displayCurrency',
+    'decimalPlaces', 'displayCurrency', 'tokenDecimalPlaces', 'compactNumbers',
+  ]);
+
+  private static readonly CLAUDE_MATERIALIZE_SETTINGS = new Set([
+    'contextWindowOverride', 'projectGroupingMode',
   ]);
 
   /** Dashboard Settings change — status-bar-only toggles apply in place, others reload. */
@@ -3909,6 +3784,34 @@ export class ClaudeCodeUsageExtension {
       if (key === 'showWeeklyQuotaPace') this.webviewProvider.updateQuotaPace?.(
         this.getClaudeQuotaPaceSnapshot(),this.cache.usageLimits ?? null);
       this.syncProviderUi();
+      return;
+    }
+    if (key?.startsWith('advice.') && key !== 'advice.promptWindowDays') {
+      this.webviewProvider.invalidatePreparedAiRequests();
+      void this.cancelAdviceNetworks('settings-change');
+      this.syncProviderUi();
+      return;
+    }
+    if (key === 'openrouter.enabled' || key === 'openrouter.apiKey') {
+      void this.refreshOpenRouterCredits(this.getConfiguration()).catch(() => undefined);
+      return;
+    }
+    if (key === 'refreshInterval') {
+      this.startAutoRefresh();
+      return;
+    }
+    if (key === 'fileWatchSeconds') {
+      this.stopFileWatching();
+      void this.startFileWatching();
+      return;
+    }
+    if (key === 'codex.fileWatchSeconds') {
+      this.stopCodexWatching();
+      this.startCodexWatching();
+      return;
+    }
+    if (key && ClaudeCodeUsageExtension.CLAUDE_MATERIALIZE_SETTINGS.has(key)) {
+      void this.refreshData(false, 'settings');
       return;
     }
     this.onConfigurationChanged();
@@ -3964,7 +3867,6 @@ export class ClaudeCodeUsageExtension {
     // a visible preview before a later click could send it.
     this.webviewProvider.invalidatePreparedAiRequests();
     void this.cancelAdviceNetworks('settings-change');
-    this.stopQuotaColdRetry('settings-change');
     void this.cancelQuotaNetworks('settings-change');
     const config = this.getConfiguration();
     const pricingBackendChanged = this.activePricingBackend !== config.pricingBackend;
@@ -4089,7 +3991,7 @@ export class ClaudeCodeUsageExtension {
     if (nextClient.getCredentialsPath() === this.apiClient.getCredentialsPath()) {
       return;
     }
-    this.stopQuotaColdRetry('profile-change');
+    // Must run before the swap: it kills the old client's pending Keychain read.
     void this.cancelQuotaNetworks('profile-change');
     this.apiClient = nextClient;
     this.claudeProfileGeneration += 1;
@@ -4097,7 +3999,6 @@ export class ClaudeCodeUsageExtension {
     this.cache.usageLimitsLastUpdate = new Date(0);
     this.cache.usageLimitsBackoffUntil = new Date(0);
     this.cache.usageLimitsFailStreak = 0;
-    this.quotaColdRetryDone = false;
     this.statusBar.updateQuota(null);
     this.webviewProvider.updateQuota(null);
     this.claudeWeeklyQuotaHistory = [];
@@ -4696,7 +4597,6 @@ export class ClaudeCodeUsageExtension {
 
   private suspendRecurringWork(): void {
     this.stopAutoRefresh('window-blur');
-    this.stopQuotaColdRetry('window-blur');
     void this.cancelQuotaNetworks('window-blur');
     this.stopFileWatching('window-blur');
     this.stopCodexWatching('window-blur');
@@ -5028,6 +4928,16 @@ export class ClaudeCodeUsageExtension {
     if (this.cache.usageLimits && age < ttl && !this.hasExpiredWindow(this.cache.usageLimits)) {
       return this.cache.usageLimits;
     }
+    const inFlight = this.quotaFetchInFlight;
+    if (inFlight && inFlight.generation === this.claudeProfileGeneration) return inFlight.pending;
+    const pending = this.fetchUsageLimitsNow(now).finally(() => {
+      if (this.quotaFetchInFlight?.pending === pending) this.quotaFetchInFlight = undefined;
+    });
+    this.quotaFetchInFlight = { generation: this.claudeProfileGeneration, pending };
+    return pending;
+  }
+
+  private async fetchUsageLimitsNow(now: number): Promise<ClaudeApiUsageResponse | null> {
     const profileGeneration = this.claudeProfileGeneration;
     const apiClient = this.apiClient;
     const controller = new AbortController();
@@ -5088,11 +4998,15 @@ export class ClaudeCodeUsageExtension {
       // expired-window bypass so a just-rolled window can't trigger an immediate
       // refetch.
       this.cache.usageLimitsBackoffUntil = new Date(Date.now() + 30000);
-      await this.recordClaudeQuotaObservation(fetched, observedAt);
+      await this.recordClaudeQuotaObservation(fetched, observedAt).catch(() => undefined);
       return fetched;
     }
-    // Failed (usually a 429 or invalid/expired credentials). Exponentially back
-    // off to one hour; a credentials-file change clears this immediately.
+    if (apiClient.lastFetchCredentialsUnavailable) {
+      this.cache.usageLimitsBackoffUntil = new Date(Date.now() + 60_000);
+      return this.cache.usageLimits;
+    }
+    // Failed (usually a 429 or HTTP error). Exponentially back off to one
+    // hour; a credentials-file change clears this immediately.
     this.cache.usageLimitsFailStreak++;
     const backoffMs = quotaFailureBackoffMs(this.cache.usageLimitsFailStreak);
     this.cache.usageLimitsBackoffUntil = new Date(now + backoffMs);
@@ -5178,14 +5092,14 @@ export class ClaudeCodeUsageExtension {
    * but newer API generations move the data into limits[].
    */
   /** Week aggregate for the publish paths, memoised on the identity of the
-   * record array it was computed from. The webview compares panel inputs by
+   * index it was computed from. The webview compares panel inputs by
    * identity, so returning a fresh UsageData on every poll re-rendered every
-   * Claude panel. Keying on the array itself (never a deep comparison) means a
-   * replaced or cleared corpus is a different array and always recomputes. */
-  private weekMemo: { records: ClaudeUsageRecord[]; resetsAt: string; data: UsageData } | null = null;
+   * Claude panel. Keying on the index itself (never a deep comparison) means a
+   * replaced or cleared corpus is a different index and always recomputes. */
+  private weekMemo: { index: ClaudeUsageIndex; resetsAt: string; data: UsageData } | null = null;
 
   private weekAggregate(
-    records: ClaudeUsageRecord[],
+    index: ClaudeUsageIndex,
   ): { data: UsageData | null; resetsAt: string | null } {
     const resetsAt = normalizeQuotaWindows(this.cache.usageLimits)
       .find((w) => w.kind === 'weekly_all')?.resetsAt;
@@ -5194,16 +5108,16 @@ export class ClaudeCodeUsageExtension {
       return { data: null, resetsAt: null };
     }
     const memo = this.weekMemo;
-    if (memo && memo.records === records && memo.resetsAt === resetsAt) {
+    if (memo && memo.index === index && memo.resetsAt === resetsAt) {
       return { data: memo.data, resetsAt };
     }
-    const data = ClaudeDataLoader.getThisWeekData(
-      records,
+    const data = claudeWeekUsage(
+      index,
       new Date(new Date(resetsAt).getTime() - 7 * 24 * 60 * 60 * 1000),
     );
     // A refresh that touched a file outside the window produces an equal
-    // aggregate from a new array. Hand back the previous object so the panel
-    // cache holds, but key the memo on the NEW array so the old corpus is
+    // aggregate from a new index. Hand back the previous object so the panel
+    // cache holds, but key the memo on the NEW index so the old corpus is
     // released: the earlier attempt kept the old entry wholesale and served a
     // replaced corpus.
     const reusable = this.weekMemo?.resetsAt === resetsAt
@@ -5211,7 +5125,7 @@ export class ClaudeCodeUsageExtension {
       ? this.weekMemo?.data
       : undefined;
     const value = reusable ?? data;
-    this.weekMemo = { records, resetsAt, data: value };
+    this.weekMemo = { index, resetsAt, data: value };
     return { data: value, resetsAt };
   }
 
@@ -5225,9 +5139,12 @@ export class ClaudeCodeUsageExtension {
       workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
       projectGroupingMode: config.projectGroupingMode,
       contextWindowOverride: config.contextWindowOverride,
+      adviceWindowDays: this.settings.get<boolean>('advice.effectiveness.enabled')
+        ? config.advicePromptWindowDays : undefined,
       now,
     });
     if (!isDeepStrictEqual(this.claudeRenderSnapshot, next)) this.claudeRenderSnapshot = next;
+    this.claudeRenderSnapshotIndex = index;
     return this.claudeRenderSnapshot!;
   }
 
@@ -5291,10 +5208,6 @@ export class ClaudeCodeUsageExtension {
         this.statusBar.updateQuota(limits, this.getClaudeQuotaPaceSnapshot());
         this.webviewProvider.updateQuota(limits);
         this.webviewProvider.updateQuotaPace?.(this.getClaudeQuotaPaceSnapshot(), this.cache.usageLimits ?? null);
-        if (!limits && !this.cache.usageLimits && !this.quotaColdRetryDone) {
-          this.quotaColdRetryDone = true;
-          this.scheduleQuotaColdRetry();
-        }
       }).catch(() => undefined);
 
       const timeZone = resolveTimeZone('');
@@ -5383,7 +5296,6 @@ export class ClaudeCodeUsageExtension {
           this.cache.lastUpdate.getTime() > 0 &&
           publishedDay !== snapshotDay;
         if (this.cache.records.length > 0) {
-          const week = this.weekAggregate(this.cache.records);
           this.statusBar.updateUsageData(
             materialized.today,
             materialized.workspaceToday,
@@ -5393,6 +5305,7 @@ export class ClaudeCodeUsageExtension {
             materialized.session,
           );
           if (updateWebview) {
+            const week = this.weekAggregate(this.cache.claudeIndex);
             this.tryProviderUiUpdate(() => {
               this.webviewProvider.updateData(
                 materialized.session,
@@ -5549,7 +5462,7 @@ export class ClaudeCodeUsageExtension {
 
       if (records.length === 0) {
         // An empty corpus never reaches weekAggregate, so release the memo here
-        // rather than letting it pin the previous records array.
+        // rather than letting it pin the previous index.
         this.weekMemo = null;
         const error = 'No usage records found. Make sure Claude Code is running.';
         this.statusBar.updateUsageData(null, null, error);
@@ -5564,7 +5477,6 @@ export class ClaudeCodeUsageExtension {
         const sessionData = materialized.session;
         const todayData = materialized.today;
         const workspaceTodayData = materialized.workspaceToday;
-        const week = this.weekAggregate(records);
         const calendarMonthData = materialized.month;
         const rolling30Data = materialized.last30Days;
         const allTimeData = materialized.allTime;
@@ -5585,6 +5497,7 @@ export class ClaudeCodeUsageExtension {
         this.statusBar.updateUsageData(todayData, workspaceTodayData, undefined, undefined, calendarMonthData, sessionData);
         this.statusBar.updateContext(materialized.context);
         if (updateWebview) {
+          const week = this.weekAggregate(loaded.index);
           this.tryProviderUiUpdate(() => {
             this.webviewProvider.updateData(sessionData, todayData, rolling30Data, allTimeData, dailyDataForRolling30, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records, sessionBreakdown, projectBreakdown, contentAnalysis, branchBreakdown, workflowBreakdown, costliestMessages, hourlyDataForRolling30DaysByDay, materialized.projectUsageMatrix, materialized.dailyForAllTime, materialized.achievementSessionEvidence, loaded.index.timeZone, materialized.achievementMoney, week.data, week.resetsAt);
             this.claudeDashboardHydrated = true;
@@ -5655,7 +5568,6 @@ export class ClaudeCodeUsageExtension {
           return false;
         }
       };
-      this.stopQuotaColdRetry('extension-dispose');
       this.stopAutoRefresh('extension-dispose');
       this.stopFirstBackfillBlurDeadline('extension-dispose');
       this.stopFileWatching('extension-dispose');

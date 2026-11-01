@@ -98,6 +98,18 @@ export function formatHourLabel(hour: string): string {
   return /^(?:[01]\d|2[0-3])$/.test(hour) ? `${hour}:00` : '';
 }
 
+/** UTC-midnight milliseconds of a real "YYYY-MM-DD" calendar date; NaN otherwise (e.g. 2026-02-30). */
+export function parseDayKey(day: unknown): number {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return NaN;
+  const time = Date.parse(day + 'T00:00:00Z');
+  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === day ? time : NaN;
+}
+
+/** UTC-midnight milliseconds of the Monday on or before a `parseDayKey` value. */
+export function mondayOf(time: number): number {
+  return time - ((new Date(time).getUTCDay() + 6) % 7) * 86_400_000;
+}
+
 /**
  * Calendar-day keys ending on `now` in `timeZone`, ordered from oldest to newest.
  * The range walks civil dates rather than subtracting fixed-duration milliseconds.
@@ -115,18 +127,13 @@ export function rollingDayKeysFromDayKey(
   endDayKey: string,
   count: number,
 ): string[] {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(endDayKey) || count <= 0) {
-    return [];
-  }
-
-  const [year, month, day] = endDayKey.split('-').map(Number);
-  const end = new Date(Date.UTC(year, month - 1, day));
-  if (end.toISOString().slice(0, 10) !== endDayKey) {
+  const end = parseDayKey(endDayKey);
+  if (!Number.isFinite(end) || count <= 0) {
     return [];
   }
   const keys: string[] = [];
   for (let offset = count - 1; offset >= 0; offset--) {
-    keys.push(new Date(Date.UTC(year, month - 1, day - offset)).toISOString().slice(0, 10));
+    keys.push(new Date(end - offset * 86_400_000).toISOString().slice(0, 10));
   }
   return keys;
 }

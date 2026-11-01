@@ -2,6 +2,7 @@ import { after, test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
   appendFile,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -15,13 +16,19 @@ import {
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import * as fs from 'node:fs';
+import Module = require('node:module');
 import {
   claudeUsageDashboardSnapshot,
+  claudeWeekDailyUsage,
+  claudeWeekUsage,
   createClaudeUsageIndex,
   updateClaudeUsageIndex,
 } from '../claudeIncrementalIndex';
+import { claudeOutputHours, collectClaudeOutputHours } from '../achievementHours';
 import { UsageManifest } from '../claudeUsageFiles';
 import { ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { I18n } from '../i18n';
 import { ClaudeUsageRecord } from '../types';
 import { evaluateAchievements } from '../achievements';
@@ -93,7 +100,7 @@ test('Claude usage origin proves accepted recent tail tokens without another rea
       totals.totalCacheCreationTokens + totals.totalCacheReadTokens;
     return evaluateAchievements({ claudeTokens: volume, codexTokens: 0, activeDays: 0,
       claudeFamilies: ['sonnet'], claudeFamilyTokens: { sonnet: volume },
-      codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } } });
+      codex: {} });
   };
   const crossings = claudeTailAchievementCrossings(rules(cold.index), rules(result.index), result.achievementUsageDelta);
   assert.ok(crossings.includes('sonnet-main-silver'));
@@ -395,7 +402,7 @@ test('usage records retain numeric evidence but not assistant response bodies', 
   const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, {
     analyzeContent: true,
   });
-  const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+  const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
   for (const record of [incremental.records[0], full.records[0]]) {
     assert.equal(record.message.usage.input_tokens, 12);
     assert.equal(record.message.usage.output_tokens, 4);
@@ -512,8 +519,8 @@ async function manifestInOrder(files: readonly string[]): Promise<UsageManifest>
       size: fileStat.size,
       mtimeMs: fileStat.mtimeMs,
       discoveryIndex,
-      dev: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.dev : undefined,
-      ino: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.ino : undefined,
+      dev: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.dev) : undefined,
+      ino: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.ino) : undefined,
     });
   }
   return { entries, scannedAtMs: Date.now(), scanDurationMs: 0 };
@@ -554,7 +561,7 @@ function stableValue(value: unknown): unknown {
 }
 
 async function assertMatchesFull(root: string, records: ClaudeUsageRecord[]): Promise<void> {
-  const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+  const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
   assert.equal(full.diagnostics.filesFailed, 0);
   assert.deepEqual(normalized(records), normalized(full.records));
   const actual = ClaudeDataLoader.calculateUsageData(records);
@@ -610,7 +617,7 @@ test('content analysis is materialized from per-file contributions without a sec
       analyzeContent: true,
       windowDays: 30,
     });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -624,7 +631,7 @@ test('content analysis is materialized from per-file contributions without a sec
       analyzeContent: true,
       windowDays: 30,
     });
-    const warmFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const warmFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -667,7 +674,7 @@ test('cross-file tool results retain global tool and Skill preamble attribution'
     )}\n`, 'utf8');
 
     const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(incremental.contentAnalysis, full.contentAnalysis);
     assert.equal(
@@ -691,7 +698,7 @@ test('cross-file tool results retain global tool and Skill preamble attribution'
       '2026-09-10T09:01:00.000Z',
     )}\n`, 'utf8');
     const warm = await updateClaudeUsageIndex(incremental.index, root);
-    const warmFull = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const warmFull = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
     assert.equal(warm.diagnostics.bodyReads, 1);
     assert.deepEqual(warm.contentAnalysis, warmFull.contentAnalysis);
     assert.equal(
@@ -726,7 +733,7 @@ test('append calibration updates one canonical response instead of summing its s
       requestId: 'calibration-request',
     })}\n`, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, 1);
     assert.deepEqual(warm.contentAnalysis?.calibration, {
@@ -772,7 +779,7 @@ test('calibration follows missing request IDs, a cross-file winner, and cutoff e
       requestId: 'calibration-global-request',
     })}\n`, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
-    const warmFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const warmFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -785,7 +792,7 @@ test('calibration follows missing request IDs, a cross-file winner, and cutoff e
 
     now = Date.parse('2026-09-10T12:01:00.000Z');
     const expired = await updateClaudeUsageIndex(warm.index, root, { windowDays: 1 });
-    const expiredFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const expiredFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -833,7 +840,7 @@ test('a newly started session file does not rebuild the established corpus', asy
 `, 'utf8');
 
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     // File identity is (dev, inode), and NTFS reuses file record numbers: a file
     // created here can land on the identity of one the fixture already indexed,
@@ -890,7 +897,7 @@ test('the exact analysis cutoff reads a boundary file only when an event expires
     ] as const) {
       now = Date.parse(`2026-09-10T${time}Z`);
       const warm = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
-      const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, {
         analyzeContent: true,
         windowDays: 30,
       });
@@ -908,7 +915,7 @@ test('the exact analysis cutoff reads a boundary file only when an event expires
     // expires the entire contribution; the full loader still agrees.
     now = Date.parse('2026-09-10T13:00:00.000Z');
     const stepped = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
-    const steppedFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const steppedFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -964,7 +971,7 @@ test('the window drifting past an old event keeps the refresh incremental', asyn
 `, 'utf8');
 
     const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -1024,7 +1031,7 @@ test('a file already outside the window keeps its empty contribution as the wind
       )}
 `, 'utf8');
       const warm = await updateClaudeUsageIndex(previous.index, root, { windowDays: 30 });
-      const full = await ClaudeDataLoader.loadUsageRecords(root, {
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, {
         analyzeContent: true,
         windowDays: 30,
       });
@@ -1080,7 +1087,7 @@ test('a file that is appended to while losing an event to the window stays incre
     )}
 `, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -1123,7 +1130,7 @@ test('mixed window rebuild and append give a new UUID to the earliest file', asy
       'mixed-shared-uuid', 'later should not own', '2026-09-10T13:56:00.000Z',
     )}\n`, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -1159,7 +1166,7 @@ test('same-file expiry plus an earlier UUID preemption falls back to ordered ana
       'shared-window-uuid', 'earlier owner', '2026-09-10T13:55:00.000Z',
     )}\n`, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root, { windowDays: 1 });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });
@@ -1192,7 +1199,7 @@ test('a new file carrying an already-owned UUID falls back to the full rebuild',
 `, 'utf8');
 
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
   } finally {
@@ -1236,7 +1243,7 @@ test('concurrent appends to several files stay incremental instead of forcing a 
     }
 
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, appended.length);
     assert.equal(warm.diagnostics.bytesRead, appendedBytes);
@@ -1283,7 +1290,7 @@ test('a 645-session corpus reads only seven live tails and one new session', asy
     await writeFile(path.join(project, 'session-new.jsonl'), newFile, 'utf8');
 
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
     await assertMatchesFull(root, warm.records);
     // Some filesystems reuse a removed file identity, legitimately turning a
@@ -1348,7 +1355,7 @@ test('default content analysis does not revisit historical file contributions af
     })}\n`;
     await appendFile(files[files.length - 1], tail, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, 1);
     assert.equal(warm.diagnostics.bytesRead, Buffer.byteLength(tail));
@@ -1395,7 +1402,7 @@ test('content analysis expires a completed boundary file after configured-zone m
       analyzeContent: true,
       windowDays: 30,
     });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -1473,7 +1480,7 @@ test('cross-file content UUID clones keep the legacy first-owner deduplication',
     const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, {
       analyzeContent: true,
     });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(incremental.contentAnalysis, full.contentAnalysis);
 
@@ -1481,7 +1488,7 @@ test('cross-file content UUID clones keep the legacy first-owner deduplication',
     const fallback = await updateClaudeUsageIndex(incremental.index, root, {
       analyzeContent: true,
     });
-    const fallbackFull = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const fallbackFull = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
     assert.equal(fallback.diagnostics.bodyReads, 1, 'only the surviving twin is re-read');
     assert.deepEqual(fallback.contentAnalysis, fallbackFull.contentAnalysis);
   } finally {
@@ -1524,7 +1531,7 @@ test('content analysis ages out records later on the same configured-zone day', 
       analyzeContent: true,
       windowDays: 30,
     });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -1577,7 +1584,7 @@ test('a new transcript does not re-tag the files discovered after it', async () 
     const withInserted = [...established.slice(0, 4), inserted, ...established.slice(4)];
     const warmManifest = await manifestInOrder(withInserted);
     const warm = await updateClaudeUsageIndex(cold.index, root, { manifest: warmManifest });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       manifest: warmManifest,
     });
@@ -1604,7 +1611,7 @@ test('a new transcript does not re-tag the files discovered after it', async () 
     [reordered[1], reordered[2]] = [reordered[2], reordered[1]];
     const reorderedManifest = await manifestInOrder(reordered);
     const swapped = await updateClaudeUsageIndex(warm.index, root, { manifest: reorderedManifest });
-    const swappedFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const swappedFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       manifest: reorderedManifest,
     });
@@ -1636,7 +1643,7 @@ test('a newly discovered earlier file takes global content UUID ownership', asyn
       'utf8',
     );
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
   } finally {
@@ -1671,7 +1678,7 @@ test('rebuilding an earlier file can preempt a later content UUID owner', async 
       'utf8',
     );
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
   } finally {
@@ -1714,7 +1721,7 @@ test('concurrent appends resolve new content UUID owners in full-scan file order
       ),
     ]);
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
   } finally {
@@ -1749,7 +1756,7 @@ test('an earlier-file append falls back when its UUID preempts a later owner', a
       'utf8',
     );
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, 3);
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
@@ -1785,7 +1792,7 @@ test('an append that gives a zero-timestamp file its first timestamp reorders pr
       'utf8',
     );
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
     assert.deepEqual(
@@ -1824,7 +1831,7 @@ test('a timestamp beyond a 1 MiB timestamp-less prefix retains legacy discovery 
     )}\n`, 'utf8');
 
     const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.deepEqual(incremental.contentAnalysis, full.contentAnalysis);
     assert.deepEqual(
@@ -1865,7 +1872,7 @@ test('changed discoveryIndex ties rebuild canonical content ownership and order'
     const warm = await updateClaudeUsageIndex(cold.index, root, {
       manifest: swappedManifest,
     });
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       manifest: swappedManifest,
     });
@@ -1911,7 +1918,7 @@ for (const scenario of [
       const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, {
         manifest: coldManifest,
       });
-      const coldFull = await ClaudeDataLoader.loadUsageRecords(root, { manifest: coldManifest });
+      const coldFull = await LegacyClaudeLoader.loadUsageRecords(root, { manifest: coldManifest });
       assert.deepEqual(cold.contentAnalysis, coldFull.contentAnalysis);
       const priorFiles = structuredClone(cold.index.files);
       const priorAnalysis = structuredClone(cold.contentAnalysis);
@@ -1947,7 +1954,7 @@ for (const scenario of [
         manifest = { ...manifest, entries };
       }
       const warm = await updateClaudeUsageIndex(cold.index, root, { manifest });
-      const full = await ClaudeDataLoader.loadUsageRecords(root, { manifest });
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, { manifest });
       assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
       assert.deepEqual(normalized(warm.records), normalized(full.records));
       assert.equal(warm.diagnostics.bodyReads, scenario.reads);
@@ -1989,7 +1996,7 @@ test('per-file skill retention preserves the full loader global skill cap semant
     );
 
     const incremental = await updateClaudeUsageIndex(createClaudeUsageIndex(), root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(incremental.contentAnalysis?.skillUses.length, 5_000);
     assert.equal(
@@ -2001,7 +2008,7 @@ test('per-file skill retention preserves the full loader global skill cap semant
 
     now = Date.parse('2026-09-10T12:01:00.000Z');
     const aged = await updateClaudeUsageIndex(incremental.index, root);
-    const agedFull = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const agedFull = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(aged.diagnostics.bodyReads, 0);
     assert.deepEqual(aged.contentAnalysis?.skillUses.map((use) => use.name), ['second-skill-0']);
@@ -2044,7 +2051,7 @@ test('an earlier-file append displaces the exact global 5000th Skill and preambl
       'utf8',
     );
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, 1);
     assert.equal(warm.contentAnalysis?.skillUses.length, 5_000);
@@ -2071,23 +2078,23 @@ test('materialized dashboard rows match every legacy full-record aggregation', a
   });
   const records = loaded.records;
 
-  assert.deepEqual(stableValue(snapshot.today), stableValue(ClaudeDataLoader.getTodayData(records)));
-  assert.deepEqual(stableValue(snapshot.month), stableValue(ClaudeDataLoader.getThisMonthData(records)));
-  assert.deepEqual(stableValue(snapshot.allTime), stableValue(ClaudeDataLoader.getAllTimeData(records)));
-  assert.deepEqual(stableValue(snapshot.dailyForMonth), stableValue(ClaudeDataLoader.getDailyDataForMonth(records)));
-  assert.deepEqual(stableValue(snapshot.monthlyForAllTime), stableValue(ClaudeDataLoader.getDailyDataForAllTime(records)));
-  assert.deepEqual(stableValue(snapshot.hourlyForToday), stableValue(ClaudeDataLoader.getHourlyDataForToday(records)));
+  assert.deepEqual(stableValue(snapshot.today), stableValue(LegacyClaudeLoader.getTodayData(records)));
+  assert.deepEqual(stableValue(snapshot.month), stableValue(LegacyClaudeLoader.getThisMonthData(records)));
+  assert.deepEqual(stableValue(snapshot.allTime), stableValue(LegacyClaudeLoader.getAllTimeData(records)));
+  assert.deepEqual(stableValue(snapshot.dailyForMonth), stableValue(LegacyClaudeLoader.getDailyDataForMonth(records)));
+  assert.deepEqual(stableValue(snapshot.monthlyForAllTime), stableValue(LegacyClaudeLoader.getDailyDataForAllTime(records)));
+  assert.deepEqual(stableValue(snapshot.hourlyForToday), stableValue(LegacyClaudeLoader.getHourlyDataForToday(records)));
   assert.deepEqual(stableValue(snapshot.sessions), stableValue(ClaudeDataLoader.getSessionBreakdown(records)));
   assert.deepEqual(
     stableValue(snapshot.projects),
-    stableValue(ClaudeDataLoader.getProjectBreakdown(records, undefined, 'git')),
+    stableValue(LegacyClaudeLoader.getProjectBreakdown(records, undefined, 'git')),
   );
-  assert.deepEqual(stableValue(snapshot.branches), stableValue(ClaudeDataLoader.getBranchBreakdown(records)));
+  assert.deepEqual(stableValue(snapshot.branches), stableValue(LegacyClaudeLoader.getBranchBreakdown(records)));
   assert.deepEqual(stableValue(snapshot.workflows), stableValue(ClaudeDataLoader.getWorkflowBreakdown(records)));
   assert.deepEqual(stableValue(snapshot.costliestMessages), stableValue(ClaudeDataLoader.getCostliestMessages(records)));
   assert.deepEqual(
     stableValue(snapshot.workspaceToday),
-    stableValue(ClaudeDataLoader.getTodayData(ClaudeDataLoader.filterByWorkspace(records, '/fixture/project-a'))),
+    stableValue(LegacyClaudeLoader.getTodayData(ClaudeDataLoader.filterByWorkspace(records, '/fixture/project-a'))),
   );
   assert.deepEqual(
     stableValue(snapshot.session),
@@ -2310,7 +2317,7 @@ test('configured timezone rebuckets Claude Today and hours from the in-memory in
       ['07:00'],
     );
     assert.deepEqual(
-      ClaudeDataLoader.getHourlyDataForDate(shifted.records, '2026-07-21')
+      LegacyClaudeLoader.getHourlyDataForDate(shifted.records, '2026-07-21')
         .map(({ hour }) => hour),
       ['07:00'],
     );
@@ -2386,7 +2393,7 @@ test('re-enabling analysis after a disabled DST-zone change cannot publish stale
     const completed = await updateClaudeUsageIndex(reenabled.index, root, {
       analyzeContent: true,
     });
-    const fullAfterCompletion = await ClaudeDataLoader.loadUsageRecords(root, {
+    const fullAfterCompletion = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
     });
     assert.deepEqual(completed.contentAnalysis, fullAfterCompletion.contentAnalysis);
@@ -2552,7 +2559,7 @@ test('an early append performs UUID ownership lookups by touched UUID, not later
     )}\n`;
     await appendFile(files[0], tail, 'utf8');
     const warm = await updateClaudeUsageIndex(cold.index, root);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
 
     assert.equal(warm.diagnostics.bodyReads, 1);
     assert.equal(warm.diagnostics.bytesRead, Buffer.byteLength(tail));
@@ -2775,7 +2782,7 @@ test('a truncated transcript re-reads only that file, not the whole history', as
 
     assert.equal(warm.diagnostics.changed.rebuild, 1);
     assert.equal(warm.diagnostics.bodyReads, 1, 'only the truncated file is re-read');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2809,7 +2816,7 @@ test('a mid-file rewrite re-reads only the rewritten file', async () => {
 
     assert.equal(warm.diagnostics.changed.rebuild, 1);
     assert.equal(warm.diagnostics.bodyReads, 1, 'only the rewritten file is re-read');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2842,7 +2849,7 @@ test('a rewrite that moves the first event falls back to a full ordered rebuild'
     // bodyReads total is 1 bounded probe + 2 fallback reads, but pin the
     // escalation itself, not the probe's implementation detail.)
     assert.equal(warm.diagnostics.changed.rebuild, 2, 'the order shift forces a full rebuild');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2877,7 +2884,7 @@ test('a rewrite claiming a uuid owned by a later file falls back to a full rebui
     });
 
     assert.equal(warm.diagnostics.changed.rebuild, 2, 'the ownership conflict forces a full rebuild');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2914,7 +2921,7 @@ test('a rewrite that drops an owned uuid re-reads the twin that also carries it'
     });
 
     assert.equal(warm.diagnostics.bodyReads, 2, 'the rewritten file and the twin, nothing else');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2965,7 +2972,7 @@ test('rewriting an owner while appending its claimant replays that claimant', as
     });
 
     assert.equal(warm.diagnostics.bodyReads, 2, 'the rewritten owner and the appended claimant');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -2977,7 +2984,7 @@ test('rewriting an owner while appending its claimant replays that claimant', as
       windowDays: 30,
     });
     assert.equal(followUp.diagnostics.bodyReads, 0, 'the restored owner stays restored');
-    const followFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const followFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3013,7 +3020,7 @@ for (const mutation of ['rewrite', 'truncate', 'delete'] as const) {
       ].join('\n'));
       const options = { analyzeContent: true, windowDays: 30 };
       const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, options);
-      const coldFull = await ClaudeDataLoader.loadUsageRecords(root, options);
+      const coldFull = await LegacyClaudeLoader.loadUsageRecords(root, options);
       assert.deepEqual(cold.contentAnalysis, coldFull.contentAnalysis);
       await assertMatchesFull(root, cold.records);
       const priorAnalysis = structuredClone(cold.contentAnalysis);
@@ -3031,7 +3038,7 @@ for (const mutation of ['rewrite', 'truncate', 'delete'] as const) {
       await appendFile(claimant,
         analysisTextLine('Z', 'appended', '2026-08-21T11:00:00.000Z') + '\n');
       const warm = await updateClaudeUsageIndex(cold.index, root, options);
-      const full = await ClaudeDataLoader.loadUsageRecords(root, options);
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, options);
       assert.deepEqual(warm.contentAnalysis, full.contentAnalysis);
       await assertMatchesFull(root, warm.records);
       assert.deepEqual([...warm.index.files.values()]
@@ -3073,7 +3080,7 @@ test('a deleted transcript is dropped without re-reading the remaining history',
     // nothing escalates to replaceWithFullAnalysisPlans.
     assert.deepEqual(warm.diagnostics.changed, { append: 0, rebuild: 0, move: 0, delete: 1 });
     assert.equal(warm.diagnostics.bodyReads, 0, 'the surviving file is not re-read');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3118,7 +3125,7 @@ test('deleting the owner of a duplicated uuid re-reads only the surviving twin',
 
     assert.equal(warm.diagnostics.changed.delete, 1);
     assert.equal(warm.diagnostics.bodyReads, 1, 'only the twin carrying the shared uuid is re-read');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3167,7 +3174,7 @@ test('deleting an owner while appending its claimant replays that claimant', asy
     });
 
     assert.equal(warm.diagnostics.bodyReads, 1, 'only the appended claimant is re-read');
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3179,7 +3186,7 @@ test('deleting an owner while appending its claimant replays that claimant', asy
       windowDays: 30,
     });
     assert.equal(followUp.diagnostics.bodyReads, 0, 'the restored owner stays restored');
-    const followFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const followFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3225,7 +3232,7 @@ test('an unrelated deletion does not hide an earlier append preempting a later o
     // The probe reads the appended tail, then the fallback re-reads both
     // survivors. The count is not the contract; agreement with the full loader is.
     assert.ok(warm.diagnostics.bodyReads > 0 && warm.diagnostics.bodyReads <= 3);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, {
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3237,7 +3244,7 @@ test('an unrelated deletion does not hide an earlier append preempting a later o
       windowDays: 30,
     });
     assert.equal(followUp.diagnostics.bodyReads, 0);
-    const followFull = await ClaudeDataLoader.loadUsageRecords(root, {
+    const followFull = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 30,
     });
@@ -3327,4 +3334,393 @@ test('one append in a 100-file corpus bounds I/O, parsing, and aggregate work', 
   assert.equal(warm.diagnostics.linesParsed, 1);
   assert.ok(warm.diagnostics.aggregateMutations <= 4);
   await assertMatchesFull(root, warm.records);
+});
+
+const runsAsRoot = process.getuid?.() === 0;
+
+test('an unreadable transcript is skipped and counted without blocking the commit', { skip: runsAsRoot }, async () => {
+  const { root, first, second } = await fixture();
+  await chmod(second, 0o000);
+  let warm;
+  try {
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: true });
+    assert.equal(cold.diagnostics.filesFailed, 0);
+    assert.equal(cold.diagnostics.filesSkipped, 1);
+    assert.deepEqual(cold.records.flatMap((record) => record.message.id ? [record.message.id] : []), ['message-first']);
+    await appendFile(first, `${usageLine('first-tail', 5, 1)}\n`, 'utf8');
+    warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: true });
+    assert.equal(warm.diagnostics.filesFailed, 0);
+    assert.equal(warm.diagnostics.filesSkipped, 1);
+    assert.ok(warm.records.some((record) => record.message.id === 'message-first-tail'));
+  } finally {
+    await chmod(second, 0o644);
+  }
+  const restored = await updateClaudeUsageIndex(warm.index, root, { analyzeContent: true });
+  assert.equal(restored.diagnostics.filesSkipped, 0);
+  await assertMatchesFull(root, restored.records);
+  const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
+  assert.deepEqual(restored.contentAnalysis, full.contentAnalysis);
+});
+
+test('an indexed transcript that becomes unreadable drops only its own contribution', { skip: runsAsRoot }, async () => {
+  const { root, second } = await fixture();
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  const priorRecords = normalized(cold.records);
+  await appendFile(second, `${usageLine('second-tail', 7, 1, { cwd: '/fixture/project-b' })}\n`, 'utf8');
+  await chmod(second, 0o000);
+  let dropped;
+  try {
+    dropped = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  } finally {
+    await chmod(second, 0o644);
+  }
+  assert.equal(dropped.diagnostics.filesFailed, 0);
+  assert.equal(dropped.diagnostics.filesSkipped, 1);
+  assert.deepEqual(
+    normalized(dropped.records),
+    normalized(cold.records.filter((record) => record._sessionId !== 'session-second')),
+  );
+  assert.deepEqual(normalized(cold.records), priorRecords);
+  assert.equal(cold.index.files.size, 2);
+  const restored = await updateClaudeUsageIndex(dropped.index, root, { analyzeContent: false });
+  assert.equal(restored.diagnostics.filesSkipped, 0);
+  await assertMatchesFull(root, restored.records);
+});
+
+test('workflow rows carry main-session orchestration cost and follow main-thread appends', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-orchestration-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-orchestration');
+  const workflowDir = path.join(project, 'session-orch', 'subagents', 'workflows', 'wf_demo');
+  await mkdir(workflowDir, { recursive: true });
+  const main = path.join(project, 'session-orch.jsonl');
+  await writeFile(main, [
+    usageLine('before', 5, 1, { timestamp: '2026-08-21T07:00:00.000Z' }),
+    usageLine('inside', 40, 4, { timestamp: '2026-08-21T08:05:00.000Z' }),
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(path.join(workflowDir, 'agent-a.jsonl'), [
+    usageLine('agent-start', 10, 2, { timestamp: '2026-08-21T08:00:00.000Z' }),
+    usageLine('agent-end', 10, 2, { timestamp: '2026-08-21T08:10:00.000Z' }),
+    '',
+  ].join('\n'), 'utf8');
+  const rowOf = (result: Awaited<ReturnType<typeof updateClaudeUsageIndex>>) => {
+    const snapshot = claudeUsageDashboardSnapshot(result.index, { now: new Date('2026-08-21T12:00:00.000Z') });
+    assert.deepEqual(stableValue(snapshot.workflows), stableValue(ClaudeDataLoader.getWorkflowBreakdown(result.records)));
+    return snapshot.workflows[0];
+  };
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  assert.equal(rowOf(cold).orchestration?.totalInputTokens, 40);
+  await appendFile(main, `${usageLine('inside-later', 60, 6, { timestamp: '2026-08-21T08:07:00.000Z' })}\n`, 'utf8');
+  const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  assert.equal(warm.diagnostics.bodyReads, 1);
+  assert.equal(rowOf(warm).orchestration?.totalInputTokens, 100);
+});
+
+test('workspace matching needs a path separator in the index and the live loader filters', async () => {
+  const previousTimeZone = I18n.getTimezone();
+  I18n.setTimezone('UTC');
+  try {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-workspace-separator-'));
+    roots.push(root);
+    const project = path.join(root, 'projects', '-fixture-separator');
+    await mkdir(project, { recursive: true });
+    await writeFile(path.join(project, 'session-api.jsonl'), [
+      usageLine('api', 10, 1, { cwd: '/code/api' }),
+      usageLine('api-sub', 20, 1, { cwd: '/code/api/sub', timestamp: '2026-08-21T08:02:00.000Z' }),
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(path.join(project, 'session-gateway.jsonl'), `${usageLine('gateway', 300, 1, {
+      cwd: '/code/api-gateway', timestamp: '2026-08-21T09:00:00.000Z',
+    })}\n`, 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+    const snapshot = claudeUsageDashboardSnapshot(cold.index, {
+      workspacePath: '/code/api',
+      now: new Date('2026-08-21T12:00:00.000Z'),
+    });
+    assert.equal(snapshot.workspaceToday?.totalInputTokens, 30);
+    assert.equal(snapshot.session?.totalInputTokens, 30);
+    assert.equal(ClaudeDataLoader.filterByWorkspace(cold.records, '/code/api').length, 2);
+    assert.equal(ClaudeDataLoader.filterByWorkspace(cold.records, '/code/api/').length, 2);
+    const apiOnly = cold.records.filter((record) => record._projectPath !== '/code/api-gateway');
+    assert.equal(
+      ClaudeDataLoader.getUsageAttribution(cold.records, null, { kind: 'project', projectPath: '/code/api' }).totalTokens,
+      ClaudeDataLoader.getUsageAttribution(apiOnly, null, { kind: 'all' }).totalTokens,
+    );
+  } finally {
+    I18n.setTimezone(previousTimeZone);
+  }
+});
+
+test('an append re-prices and re-parses only the session it touches', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-touched-only-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-touched');
+  await mkdir(project, { recursive: true });
+  const files: string[] = [];
+  for (let index = 0; index < 100; index += 1) {
+    const file = path.join(project, `session-${index}.jsonl`);
+    files.push(file);
+    await writeFile(file, `${usageLine(`cold-${index}`, index + 1, 1)}\n`, 'utf8');
+  }
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  await appendFile(files[42], `${usageLine('only-change', 5, 2)}\n`, 'utf8');
+  const priced = t.mock.method(ClaudeDataLoader, 'calculateUsageData');
+  const parsed = t.mock.method(ClaudeDataLoader, 'parseSessionInfo');
+  const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  const largest = Math.max(...priced.mock.calls.map((call) => call.arguments[0].length));
+  const parses = parsed.mock.callCount();
+  priced.mock.restore();
+  parsed.mock.restore();
+  assert.ok(largest <= 2, `an append priced ${largest} records in one call`);
+  assert.ok(parses <= 2, `an append parsed ${parses} session paths`);
+  const snapshot = claudeUsageDashboardSnapshot(warm.index, { projectGroupingMode: 'flat' });
+  assert.deepEqual(stableValue(snapshot.projects), stableValue(LegacyClaudeLoader.getProjectBreakdown(warm.records, 60, 'flat')));
+  assert.deepEqual(stableValue(snapshot.branches), stableValue(LegacyClaudeLoader.getBranchBreakdown(warm.records)));
+  await assertMatchesFull(root, warm.records);
+});
+
+test('an unchanged refresh shares every map and an append copies only the maps it touches', async () => {
+  const { root, first } = await fixture();
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  const unchanged = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  for (const [name, value] of Object.entries(cold.index)) {
+    if (value instanceof Map) assert.equal((unchanged.index as any)[name], value, name);
+  }
+  for (const [name, value] of Object.entries(cold.index.aggregates)) {
+    assert.equal((unchanged.index.aggregates as any)[name], value, `aggregates.${name}`);
+  }
+  await appendFile(first, `${usageLine('first-tail', 5, 1)}\n`, 'utf8');
+  const appended = await updateClaudeUsageIndex(unchanged.index, root, { analyzeContent: false });
+  assert.notEqual(appended.index.visibleRecords, cold.index.visibleRecords);
+  assert.equal(appended.index.aggregates.byWorkflow, cold.index.aggregates.byWorkflow);
+  assert.equal(appended.index.workflowRows, cold.index.workflowRows);
+  await assertMatchesFull(root, appended.records);
+});
+
+test('a rewritten resumed transcript keeps the other session title on shared winners', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-shared-title-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-shared-title');
+  await mkdir(project, { recursive: true });
+  await writeFile(path.join(project, 'session-a.jsonl'), [
+    JSON.stringify({ type: 'custom-title', customTitle: 'Title A' }),
+    usageLine('shared', 10, 1, { timestamp: '2026-08-21T08:00:00.000Z' }),
+    usageLine('a-only', 5, 1, { timestamp: '2026-08-21T08:01:00.000Z' }),
+    '',
+  ].join('\n'), 'utf8');
+  const resumed = path.join(project, 'session-b.jsonl');
+  await writeFile(resumed, [
+    JSON.stringify({ type: 'custom-title', customTitle: 'Title B' }),
+    usageLine('shared', 10, 1, { timestamp: '2026-08-21T08:30:00.000Z' }),
+    '',
+  ].join('\n'), 'utf8');
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  await assertMatchesFull(root, cold.records);
+  await writeFile(resumed, [
+    JSON.stringify({ type: 'custom-title', customTitle: 'Title B' }),
+    usageLine('b-first', 7, 1, { timestamp: '2026-08-21T08:20:00.000Z' }),
+    usageLine('shared', 10, 1, { timestamp: '2026-08-21T08:30:00.000Z' }),
+    '',
+  ].join('\n'), 'utf8');
+  const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  await assertMatchesFull(root, warm.records);
+});
+
+test('content-analysis UUID ownership keeps no UUIDs it can never use', async () => {
+  const { root, first } = await fixture();
+  await appendFile(first, `${analysisTextLine('old-uuid', 'expired', '2026-01-01T00:00:00.000Z')}\n`, 'utf8');
+  const usageOnly = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  assert.deepEqual([...usageOnly.index.files.values()].map((file) => file.analysisAllUuids.size), [0, 0]);
+  const analysed = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: true });
+  assert.equal([...analysed.index.files.values()].some((file) => file.analysisAllUuids.has('old-uuid')), false);
+});
+
+test('indexed output hours equal a full pass over the same records snapshot', async (t) => {
+  const previousNow = Date.now;
+  const nowMs = Date.parse('2026-08-21T08:30:00.000Z');
+  Date.now = () => nowMs;
+  try {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-output-hours-'));
+    roots.push(root);
+    const project = path.join(root, 'projects', '-fixture-output-hours');
+    await mkdir(project, { recursive: true });
+    const file = path.join(project, 'session-hours.jsonl');
+    const lines = [
+      usageLine('zero', 1, 0, { timestamp: '2026-08-21T05:00:00.000Z' }),
+      usageLine('h6', 1, 3, { timestamp: '2026-08-21T06:10:00.000Z' }),
+      usageLine('h7', 1, 3, { timestamp: '2026-08-21T07:59:59.999Z' }),
+      usageLine('h8-early', 1, 2, { timestamp: '2026-08-21T08:10:00.000Z' }),
+      usageLine('h8-late', 1, 2, { timestamp: '2026-08-21T08:45:00.000Z' }),
+      usageLine('future', 1, 2, { timestamp: '2026-08-21T10:00:00.000Z' }),
+    ];
+    await writeFile(file, `${lines.join('\n')}\n`, 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+    const reads = ['08:05', '08:30', '08:50', '10:30'].map((at) => Date.parse(`2026-08-21T${at}:00.000Z`));
+    const check = (records: ClaudeUsageRecord[]): void => {
+      for (const at of reads) assert.deepEqual(claudeOutputHours(records, at), collectClaudeOutputHours(records, at), String(at));
+    };
+    check(cold.records);
+    const parse = t.mock.method(Date, 'parse');
+    claudeOutputHours(cold.records, nowMs);
+    const parses = parse.mock.callCount();
+    parse.mock.restore();
+    assert.equal(parses, 0, 'the indexed snapshot needs no corpus pass');
+    await writeFile(file, `${lines.filter((line) => !line.includes('answer-h7')).join('\n')}\n`, 'utf8');
+    const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+    check(warm.records);
+    check(cold.records);
+    assert.deepEqual(claudeOutputHours([...warm.records], nowMs), collectClaudeOutputHours(warm.records, nowMs));
+  } finally {
+    Date.now = previousNow;
+  }
+});
+
+test('the weekly window from hourly aggregates equals the full record filter across DST', async (t) => {
+  const previousNow = Date.now;
+  const previousTimeZone = I18n.getTimezone();
+  Date.now = () => Date.parse('2026-11-04T12:00:00.000Z');
+  I18n.setTimezone('America/New_York');
+  try {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-week-'));
+    roots.push(root);
+    const project = path.join(root, 'projects', '-fixture-week');
+    await mkdir(project, { recursive: true });
+    const lines: string[] = [];
+    const start = Date.parse('2026-10-29T00:17:00.000Z');
+    for (let hour = 0; hour < 6 * 24; hour += 1) {
+      const at = start + hour * 3_600_000;
+      lines.push(usageLine(`hour-${hour}`, 10 + hour, 1 + (hour % 3), { timestamp: new Date(at).toISOString() }));
+      if (hour % 7 === 0) lines.push(promptLine(`prompt-${hour}`, new Date(at + 1_000).toISOString()));
+    }
+    lines.push(usageLine('future', 3, 1, { timestamp: '2026-11-06T00:00:00.000Z' }));
+    lines.push(usageLine('old', 900, 1, { timestamp: '2026-10-01T00:00:00.000Z' }));
+    await writeFile(path.join(project, 'session-week.jsonl'), `${lines.join('\n')}\n`, 'utf8');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+    const priced = t.mock.method(ClaudeDataLoader, 'calculateUsageData');
+    for (const weekStart of ['2026-10-29T03:37:12.345Z', '2026-11-01T05:30:00.000Z',
+      '2026-11-01T06:17:00.000Z', '2026-11-01T06:00:00.000Z', '2026-10-28T12:00:00.000Z']) {
+      const at = new Date(weekStart);
+      priced.mock.resetCalls();
+      const actual = claudeWeekUsage(cold.index, at);
+      assert.ok(priced.mock.calls.every((call) => call.arguments[0].length <= 2), weekStart);
+      assert.deepEqual(stableValue(actual), stableValue(ClaudeDataLoader.getThisWeekData(cold.records, at)), weekStart);
+    }
+    const stale = new Date('2026-10-01T00:00:00.000Z');
+    assert.deepEqual(
+      stableValue(claudeWeekUsage(cold.index, stale)),
+      stableValue(ClaudeDataLoader.getThisWeekData(cold.records, stale)),
+    );
+  } finally {
+    Date.now = previousNow;
+    I18n.setTimezone(previousTimeZone);
+  }
+});
+
+test('This Week daily rows come from day aggregates and equal the full record grouping', async (t) => {
+  const previousTimeZone = I18n.getTimezone();
+  const previousNow = Date.now;
+  const originalLoad = (Module as any)._load;
+  try {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-week-days-'));
+    roots.push(root);
+    const project = path.join(root, 'projects', '-fixture-week-days');
+    await mkdir(project, { recursive: true });
+    const file = path.join(project, 'session-week-days.jsonl');
+    const lines: string[] = [];
+    const start = Date.parse('2026-08-24T00:17:00.000Z');
+    for (let hour = 0; hour < 72 * 24; hour += 5) {
+      const at = new Date(start + hour * 3_600_000).toISOString();
+      lines.push(usageLine(`h${hour}`, 10 + hour, 1 + (hour % 3), {
+        timestamp: at, model: hour % 2 ? 'claude-sonnet-5' : 'claude-opus-4-7',
+      }));
+      if (hour % 7 === 0) lines.push(promptLine(`p${hour}`, at));
+    }
+    const zero = JSON.parse(usageLine('zero-only-day', 0, 0, { timestamp: '2026-11-06T12:00:00.000Z' }));
+    zero.message.usage = { input_tokens: 0, output_tokens: 0 };
+    lines.push(JSON.stringify(zero), promptLine('prompt-only-day', '2026-11-08T12:00:00.000Z'));
+    await writeFile(file, `${lines.join('\n')}\n`, 'utf8');
+    const starts = ['2026-08-28T03:37:12.345Z', '2026-10-28T09:41:00.500Z', '2026-11-01T05:30:00.000Z',
+      '2026-11-01T06:17:00.000Z', '2026-10-31T04:00:00.000Z', '2026-08-01T00:00:00.000Z', '2026-12-01T00:00:00.000Z'];
+    const regrouped = t.mock.method(ClaudeDataLoader, 'calculateUsageData');
+    for (const zone of ['America/New_York', 'Pacific/Kiritimati', 'Etc/GMT+12', 'Asia/Kathmandu']) {
+      I18n.setTimezone(zone);
+      const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+      for (const weekStart of starts) {
+        const at = new Date(weekStart);
+        const expected = stableValue(ClaudeDataLoader.getDailyDataForWeek(cold.records, at));
+        regrouped.mock.resetCalls();
+        const actual = claudeWeekDailyUsage(cold.records, at);
+        const read = regrouped.mock.calls.reduce((sum, call) => sum + call.arguments[0].length, 0);
+        assert.ok(read * 10 < cold.records.length, `${zone} ${weekStart}: ${read} records regrouped`);
+        assert.deepEqual(stableValue(actual), expected, `${zone} ${weekStart}`);
+        assert.deepEqual(stableValue(claudeWeekDailyUsage([...cold.records], at)), expected);
+      }
+    }
+
+    I18n.setTimezone('America/New_York');
+    const at = new Date('2026-10-28T09:41:00.500Z');
+    const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+    await writeFile(file, `${lines.filter((line) => !line.includes('answer-h1590')).join('\n')}\n`, 'utf8');
+    const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+    assert.equal(warm.records.length, cold.records.length - 1);
+    for (const records of [cold.records, warm.records]) {
+      assert.deepEqual(stableValue(claudeWeekDailyUsage(records, at)),
+        stableValue(ClaudeDataLoader.getDailyDataForWeek(records, at)));
+    }
+    I18n.setTimezone('Asia/Tokyo');
+    assert.deepEqual(stableValue(claudeWeekDailyUsage(warm.records, at)),
+      stableValue(ClaudeDataLoader.getDailyDataForWeek(warm.records, at)), 'a zone change waits for the rebuilt index');
+
+    I18n.setTimezone('America/New_York');
+    Date.now = () => Date.parse('2026-11-02T12:00:00.000Z');
+    (Module as any)._load = function(request: string, parent: unknown, isMain: boolean) {
+      if (request === 'vscode') {
+        return { workspace: { workspaceFolders: [] }, window: { activeColorTheme: { kind: 1 } } };
+      }
+      return originalLoad.call(this, request, parent, isMain);
+    };
+    const { UsageWebviewProvider } = require('../webview') as typeof import('../webview');
+    const weekData = ClaudeDataLoader.getThisWeekData(warm.records, at);
+    const render = (records: ClaudeUsageRecord[]): string => {
+      const provider = new UsageWebviewProvider({} as any) as any;
+      provider.allRecords = records;
+      provider.weekData = weekData;
+      provider.weekResetsAt = new Date(at.getTime() + 7 * 24 * 3_600_000).toISOString();
+      return provider.renderWeekData();
+    };
+    const html = render(warm.records);
+    assert.ok(html.includes('week-dailyChart'));
+    assert.equal(html, render([...warm.records]), 'the This Week tab is byte-identical to the record path');
+  } finally {
+    (Module as any)._load = originalLoad;
+    Date.now = previousNow;
+    I18n.setTimezone(previousTimeZone);
+  }
+});
+
+test('git grouping resolves repository roots once per project set, not per snapshot', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-claude-git-cache-'));
+  roots.push(root);
+  const project = path.join(root, 'projects', '-fixture-git');
+  await mkdir(path.join(root, 'work', 'repo', '.git'), { recursive: true });
+  await mkdir(project, { recursive: true });
+  const file = path.join(project, 'session-git.jsonl');
+  const promptIn = (cwd: string, uuid: string): string => JSON.stringify({
+    type: 'user', uuid, timestamp: '2026-08-21T08:00:00.000Z', cwd, message: { role: 'user', content: uuid },
+  });
+  const app = path.join(root, 'work', 'repo', 'app');
+  const other = path.join(root, 'work', 'other');
+  await writeFile(file, `${promptIn(app, 'prompt-app')}\n${usageLine('repo', 10, 1, { cwd: app })}\n`, 'utf8');
+  const cold = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
+  assert.equal(claudeUsageDashboardSnapshot(cold.index, { projectGroupingMode: 'git' }).projects[0].isGitRepo, true);
+  const existsSync = t.mock.method(fs, 'existsSync');
+  const again = claudeUsageDashboardSnapshot(cold.index, { projectGroupingMode: 'git' });
+  assert.equal(existsSync.mock.callCount(), 0);
+  assert.equal(again.projects[0].isGitRepo, true);
+  await appendFile(file, `${promptIn(other, 'prompt-other')}\n${usageLine('other', 10, 1, { cwd: other })}\n`, 'utf8');
+  const warm = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: false });
+  const grown = claudeUsageDashboardSnapshot(warm.index, { projectGroupingMode: 'git' });
+  assert.ok(existsSync.mock.callCount() > 0, 'a new project path is resolved');
+  assert.deepEqual(grown.projects.map((group) => group.isGitRepo).sort(), [false, true]);
 });

@@ -29,8 +29,7 @@ async function withProvider(values: Map<string, unknown>, run: (provider: any) =
 }
 function proof(provider: any, volume = 8_000_000_000): void {
   provider.providerAvailability = { claude: false, codex: true, codexData: true };
-  provider.codexAchievementSignals = { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
-    dayEvidence: { complete: true, timeZone: 'UTC', days: volume ? [{ day: '2026-08-31', processed: volume,
+  provider.codexAchievementSignals = { dayEvidence: { complete: true, timeZone: 'UTC', days: volume ? [{ day: '2026-08-31', processed: volume,
       output: 1, models: {} }] : [] } };
   provider.codexView = { currentManifestVerified: true, coverage: { complete: true, identity: { complete: true } },
     periodCoverage: { timeZone: 'UTC', allTime: { complete: true }, last30Days: { complete: false } },

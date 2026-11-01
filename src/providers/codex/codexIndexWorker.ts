@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { parentPort } from 'node:worker_threads';
 
 import {
@@ -9,6 +10,8 @@ import {
   CODEX_REFRESH_FOREGROUND_MAX_FILE_PASSES,
   CodexIndexCancelledError,
   CodexIndexRecovery,
+  CodexIndexV1,
+  codexCoverageSettled,
   loadCodexIndex,
   saveCodexIndexAtomic,
   updateCodexIndex,
@@ -17,7 +20,7 @@ import { scanCodexManifest } from './codexManifest';
 import {
   CodexWorkerMessage,
   CodexWorkerRequest,
-  CodexWorkerResult,
+  CodexWorkerWireResult,
 } from './codexWorkerProtocol';
 import {
   CodexIndexLeaseBusyError,
@@ -32,15 +35,30 @@ import { supportsCodexZstd, CodexZstdError } from './codexZstd';
 const cancelled = new Set<string>();
 let activeRequestId: string | null = null;
 
+export interface CodexWorkerIndexCache {
+  key?: string;
+  index?: CodexIndexV1;
+}
+
+const indexCache: CodexWorkerIndexCache = {};
+
+async function indexFileKey(indexPath: string): Promise<string | undefined> {
+  try {
+    const info = await stat(indexPath, { bigint: true });
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function needsExpeditedBackfill(
   previous: Awaited<ReturnType<typeof loadCodexIndex>>,
   manifestFiles: number,
 ): boolean {
   const firstNonEmptyIndex =
     manifestFiles > 0 && Object.keys(previous.files).length === 0;
-  return firstNonEmptyIndex ||
-    !previous.coverage.complete ||
-    !previous.coverage.period.allTime.complete;
+  const settled = codexCoverageSettled(previous.coverage);
+  return firstNonEmptyIndex || !settled.complete || !settled.allTime;
 }
 
 function post(message: CodexWorkerMessage): void {
@@ -96,6 +114,7 @@ export interface CodexWorkerRefreshRuntime {
   createCodexFilePassPool?: (workerLimit?: number) => Pick<CodexFilePassPool, 'run' | 'dispose'>;
   now?: () => number;
   adoptLegacyCodexIndex?: typeof adoptLegacyCodexIndex;
+  indexCache?: CodexWorkerIndexCache;
 }
 
 export async function runCodexWorkerRefresh(
@@ -108,7 +127,7 @@ export async function runCodexWorkerRefresh(
     const lease = await runtime.acquireCodexIndexLease(request.indexPath, {
       shouldCancel: runtime.isCancelled,
     });
-    let result: CodexWorkerResult;
+    let result: CodexWorkerWireResult;
     try {
       let indexRecovery: CodexIndexRecovery | undefined;
       const metadataStarted = now();
@@ -118,7 +137,12 @@ export async function runCodexWorkerRefresh(
       if (manifest.files.some(file => file.compression === 'zstd') && !supportsCodexZstd()) {
         throw new CodexZstdError('codec-unavailable');
       }
-      const loaded = await runtime.loadCodexIndex(request.indexPath, request.timeZone, event => { indexRecovery = event; });
+      const cache = runtime.indexCache;
+      const indexKey = cache ? await indexFileKey(request.indexPath) : undefined;
+      const cached = indexKey !== undefined && cache?.key === indexKey ? cache.index : undefined;
+      if (cache) Object.assign(cache, { key: undefined, index: undefined });
+      const loaded = cached ??
+        await runtime.loadCodexIndex(request.indexPath, request.timeZone, event => { indexRecovery = event; });
       const previous = request.legacyIndexPath && runtime.adoptLegacyCodexIndex
         ? await runtime.adoptLegacyCodexIndex(request.indexPath, request.legacyIndexPath,
           manifest, request.timeZone, runtime.isCancelled,
@@ -183,10 +207,16 @@ export async function runCodexWorkerRefresh(
       if (runtime.isCancelled()) {
         throw new CodexIndexCancelledError();
       }
-      const { achievementUsageDelta: rawDelta, ...committed } = updated;
+      const { achievementUsageDelta: rawDelta, index, ...committed } = updated;
       const achievementUsageDelta = copyCodexUsageDelta(rawDelta, usageWindow);
+      // Only an untouched disk load is reusable: an in-memory update can differ from its saved round trip.
+      const unchanged = indexKey !== undefined && !indexRecovery && previous === loaded &&
+        !updated.indexChanged && index === loaded;
+      if (cache && unchanged) Object.assign(cache, { key: indexKey, index });
       result = {
         ...committed,
+        ...(unchanged && request.knownIndexKey === indexKey ? {} : { index }),
+        ...(unchanged ? { indexKey } : {}),
         ...(achievementUsageDelta ? { achievementUsageDelta } : {}),
         ...(indexRecovery ? { indexRecovery } : {}),
         metadataMs,
@@ -231,6 +261,7 @@ async function runRefresh(
       saveCodexIndexAtomic,
       adoptLegacyCodexIndex,
       createCodexFilePassPool: workerLimit => new CodexFilePassPool(workerLimit),
+      indexCache,
     });
   } finally {
     cancelled.delete(request.requestId);

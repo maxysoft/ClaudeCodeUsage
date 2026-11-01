@@ -8,8 +8,9 @@ export interface UsageFileFingerprint {
   mtimeMs: number;
   /** Original v2.2.0 recursive discovery position; tie ordering depends on it. */
   discoveryIndex: number;
-  dev?: number;
-  ino?: number;
+  /** Decimal strings: 64-bit NTFS file IDs lose bits as a double. */
+  dev?: string;
+  ino?: string;
 }
 
 export interface UsageManifest {
@@ -30,12 +31,12 @@ export function isMissingPathError(error: unknown): boolean {
 
 export interface UsageFileSystem {
   readdir(dir: string): Promise<fs.Dirent[]>;
-  stat(filePath: string): Promise<fs.Stats>;
+  stat(filePath: string): Promise<fs.BigIntStats>;
 }
 
 const DEFAULT_USAGE_FILE_SYSTEM: UsageFileSystem = {
   readdir: (dir) => fs.promises.readdir(dir, { withFileTypes: true }),
-  stat: (filePath) => fs.promises.stat(filePath),
+  stat: (filePath) => fs.promises.stat(filePath, { bigint: true }),
 };
 
 async function walkJsonl(
@@ -77,14 +78,15 @@ export async function scanUsageManifest(
   const fingerprints = await mapWithConcurrency(paths, 8, async (filePath, discoveryIndex) => {
     try {
       const fileStat = await io.stat(filePath);
-      const hasStableIdentity = fileStat.dev > 0 && fileStat.ino > 0;
+      const hasStableIdentity = fileStat.dev > 0n && fileStat.ino > 0n;
       return {
         path: filePath,
-        size: fileStat.size,
-        mtimeMs: fileStat.mtimeMs,
+        size: Number(fileStat.size),
+        // Same arithmetic as Node's number Stats.mtimeMs; fingerprints compare it exactly.
+        mtimeMs: Number(fileStat.mtimeNs / 1_000_000_000n) * 1e3 + Number(fileStat.mtimeNs % 1_000_000_000n) / 1e6,
         discoveryIndex,
-        dev: hasStableIdentity ? fileStat.dev : undefined,
-        ino: hasStableIdentity ? fileStat.ino : undefined,
+        dev: hasStableIdentity ? String(fileStat.dev) : undefined,
+        ino: hasStableIdentity ? String(fileStat.ino) : undefined,
       };
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
@@ -105,8 +107,7 @@ export function sameFingerprint(
   a: UsageFileFingerprint,
   b: UsageFileFingerprint,
 ): boolean {
-  const identityComparable = (a.dev ?? 0) > 0 && (a.ino ?? 0) > 0 &&
-    (b.dev ?? 0) > 0 && (b.ino ?? 0) > 0;
+  const identityComparable = Boolean(a.dev && a.ino && b.dev && b.ino);
   return a.path === b.path && a.size === b.size && a.mtimeMs === b.mtimeMs &&
     (!identityComparable || (a.dev === b.dev && a.ino === b.ino));
 }

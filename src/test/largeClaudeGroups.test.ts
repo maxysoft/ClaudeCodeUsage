@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, appendFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import type { ClaudeUsageRecord } from '../types';
 
@@ -37,7 +38,7 @@ test('a dense tool-result append has no argument-count ceiling and matches full 
     const appended = await updateClaudeUsageIndex(cold.index, root, { analyzeContent: true });
     assert.equal(appended.diagnostics.filesFailed, 0);
     assert.equal(appended.diagnostics.bodyReads, 1);
-    const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true });
+    const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true });
     assert.deepEqual(appended.contentAnalysis, full.contentAnalysis);
     const warm = await updateClaudeUsageIndex(appended.index, root, { analyzeContent: true });
     assert.equal(warm.diagnostics.bodyReads, 0);
@@ -61,11 +62,11 @@ test('large project, branch and workflow time ranges preserve exact totals', () 
   // Project/branch visibility follows user-prompt count, not assistant count.
   const grouped = [...records, { ...records[0], _isUserPrompt: true,
     message: { usage: { input_tokens: 0, output_tokens: 0 } } }];
-  const project = ClaudeDataLoader.getProjectBreakdown(grouped, 60, 'flat')[0];
+  const project = LegacyClaudeLoader.getProjectBreakdown(grouped, 60, 'flat')[0];
   assert.equal(project.firstSeen.getTime(), start);
   assert.equal(project.lastSeen.getTime(), end);
   assert.equal(project.data.totalOutputTokens, count);
-  assert.equal(ClaudeDataLoader.getBranchBreakdown(grouped)[0].lastSeen.getTime(), end);
+  assert.equal(LegacyClaudeLoader.getBranchBreakdown(grouped)[0].lastSeen.getTime(), end);
   const workflow = ClaudeDataLoader.getWorkflowBreakdown(records)[0];
   assert.equal(workflow.startTime.getTime(), start);
   assert.equal(workflow.endTime.getTime(), end);

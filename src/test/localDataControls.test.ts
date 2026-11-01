@@ -7,13 +7,13 @@ import {
   LOCAL_DATA_ACTION_TARGETS,
   LOCAL_DATA_GLOBAL_STATE_KEYS,
   LOCAL_DATA_GLOBAL_STATE_PREFIXES,
-  LOCAL_DATA_SOURCE_EXCLUSIONS,
   approximateJsonBytes,
   finiteTimestampRange,
   groupQuotaAccountEpochs,
   isLocalDataAction,
   shouldClearQuotaObservation,
 } from '../localDataControls';
+import { LOCAL_DATA_COPY } from '../i18n';
 import type {
   LocalDataAction,
   LocalDataInventoryRow,
@@ -117,7 +117,7 @@ test('local-data action validation accepts exactly the seven declared actions', 
 });
 
 test('source exclusions and clear-all allowlists cannot target provider logs or credentials', () => {
-  const exclusions = LOCAL_DATA_SOURCE_EXCLUSIONS.join('\n');
+  const exclusions = LOCAL_DATA_COPY.en.exclusions.join('\n');
   assert.match(exclusions, /Claude provider-owned source logs/);
   assert.match(exclusions, /Codex provider-owned source logs/);
   assert.match(exclusions, /provider-owned OAuth credentials and cookies/);
@@ -261,6 +261,7 @@ test('quota account epochs group deterministically while public scope fixtures h
     epochNumber.set(epoch.provider, number);
     return {
       token: `scope-${epoch.provider}-${number}`,
+      key: `${epoch.provider}:${number}`,
       label: `${epoch.provider} local anonymous account epoch ${number}`,
       provider: epoch.provider,
       itemCount: epoch.itemCount,
@@ -271,6 +272,7 @@ test('quota account epochs group deterministically while public scope fixtures h
   for (const option of publicOptions) {
     assert.deepEqual(Object.keys(option).sort(), [
       'itemCount',
+      'key',
       'label',
       'newestAt',
       'oldestAt',
@@ -322,7 +324,7 @@ test('shouldClearQuotaObservation applies all, provider, account, and exact scop
   }), false);
 });
 
-test('source policy keeps controls out of Settings while preserving safe command allowlists', () => {
+test('source policy wires controls into Settings while preserving safe command allowlists', () => {
   const extensionSource = readFileSync(path.join(REPOSITORY_ROOT, 'src', 'extension.ts'), 'utf8');
   const webviewSource = readFileSync(path.join(REPOSITORY_ROOT, 'src', 'webview.ts'), 'utf8');
   const controlsSource = readFileSync(
@@ -344,7 +346,7 @@ test('source policy keeps controls out of Settings while preserving safe command
     '/** One row in the settings panel',
   );
 
-  assert.doesNotMatch(webviewSource, /html \+= this\.renderLocalDataControls\(\);/);
+  assert.match(webviewSource, /html \+= this\.renderLocalDataControls\(\);/);
   for (const { action, command } of DATA_ACTION_COMMANDS) {
     assert.equal(
       contributedCommands.filter((entry) => entry.command === command).length,

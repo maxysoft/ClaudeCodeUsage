@@ -2,18 +2,18 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 
 import {
-  appendWeeklyQuotaObservations,
   buildWeeklyUsageHistory,
   buildWeeklyValueTimeline,
-  buildWeeklyValueTrend,
+  claudeWeeklyEquivalentUsage,
   equivalentCostBreakdownFromProviderTokens,
   equivalentUsageFromProviderTokens,
-  mergeWeeklyValuePoints,
   summarizeEquivalentCostBreakdowns,
   summarizeEquivalentUsage,
   WeeklyEquivalentUsage,
   WeeklyQuotaObservation,
 } from '../weeklyValue';
+import type { ClaudeUsageRecord } from '../types';
+import * as pricing from '../pricing';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -46,88 +46,6 @@ function usage(
   };
 }
 
-test('completed reset window reports used, inferred full, and unused API-equivalent value', () => {
-  const points = buildWeeklyValueTrend({
-    observations: [observation()],
-    usage: [
-      usage(45, RESET - 2 * HOUR),
-      usage(5, RESET - 30 * 60 * 1000),
-    ],
-  }, RESET + HOUR);
-
-  assert.equal(points.length, 1);
-  assert.equal(points[0].usedEquivalentUsd, 50);
-  assert.equal(points[0].fullEquivalentUsd, 60);
-  assert.equal(points[0].unusedEquivalentUsd, 10);
-  assert.equal(points[0].utilizationPercent, 75);
-  assert.equal(points[0].confidence, 'high');
-});
-
-test('current window presents a provisional unused API-equivalent estimate', () => {
-  const points = buildWeeklyValueTrend({
-    observations: [observation({ resetAt: RESET + DAY, observedAt: RESET, usedPercent: 50 })],
-    usage: [usage(20, RESET - HOUR)],
-  }, RESET + HOUR);
-
-  assert.equal(points[0].current, true);
-  assert.equal(points[0].fullEquivalentUsd, 40);
-  assert.equal(points[0].unusedEquivalentUsd, 20);
-  assert.equal(points[0].confidence, 'medium');
-});
-
-test('legacy trend keeps an unattributed or approximate unused value visibly low-confidence', () => {
-  for (const overrides of [
-    { accountAttribution: 'unattributed' as const },
-    { flags: ['account-ambiguous' as const] },
-    { flags: ['approximate-boundary' as const] },
-  ]) {
-    const points = buildWeeklyValueTrend({
-      observations: [observation(overrides)],
-      usage: [usage(45, RESET - 2 * HOUR)],
-    }, RESET + HOUR);
-    assert.equal(points[0].fullEquivalentUsd, 60);
-    assert.equal(points[0].unusedEquivalentUsd, 15);
-    assert.equal(points[0].confidence, 'low');
-  }
-});
-
-test('usage observed after a stale quota sample cannot exceed the displayed full allowance', () => {
-  const points = buildWeeklyValueTrend({
-    observations: [observation({ usedPercent: 50 })],
-    usage: [
-      usage(20, RESET - 2 * HOUR),
-      usage(25, RESET - 30 * 60 * 1000),
-    ],
-  }, RESET + HOUR);
-
-  assert.equal(points[0].usedEquivalentUsd, 45);
-  assert.equal(points[0].fullEquivalentUsd, 45);
-  assert.equal(points[0].unusedEquivalentUsd, null);
-  assert.equal(points[0].confidence, 'low');
-});
-
-test('valid tiny utilization and partial pricing still produce a low-confidence total estimate', () => {
-  const lowUtilization = buildWeeklyValueTrend({
-    observations: [observation({ usedPercent: 2 })],
-    usage: [usage(20, RESET - 2 * HOUR)],
-  }, RESET + HOUR);
-  assert.equal(lowUtilization[0].fullEquivalentUsd, 1_000);
-  assert.equal(lowUtilization[0].confidence, 'low');
-
-  const partialPricing = buildWeeklyValueTrend({
-    observations: [observation()],
-    usage: [{
-      timestamp: RESET - 2 * HOUR,
-      equivalentUsd: 20,
-      pricedTokens: 700,
-      totalTokens: 1_000,
-    }],
-  }, RESET + HOUR);
-  assert.equal(partialPricing[0].fullEquivalentUsd, 20 / 0.75);
-  assert.equal(partialPricing[0].unusedEquivalentUsd, (20 / 0.75) - 20);
-  assert.equal(partialPricing[0].confidence, 'low');
-});
-
 test('pricing coverage after the observation cannot inflate confidence for an underpriced prefix', () => {
   const points = buildWeeklyValueTimeline('codex', {
     observations: [observation({ usedPercent: 50 })],
@@ -152,42 +70,6 @@ test('pricing coverage after the observation cannot inflate confidence for an un
   assert.equal(points[0].fullEquivalentUsd, 100);
   assert.equal(points[0].unusedEquivalentUsd, null);
   assert.equal(points[0].confidence, 'low');
-});
-
-test('source keys keep overlapping Codex account windows from sharing usage', () => {
-  const points = buildWeeklyValueTrend({
-    observations: [
-      observation({ resetAt: RESET, sourceKey: 'account-a-file', usedPercent: 50 }),
-      observation({ resetAt: RESET + DAY, observedAt: RESET, sourceKey: 'account-b-file', usedPercent: 25 }),
-    ],
-    usage: [
-      usage(40, RESET - 2 * HOUR, 'account-a-file'),
-      usage(10, RESET - 2 * HOUR, 'account-b-file'),
-    ],
-  }, RESET + 2 * DAY);
-
-  const accountA = points.find((point) => point.resetAt === RESET);
-  const accountB = points.find((point) => point.resetAt === RESET + DAY);
-  assert.equal(accountA?.usedEquivalentUsd, 40);
-  assert.equal(accountB?.usedEquivalentUsd, 10);
-  assert.equal(accountA?.fullEquivalentUsd, null);
-  assert.equal(accountA?.unusedEquivalentUsd, null);
-  assert.equal(accountB?.fullEquivalentUsd, null);
-  assert.equal(accountB?.unusedEquivalentUsd, null);
-  assert.equal(accountA?.confidence, 'usage-only');
-  assert.equal(accountB?.confidence, 'usage-only');
-});
-
-test('quota history keeps the latest observation for each percentage step', () => {
-  const compacted = appendWeeklyQuotaObservations([
-    observation({ observedAt: RESET - 3 * HOUR }),
-  ], [
-    observation({ observedAt: RESET - HOUR }),
-    observation({ observedAt: RESET - 30 * 60 * 1000, usedPercent: 80 }),
-  ]);
-  assert.equal(compacted.length, 2);
-  assert.equal(compacted[0].observedAt, RESET - HOUR);
-  assert.equal(compacted[1].usedPercent, 80);
 });
 
 test('known Codex models use exact current API prices and unknown models stay unpriced', () => {
@@ -317,30 +199,6 @@ test('historical token logs still produce usage-only weekly values without quota
   assert.ok(points.every((point) => point.utilizationPercent === null));
   assert.ok(points.every((point) => point.confidence === 'usage-only'));
   assert.ok(points.every((point) => point.basis === 'calendar-usage'));
-});
-
-test('quota observations replace the matching fallback week without hiding older usage history', () => {
-  const rows = [
-    usage(10, RESET - 8 * DAY),
-    usage(40, RESET - 2 * HOUR),
-  ];
-  const observed = buildWeeklyValueTrend({
-    observations: [observation({ usedPercent: 50 })],
-    usage: rows,
-  }, RESET + HOUR);
-  const history = buildWeeklyUsageHistory('codex', rows, {
-    now: RESET + HOUR,
-    anchorResetAt: RESET,
-  });
-  const merged = mergeWeeklyValuePoints(observed, history);
-
-  assert.equal(merged.length, 2);
-  assert.equal(merged[0].resetAt, RESET);
-  assert.equal(merged[0].basis, 'quota-observation');
-  assert.equal(merged[0].fullEquivalentUsd, 80);
-  assert.equal(merged[1].resetAt, RESET - 7 * DAY);
-  assert.equal(merged[1].basis, 'reset-aligned-usage');
-  assert.equal(merged[1].fullEquivalentUsd, null);
 });
 
 test('weekly timeline keeps only the latest current reset for one anonymous Codex series', () => {
@@ -866,4 +724,38 @@ test('overlapping unattributed Codex epochs never share usage for an allowance e
   assert.equal(points[0].fullEquivalentUsd, null);
   assert.equal(points[0].unusedEquivalentUsd, null);
   assert.equal(points[0].confidence, 'usage-only');
+});
+
+test('Claude weekly value prices Sonnet 5 at the rate of each record date', () => {
+  const record = (timestamp: string) => ({
+    type: 'assistant',
+    timestamp,
+    message: { model: 'claude-sonnet-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+  }) as ClaudeUsageRecord;
+  assert.deepEqual(
+    claudeWeeklyEquivalentUsage([record('2026-08-31T12:00:00Z'), record('2026-09-02T12:00:00Z')])
+      .map((row) => Math.round(row.equivalentUsd * 1e6) / 1e6),
+    [2, 3],
+  );
+});
+
+test('Claude weekly rows price each record once per pricing generation', (t) => {
+  const record = (timestamp: string) => ({
+    type: 'assistant',
+    timestamp,
+    message: { model: 'claude-sonnet-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+  }) as ClaudeUsageRecord;
+  const records = [record('2026-08-31T12:00:00Z'), record('2026-09-02T12:00:00Z')];
+  const first = claudeWeeklyEquivalentUsage(records);
+  const priced = t.mock.method(pricing, 'getExactModelPricing');
+  const grown = claudeWeeklyEquivalentUsage([...records, record('2026-09-03T12:00:00Z')]);
+  assert.equal(priced.mock.callCount(), 1, 'only the new record is priced');
+  assert.deepEqual(grown.slice(0, 2), first);
+  pricing.setPricingBackend('aws-bedrock-in-region');
+  try {
+    claudeWeeklyEquivalentUsage(records);
+    assert.equal(priced.mock.callCount(), 3, 'a backend change reprices every record');
+  } finally {
+    pricing.setPricingBackend('anthropic');
+  }
 });

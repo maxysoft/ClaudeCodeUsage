@@ -64,7 +64,7 @@ only the separate publish action can perform that network operation.
 | `claudeApiClient.ts` | Existing Claude OAuth/quota transport and runtime one-way identity signal for the credentials used by the last successful request; pace reads this signal without a new request or credential lookup. |
 | `dataLoader.ts` | Claude parsing, validation, attribution, and content-analysis primitives retained for exact compatibility. |
 | `claudeIncrementalIndex.ts` | Production in-memory per-file Claude index: append-tail parsing, exact cross-file response deduplication, affected-group aggregation, content-analysis contributions, and materialized dashboard rows. |
-| `achievements.ts`, `achievementSnapshot.ts`, `achievementCalendar.ts`, `achievementHours.ts` | Versioned rules and numeric token/day/week/hour evidence; `codexAchievementCalendarProjection` resolves full-census ancestry before selecting witnessed dates, keeping positive subsets separate from whole-census completeness. |
+| `achievements.ts`, `achievementCalendar.ts`, `achievementHours.ts` | Versioned rules and numeric token/day/week/hour evidence; `codexAchievementCalendarProjection` resolves full-census ancestry before selecting witnessed dates, keeping positive subsets separate from whole-census completeness. |
 | `achievementActivity.ts`, `achievementIcons.ts`, `achievementShare.ts` | Allowlisted deliberate local-action enums, bundled emblem lookup and explicit self-contained badge SVG export. |
 | `achievementGallery.ts`, `achievementOverview.ts`, `achievementRecordStore.ts` | Pure theme ownership/record projections, stable goals, automatic/manual showcase selection and the ≤64 KiB canonical v2 envelope; six ordered manual pins and shared v1 lease/migration fences. |
 | `achievementUiIcons.ts` | Pure rendering of known inline SVG control icons; no dependencies, network access or additional asset files. Existing localized labels remain in the shared Webview renderer. |
@@ -86,7 +86,6 @@ only the separate publish action can perform that network operation.
 | `optimizerRequest.ts` | User-draft-only projection through the same prepared-request and strict-send boundary; no advice-evidence parser fallback. |
 | `backgroundWorkState.ts` / `resourceOwnership.ts` | Durable progress/backoff/pause state and the testable creator/stop/disposal registry for timers, watchers, workers, network calls, and backfills. |
 | `providers/providerTypes.ts` | Provider-neutral token, event, confidence, outcome, coverage, and limit contracts. |
-| `providers/claudeProvider.ts` | Thin compatibility adapter that exposes existing Claude aggregates without changing their results. |
 | `providers/codex/codexSchema.ts` | Minimal safe JSON guards; never flattens or returns message/command/tool bodies. |
 | `providers/codex/codexParser.ts` | Codex exact-request parsing with cumulative high-water fallback, pseudonymous lineage metadata, structural counters, quality flags, and last-observed limits. |
 | `providers/codex/codexManifest.ts` | Allowlisted Codex directory discovery, HMAC file keys, fingerprints, and manifest diffing. |
@@ -366,10 +365,12 @@ credentials or make a network call to refresh it.
 
 ### Local achievements (2.5.0)
 
-Historical dates use a frozen 138-rule registration manifest. Each handler verifies
-the exact ID, counter, target, group, rule version, series, base ID and monetary
-scope; adding a rule or changing its interpretation cannot silently inherit a date.
-The module-level signature covers actual and registered metadata.
+Historical dates use a 138-rule registration list derived from the catalog: every v1
+rule counted by a supported history counter, plus two counter overrides. A reviewed test
+snapshot pins the exact ID, counter, target, group, rule version, series, base ID and
+monetary scope, so adding a rule or changing its interpretation fails that test instead
+of silently inheriting or losing a date. The module-level signature covers actual and
+registered metadata.
 Session reconstruction consumes only the canonical uncapped session admission,
 not arbitrary positive-output records. Its cache uses weak record-array keys and
 is explicitly retired on source/evidence changes. Changed logs require recalibration.
@@ -402,7 +403,7 @@ its explicit label, and unknown stays unknown. These are renderer-only changes:
 award rules, date calculations, catalog and persisted records are unchanged.
 
 `root-portfolio` retains its IDs, thresholds and saved awards under the localized
-name Independent root tasks / 独立主任务. `achievements.ts` builds `modelsByRoot` only
+name Independent root tasks / 独立主任务. `achievements.ts` counts a root only
 from verified root ownership and recognized model buckets with positive input
 **or** output. `verifiedRootCount` counts each root tree once, including eligible
 children, without asserting task completion or reading task content.
@@ -411,7 +412,9 @@ The Share & compare label changes neither the `compare` provider key nor navigat
 state ownership. Achievement sharing only adds basic equal-width checkbox options
 with a separate rank line. The local-icon repair uses the same
 `webview.cspSource` as the main dashboard CSP for bundled `asWebviewUri` resources;
-it adds no remote image permission. `achievementShare.ts` embeds the fixed public
+it adds no remote image permission. The dashboard panel's `localResourceRoots` is only
+`assets/achievements`. Badge PNGs become data URLs only inside the self-contained share
+SVG, through a 12-file in-memory cache. `achievementShare.ts` embeds the fixed public
 `https://github.com/ClaudeCodeUsage/ClaudeCodeUsage` anchor with no input-derived
 destination, resource fetch, telemetry or personal metadata. Headings, footers and
 rank/threshold labels wrap with reserved spacing in the existing grid; output
@@ -488,7 +491,7 @@ Both `claude-api-week` and `codex-api-week` now contain five ranks: Bronze $100,
 Silver $500, Gold $2,500, Platinum $10,000 and Legendary $25,000. Only the four
 Platinum/Legendary IDs are added; the existing three IDs/targets, series ownership,
 artwork, completed-week boundary and frozen-price provenance remain unchanged.
-Their four explicit history registrations bring the manifest to 138 entries; a
+Their four history registrations bring the list to 138 entries; a
 supported log-derived annotation is still separate from a saved first-record date.
 Legacy envelopes reject the new IDs, and the pre-expansion reader fails closed
 without rewriting or clearing either envelope. Schema/catalog versions and the
@@ -1078,7 +1081,12 @@ For a deterministic body-decoding failure, a versioned `compressionFailure`
 allowlisted code and physical fingerprint replace the entire provisional contribution.
 No tokens, lineage, quota or calendar witnesses survive in that row. An unchanged
 failed version is not decoded or checkpointed again and is not pending work, but
-`failedFiles` and incomplete coverage remain visible. A physical/encoding change
+`coverage.complete` stays false and `coverage.terminalFiles` counts the row. A settled
+row no longer forces an expedited backfill, a `partial` provider outcome, a failed
+host refresh or pending historical work, and it does not withhold achievement usage
+deltas; known processed volume counts only as a lower bound. Calendar, hour-proof,
+token-evidence and calibration completeness stay closed because the row's usage is
+unknown. The provider's `diagnostic.failedFiles` counts only other failures. A physical/encoding change
 invalidates the failure state; transient I/O, cancellation and source races remain
 retryable. Unknown persisted failure versions force validation rather than authority.
 Header discovery errors still fail the refresh and preserve the last-good snapshot.
@@ -1119,11 +1127,18 @@ walking retained records. Aggregate-only is the remote default. Prompt samples
 and optional user context have a separate explicit consent and must appear in
 the exact request preview. The host keeps the prepared object and API key; the
 webview receives only the preview and an opaque handle. A second click sends the
-same byte object to the configured BYOK endpoint. Feedback, comparable pairs,
+same byte object to the configured BYOK endpoint, through fetch only (never curl,
+whose command line would expose the key) and with redirects refused. It is
+retried once only when the connection failed before any byte was sent. Advice
+asks for structured output (a forced Anthropic tool or a strict OpenAI
+`response_format`) and also carries the schema and an example in the system
+prompt; an endpoint that rejects `response_format` with HTTP 400/422 receives
+the prepared body without that field once. Feedback, comparable pairs,
 and comparison envelopes remain local and accept no prompt, response, path,
 session, title, endpoint, or credential field.
 
 The preview includes the resolved HTTP(S) destination, API format and model.
+Plain HTTP is accepted only for loopback hosts (`localhost`, 127.0.0.0/8, `::1`).
 Normalization may append a protocol path but never changes the configured host
 or proxy prefix; incompatible direct-provider paths fail closed. URL credentials,
 query parameters and fragments are rejected before preview to prevent secret
@@ -1410,6 +1425,9 @@ With content analysis enabled, unsafe truncate/replace/move/delete and source-or
 or UUID ownership changes may require a wider ordered replay as described below;
 they are not guaranteed to read only the changed file. Content-analysis contributions
 and the established cross-file response-identity rules use the same atomic path.
+A transcript the OS refuses to open (`EACCES`/`EPERM`) is left out of that commit
+and counted as skipped (a count, never a path); it is retried on the next changed
+refresh. Any other read failure keeps the previous index.
 Content analysis keeps a process-local materialized accumulator. Its cutoff is
 the same continuously rolling millisecond cutoff used by `ClaudeDataLoader`, not
 a local-midnight approximation. Both loaders use the shared exact-cutoff helper;
@@ -1434,7 +1452,17 @@ zone.
 An ordinary single-file append first reads only the verified tail, applies the
 changed-file delta, and recalibrates only affected canonical response identities.
 Aggregate buckets use transaction-local copy-on-write ownership: each touched
-bucket is copied once, not once per record/model label. Previously published
+bucket is copied once, not once per record/model label. Index maps are copied
+only when a transaction first writes them, so an unchanged refresh copies none.
+Project and branch rows read their incremental aggregates; a group's first/last
+timestamps are rescanned only after a removal at that bound. The index also keeps
+UTC output-hour counts and an 8-day UTC-hour aggregate, so the hour-streak badges
+and the This Week total read those instead of every record. The This Week per-day
+rows come from the configured-zone day aggregates; only the two or three days that
+can straddle the window start (no zone is 15 h or more from UTC) regroup their own
+records. Weekly-value rows are priced once per record and pricing backend/catalog,
+so a refresh prices only new records. Repository roots for
+project grouping are cached until a new project path appears. Previously published
 snapshots remain immutable. Provider UI synchronization failures are reported
 at most once per Extension Host lifetime. They cannot stop Codex provider work
 or reject its refresh drain, prevent Claude from committing an otherwise
@@ -1494,6 +1522,15 @@ Codex history is designed for multi-gigabyte local corpora:
   workers). A slow file/checkpoint backpressures idle workers instead of
   retaining the entire batch; ordering, cancellation and resume stay intact;
 - unchanged warm refresh reads no JSONL body;
+- after a successful reply the coordinator worker stays alive until provider
+  disposal (settings change, data clearing, shutdown); an error reply or crash
+  stops it. The worker keeps the last unchanged index it loaded from disk, keyed
+  by the file's device, inode, size, mtime and ctime, and the client keeps the
+  last index it received. An unchanged refresh then skips the index load and
+  sends no index body. The lease is still taken per refresh, never while idle.
+  Cost: one in-memory index copy per thread (about 20 MB for a 19 MB index).
+  Measured with 3,000 synthetic files and a 19 MB index: unchanged refresh
+  610 ms to 195 ms, append refresh 1.8 s to 1.4 s;
 - a first non-empty index or incomplete legacy migration gets one bounded
   16,384 file passes / 64 GiB streaming ceiling; this is not an up-front memory
   allocation and retains cancellation and atomic resume checkpoints. After

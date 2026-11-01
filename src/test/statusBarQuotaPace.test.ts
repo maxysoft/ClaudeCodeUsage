@@ -133,9 +133,8 @@ test('early sample shows reference only and scoped weekly rows keep their indepe
 test('tracking off and pace off retain no pace evidence or predictions', () => at(T, () => {
   const m = manager();
   enable(m, false);
-  m.updateQuota(quota, evidence(), evidence());
+  m.updateQuota(quota, evidence());
   assert.equal(m.lastClaudePace, null);
-  assert.equal(m.previousClaudePace, null);
   enable(m, true);
   m.updateQuota(quota, evidence());
   m.setVisibility(true, true, false, 'cost', false, false, false, 'decimal', '', true);
@@ -173,7 +172,6 @@ test('public Codex updates preserve pace across provider changes and remove it i
   assert.match(m.quotaItem.tooltip.value, /116%/);
   enable(m, false);
   assert.equal(m.lastCodex.pace, null);
-  assert.equal(m.lastCodex.previousPace, null);
   assert.equal(m.quotaItem.text, '$(dashboard) wk 71%');
   assert.doesNotMatch(m.quotaItem.tooltip.value, /116%/);
   enable(m, true);

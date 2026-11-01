@@ -13,7 +13,7 @@ import {
   normalizeDisplayCurrencyCode, resolveCurrencyDisplay,
 } from './currencyDisplay';
 import { DayUsage } from './heatmap';
-import { resolveTimeZone } from './dateKeys';
+import { parseDayKey, resolveTimeZone } from './dateKeys';
 import { HeatmapSvgOptions, renderHeatmapSvg } from './heatmapSvg';
 import { artifactLocale } from './i18n';
 import { API_HEATMAP_COPY } from './apiHeatmapCopy';
@@ -121,11 +121,9 @@ function timezoneLabel(raw: unknown): string {
 /** Whitelisted fields only: bounded workbench titles, no FX multipliers/raw IDs. */
 export function normalizeApiHeatmapConfig(options: ApiHeatmapOptions): ApiHeatmapConfig {
   const endDateISO = options.endDateISO;
-  if (typeof endDateISO !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(endDateISO)) {
+  if (!Number.isFinite(parseDayKey(endDateISO))) {
     throw new Error('Invalid heatmap end date');
   }
-  // Also checks real calendar dates; no implicit clock or machine timezone.
-  addCalendarDays(endDateISO, 0);
   const range = normalizeCombinedHeatmapRange(options.range);
   const showAmounts = options.hideAmounts !== true && options.showAmounts === true && options.metric === 'apiEquivalent';
   return {

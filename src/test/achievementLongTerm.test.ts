@@ -46,7 +46,7 @@ test('all new ranks use the exact existing counter at boundary and never borrow 
       const count=rule.target+offset;
       const facts:any={claudeTokens:0,codexTokens:0,activeDays:0,claudeFamilies:[],
         claudeFamilyTokens:{sonnet:0,opus:0,haiku:0},fable:{processedTokens:0,outputSessions:0},
-        calendar:{familyDays:{},activeWeeks:0},codex:{modelCount:0,efforts:[],familyRootCounts:{astra:0,sol:0,luna:0}}};
+        calendar:{familyDays:{},activeWeeks:0},codex: {}};
       if(rule.series==='sonnet-main') facts.claudeFamilyTokens.sonnet=count;
       else if(rule.series==='opus-cannon') facts.claudeFamilyTokens.opus=count;
       else if(rule.series==='haiku-worker') facts.claudeFamilyTokens.haiku=count;
@@ -71,7 +71,7 @@ test('all new ranks use the exact existing counter at boundary and never borrow 
 test('new output/cache ranks retain causal live proof; sessions and days cannot inherit a Token receipt', () => {
   const facts:any={claudeTokens:2_500_000_000,codexTokens:0,activeDays:0,claudeFamilies:[],
     claudeOutputTokens:499_999_999,claudeCacheCreationTokens:1_999_999_999,
-    codex:{modelCount:0,efforts:[],familyRootCounts:{astra:0,sol:0,luna:0}}};
+    codex: {}};
   const before=evaluateAchievements(facts);
   const after=evaluateAchievements({...facts,claudeTokens:2_500_000_002,claudeOutputTokens:500_000_000,claudeCacheCreationTokens:2_000_000_000,
     claudeOutputSessions:5_000,activeDays:1_500,calendar:{familyDays:{sonnet:1_000},activeWeeks:104}});

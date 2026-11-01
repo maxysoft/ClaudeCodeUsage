@@ -37,7 +37,6 @@ for (const [provider, open] of [['claude', openClaude], ['codex', openCodex]]) {
     await page.locator('#tab-settings').click();
     const inventoryRequests = await page.evaluate(() => window.__ccuPostedMessages.filter(message =>
       message.command === 'requestLocalDataInventory').length);
-    // The basic renderer fixture omits the host-backed inventory section.
     expect(await page.evaluate(() => window.__ccuPostedMessages.filter(message =>
       message.command === 'tabChanged' && message.tab === 'settings').length)).toBe(1);
     const settingsMessages = await page.evaluate(() => window.__ccuPostedMessages.length);

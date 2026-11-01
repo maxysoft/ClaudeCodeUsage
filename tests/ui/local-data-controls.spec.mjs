@@ -1,20 +1,20 @@
 import { test, expect, openClaude, openCodex } from './support/app.mjs';
 
-test('Settings stays concise: repository privacy controls are not rendered in the plugin', async ({ page }) => {
+test('Settings renders the local data and privacy panel and requests its inventory', async ({ page }) => {
   await openCodex(page);
   await page.locator('#tab-settings').click();
 
-  await expect(page.locator('#localDataTitle')).toHaveCount(0);
-  await expect(page.locator('.local-data-controls')).toHaveCount(0);
-  await expect(page.locator('#localDataQuotaScope')).toHaveCount(0);
+  await expect(page.locator('#localDataTitle')).toBeVisible();
+  await expect(page.locator('.local-data-controls')).toHaveCount(1);
+  await expect(page.locator('#localDataQuotaScope')).toHaveCount(1);
   await expect(page.getByText('Enable sharing workspace', { exact: true })).toBeVisible();
   await expect(page.locator('#set_enableShareCard')).toBeChecked();
   expect(await page.evaluate(() => window.__ccuPostedMessages.some(
     (message) => message.command === 'requestLocalDataInventory',
-  ))).toBe(false);
+  ))).toBe(true);
 });
 
-test('an inventory reply cannot materialize the removed settings UI', async ({ page }) => {
+test('an inventory reply renders as text, never as markup', async ({ page }) => {
   await openCodex(page);
   await page.locator('#tab-settings').click();
   await page.evaluate(() => {
@@ -51,7 +51,12 @@ test('an inventory reply cannot materialize the removed settings UI', async ({ p
     }));
   });
 
-  await expect(page.locator('#localDataInventoryBody')).toHaveCount(0);
+  const rows = page.locator('#localDataInventoryBody tr');
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator('td').first()).toHaveText(/^<img src=x/);
+  await expect(page.locator('#localDataInventoryBody img')).toHaveCount(0);
+  await expect(page.locator('#localDataQuotaScope option')).toHaveText(['Codex local anonymous account epoch 1 (3)']);
+  await expect(page.locator('#localDataExclusions')).toContainText('provider credentials');
   expect(await page.evaluate(() => window.__inventoryInjected === true)).toBe(false);
 });
 

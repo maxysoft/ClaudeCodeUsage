@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { analysisWindowCutoffMs, ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 
 test('the shared analysis cutoff preserves exact milliseconds for every supported window', () => {
   for (const timestamp of [
@@ -45,7 +46,7 @@ test('a full load captures one exact cutoff for content and calibration despite 
     })}\n`, 'utf8');
     // A second capture would move calibration past the admitted event.
     Date.now = () => now + clockReads++ * 60_000;
-    const loaded = await ClaudeDataLoader.loadUsageRecords(root, {
+    const loaded = await LegacyClaudeLoader.loadUsageRecords(root, {
       analyzeContent: true,
       windowDays: 1,
     });

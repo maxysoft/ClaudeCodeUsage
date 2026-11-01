@@ -180,6 +180,18 @@ test('OFF→ON, timezone retirement, forged windows, incomplete/recovered source
   }
 });
 
+test('settled terminal Codex files keep known processed volume only as a lower bound', async () => {
+  await owner(async host => {
+    const { view } = snapshot(600_000_000);
+    Object.assign(view.coverage, { complete: false, indexedFiles: 1, totalFiles: 2, terminalFiles: 1,
+      identity: { complete: true } });
+    host.codexView = view;
+    assert.deepEqual(host.codexAchievementVolume(), { processed: 600_000_003, lowerBound: true });
+    delete view.coverage.terminalFiles;
+    assert.equal(host.codexAchievementVolume().processed, 0);
+  });
+});
+
 test('disabled/source-absent Codex cannot remain authoritative through accepted non-rendering references', async () => {
   await owner(async host => {
     await accept(host, 6_600_000_000);

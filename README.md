@@ -654,10 +654,10 @@ only date/hour buckets migrate, without restarting primary history.
   effort, role, time, and quality metadata. It never stores raw IDs, full paths
   or repository URLs, thread titles, or conversation bodies.
 - The quota indicator calls **`api.anthropic.com/api/oauth/usage`** using
-  Claude Code's existing OAuth token. If that token has expired, the extension
-  sends the existing refresh token to **`console.anthropic.com/v1/oauth/token`**
-  and writes the refreshed credentials back to the selected Claude credential
-  file or macOS Keychain item. See [Local data and privacy](LOCAL-DATA.md).
+  Claude Code's existing OAuth token. The extension never refreshes that token
+  or writes Claude's credential file or macOS Keychain item; an expired token
+  leaves the quota unavailable until Claude Code refreshes it. See
+  [Local data and privacy](LOCAL-DATA.md).
 - **AI advice** and the **Usage Optimizer** are the only features that call a
   model — and only after *you* preview and explicitly send a prepared request.
   Advice defaults to allowlisted aggregates; prompt samples and optional user

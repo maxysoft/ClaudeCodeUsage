@@ -22,14 +22,6 @@ const facts = (files: CodexFileAggregate[] = []): AchievementFacts =>
   ({claudeTokens:0,codexTokens:0,activeDays:0,claudeFamilies:[],codex:codexModelSignals(files)});
 const row = (value: AchievementFacts, id: AchievementId) => evaluateAchievements(value).find(rule=>rule.id===id)!;
 
-test('old max-agent and effort counters cannot authorize the joint rules without new aligned evidence', () => {
-  const value = facts();
-  Object.assign(value.codex,{maxVerifiedAgentsPerRoot:100,maxRealModelsPerRoot:100,multiAgentRootCount:200,
-    verifiedChildCount:5_000,multiModelRootCount:1_000,effortProcessedTokens:{low:1e12,medium:1e12,high:1e12,xhigh:1e12,max:1e12,ultra:1e12}});
-  for (const id of ['agent-team-gold','same-root-models-gold','agent-conductor-gold',
-    'agent-participation-gold','model-relay-roots-gold','effort-spectrum'] as const) assert.equal(row(value,id).unlocked,false,id);
-});
-
 test('one large tree is a single experience, not a repeated-team gold achievement', () => {
   const value = facts(teams(1,100,1_000_000));
   assert.equal(row(value,'agent-standup').unlocked,false);

@@ -28,6 +28,7 @@ export interface PrepareAiInvocationInput {
   consentGeneration: number;
   createdAtEpochMs: number;
   timeoutMs?: number;
+  responseSchema?: { name: string; schema: Record<string, unknown> };
 }
 
 export interface PreparedAiInvocation {
@@ -46,6 +47,9 @@ export interface PreparedAiInvocation {
   readonly serializedBody: string;
   readonly canonicalBytes: Uint8Array;
   readonly sha256: string;
+  readonly fallbackSerializedBody?: string;
+  readonly fallbackCanonicalBytes?: Uint8Array;
+  readonly fallbackSha256?: string;
 }
 
 export interface AiInvocationPreview {
@@ -58,6 +62,9 @@ export interface AiInvocationPreview {
   body: string;
   utf8Bytes: number;
   sha256: string;
+  fallbackBody?: string;
+  fallbackUtf8Bytes?: number;
+  fallbackSha256?: string;
 }
 
 export interface PreparedAiSendAuthorization {
@@ -75,6 +82,7 @@ export interface PreparedAiTransportRequest {
   headers: Record<string, string>;
   /** Same object identity as PreparedAiInvocation.canonicalBytes. */
   canonicalBytes: Uint8Array;
+  fallbackCanonicalBytes?: Uint8Array;
   timeoutMs: number;
   signal?: AbortSignal;
 }
@@ -85,6 +93,11 @@ export type PreparedAiTransport<T> = (request: PreparedAiTransportRequest) => Pr
 // destination/format/model and consent metadata to the original host-owned
 // invocation, so changing public fields or recomputing its hash cannot reseal it.
 const preparedInvocationSeals = new WeakMap<PreparedAiInvocation, PreparedAiInvocation>();
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return host === 'localhost' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
 
 function normalizeAiEndpoint(value: string, apiFormat: AdviceFormat): string {
   if (typeof value !== 'string') {
@@ -103,6 +116,9 @@ function normalizeAiEndpoint(value: string, apiFormat: AdviceFormat): string {
   }
   if ((url.protocol !== 'https:' && url.protocol !== 'http:') || !url.hostname) {
     throw new Error('AI endpoint must be an absolute HTTP(S) URL');
+  }
+  if (url.protocol === 'http:' && !isLoopbackHostname(url.hostname)) {
+    throw new Error('AI endpoint must use HTTPS unless it is a loopback address');
   }
   // Arbitrary query/fragment values may be proxy credentials. Reject them
   // rather than leak them in the exact endpoint preview or silently strip them.
@@ -149,13 +165,24 @@ function requireOpaqueRevision(value: string): string {
   return value;
 }
 
-function requestBody(input: PrepareAiInvocationInput, model: string): Record<string, unknown> {
+function requestBody(
+  input: PrepareAiInvocationInput,
+  model: string,
+  withResponseFormat = true,
+): Record<string, unknown> {
+  const responseSchema = input.responseSchema;
   if (input.apiFormat === 'anthropic') {
     return {
       model,
       max_tokens: AI_MAX_TOKENS,
       system: requireBoundedText(input.systemPrompt, 'systemPrompt', 40_000),
       messages: [{ role: 'user', content: requireBoundedText(input.userContent, 'userContent', 200_000) }],
+      ...(responseSchema
+        ? {
+            tools: [{ name: responseSchema.name, input_schema: responseSchema.schema }],
+            tool_choice: { type: 'tool', name: responseSchema.name },
+          }
+        : {}),
     };
   }
   const body: Record<string, unknown> = {
@@ -172,6 +199,12 @@ function requestBody(input: PrepareAiInvocationInput, model: string): Record<str
       throw new Error('reasoningEffort is invalid');
     }
     body.reasoning_effort = reasoningEffort;
+  }
+  if (responseSchema && withResponseFormat) {
+    body.response_format = {
+      type: 'json_schema',
+      json_schema: { name: responseSchema.name, strict: true, schema: responseSchema.schema },
+    };
   }
   return body;
 }
@@ -199,6 +232,12 @@ export function prepareAiInvocation(input: PrepareAiInvocationInput): PreparedAi
   const serializedBody = stableAdvicePayloadStringify(requestBody(input, model));
   const canonicalBytes = Buffer.from(serializedBody, 'utf8');
   const sha256 = createHash('sha256').update(canonicalBytes).digest('hex');
+  const fallbackSerializedBody = input.apiFormat === 'openai' && input.responseSchema
+    ? stableAdvicePayloadStringify(requestBody(input, model, false))
+    : undefined;
+  const fallbackCanonicalBytes = fallbackSerializedBody === undefined
+    ? undefined
+    : Buffer.from(fallbackSerializedBody, 'utf8');
   const prepared: PreparedAiInvocation = {
     schemaVersion: AI_INVOCATION_SCHEMA_VERSION,
     kind: input.kind,
@@ -214,6 +253,11 @@ export function prepareAiInvocation(input: PrepareAiInvocationInput): PreparedAi
     serializedBody,
     canonicalBytes,
     sha256,
+    ...(fallbackSerializedBody === undefined || fallbackCanonicalBytes === undefined ? {} : {
+      fallbackSerializedBody,
+      fallbackCanonicalBytes,
+      fallbackSha256: createHash('sha256').update(fallbackCanonicalBytes).digest('hex'),
+    }),
   };
   preparedInvocationSeals.set(prepared, { ...prepared });
   return prepared;
@@ -238,6 +282,15 @@ export function assertPreparedAiInvocationIntegrity(prepared: PreparedAiInvocati
   if (decoded !== prepared.serializedBody || digest !== prepared.sha256) {
     throw new Error('prepared AI invocation integrity check failed');
   }
+  if (prepared.fallbackCanonicalBytes) {
+    const fallbackDigest = createHash('sha256').update(prepared.fallbackCanonicalBytes).digest('hex');
+    if (
+      Buffer.from(prepared.fallbackCanonicalBytes).toString('utf8') !== prepared.fallbackSerializedBody ||
+      fallbackDigest !== prepared.fallbackSha256
+    ) {
+      throw new Error('prepared AI invocation integrity check failed');
+    }
+  }
 }
 
 export function previewAiInvocation(prepared: PreparedAiInvocation): AiInvocationPreview {
@@ -253,6 +306,11 @@ export function previewAiInvocation(prepared: PreparedAiInvocation): AiInvocatio
     body: Buffer.from(sealed.canonicalBytes).toString('utf8'),
     utf8Bytes: sealed.canonicalBytes.byteLength,
     sha256: sealed.sha256,
+    ...(sealed.fallbackCanonicalBytes === undefined ? {} : {
+      fallbackBody: Buffer.from(sealed.fallbackCanonicalBytes).toString('utf8'),
+      fallbackUtf8Bytes: sealed.fallbackCanonicalBytes.byteLength,
+      fallbackSha256: sealed.fallbackSha256,
+    }),
   };
 }
 
@@ -301,6 +359,9 @@ export async function sendPreparedAiInvocation<T>(
     contentType: sealed.contentType,
     headers,
     canonicalBytes: sealed.canonicalBytes,
+    ...(sealed.fallbackCanonicalBytes === undefined
+      ? {}
+      : { fallbackCanonicalBytes: sealed.fallbackCanonicalBytes }),
     timeoutMs: sealed.timeoutMs,
     ...(signal ? { signal } : {}),
   });

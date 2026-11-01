@@ -308,6 +308,7 @@ async function run(plan, rawOptions) {
     }, Math.max(0, setupDeadline - performance.now()), 25);
     setupReadback('after-readback-convergence');
     instance.onSettingsChangedFromPanel('fileWatchSeconds');
+    instance.onSettingsChangedFromPanel('codex.fileWatchSeconds');
     setupReadback('after-handler');
     await bounded(settle(instance), 65000);
     setupReadback('after-settle');

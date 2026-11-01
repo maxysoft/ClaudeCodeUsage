@@ -2,7 +2,7 @@
 // Bounded opt-in current-only production indexes/worker/facade/host adoption.
 // Adapts private measure-equal-byte-density and measure-5000-codex-index inputs.
 // No native app, normal provider state, dependency install, network or Git writes.
-// node --expose-gc this.cjs --out /private/tmp/ccu-v242-perf-cohort-XXXXXX/out
+// node --expose-gc this.cjs --out /private/tmp/ccu-perf-cohort-XXXXXX/out
 //   --provider claude|codex --case low-one|low-5000|dense-one|dense-20
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -25,7 +25,7 @@ const blankIo = () => ({sourceReadCalls:0, sourceBytesRead:0, sourceFiles:{},
   stateReadCalls:0, stateBytesRead:0, otherReadCalls:0, otherBytesRead:0,
   metadataCalls:0, writeCalls:0});
 const counterNames = ['priceAchievementModelBucket','normalizeAchievementMoneyModel',
-  'calculateAchievementMicroUsd','claudeAchievementMoneyScopes','codexAchievementMoneyScopes',
+  'claudeAchievementMoneyScopes','codexAchievementMoneyScopes',
   'claudeMoneyEvidenceFromModels','codexMoneyEvidenceFromModels'];
 function instrumentation(root, compiled) {
   let io = blankIo(), pricing = Object.fromEntries(counterNames.map(n => [n,0]));
@@ -99,7 +99,7 @@ global.fetch = async () => {throw new Error('network prohibited in money-scope b
 
 if(!threads.isMainThread) {
   const {root,compiled,entry,now} = threads.workerData;
-  assert.match(root,/^\/private\/tmp\/ccu-v242-money-scope-[A-Za-z0-9]+$/);
+  assert.match(root,/^\/private\/tmp\/ccu-money-scope-[A-Za-z0-9]+$/);
   const trace = instrumentation(root,compiled);
   require(path.join(path.dirname(compiled),'tests/ui/support/frozen-clock.cjs')).freezeClock(now);
   const send = threads.parentPort.postMessage.bind(threads.parentPort);
@@ -132,7 +132,7 @@ if(!threads.isMainThread) {
   (async()=>{
     const compiled = path.resolve(arg('--out',''));
     const stage = path.dirname(compiled);
-    assert.match(stage,/^\/private\/tmp\/ccu-v242-perf-cohort-[A-Za-z0-9]+$/);
+    assert.match(stage,/^\/private\/tmp\/ccu-perf-cohort-[A-Za-z0-9]+$/);
     assert.equal(path.basename(compiled),'out');
     const manifest = JSON.parse(fs.readFileSync(path.join(stage,'cohort-manifest.json'),'utf8'));
     assert.match(manifest.commit,/^[a-f0-9]{40}$/);
@@ -149,7 +149,7 @@ if(!threads.isMainThread) {
     const limits={rssBytes:2*1024**3,totalWorkerHeapBytes:2*1024**3,
       maxFileWorkers:6,warmHeapGrowthBytes:64*1024**2,warmExternalGrowthBytes:32*1024**2,
       elapsedMs:480000,refreshMs:90000};
-    const root = await fsp.mkdtemp('/private/tmp/ccu-v242-money-scope-');
+    const root = await fsp.mkdtemp('/private/tmp/ccu-money-scope-');
     const source = path.join(root,'source'), state = path.join(root,'state');
     const files=[],phases=[],ownedWorkers=new Set(),workerMem=new Map();
     let peakRssBytes=process.memoryUsage().rss,peakWorkerHeapBytes=0,workerCount=0,maxFileWorkers=0;
@@ -387,7 +387,7 @@ if(!threads.isMainThread) {
       await facade?.dispose();await client?.dispose();
       await Promise.allSettled([...ownedWorkers].map(worker=>worker.terminate()));
       restoreClock?.();index=undefined;result=null;
-      assert.match(root,/^\/private\/tmp\/ccu-v242-money-scope-[A-Za-z0-9]+$/);
+      assert.match(root,/^\/private\/tmp\/ccu-money-scope-[A-Za-z0-9]+$/);
       await fsp.rm(root,{recursive:true,force:true});
     }
   })().catch(error=>{process.stderr.write(error.stack+'\n');process.exitCode=1;});

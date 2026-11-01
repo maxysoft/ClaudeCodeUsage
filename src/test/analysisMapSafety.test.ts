@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile, appendFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { analyzeLine, ClaudeDataLoader, finalizeAnalysis, mergeAnalysisAcc, newAnalysisAcc } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import { ClaudeUsageRecord } from '../types';
 
@@ -98,7 +99,7 @@ test('render-time session, workflow, skill, plugin and project grouping cannot m
     assert.equal(ClaudeDataLoader.getCostliestMessages(records).length, 4);
     assert.doesNotThrow(() => ClaudeDataLoader.cacheStatsByModel(records));
     assert.doesNotThrow(() => ClaudeDataLoader.estimateCacheChurnCost(records));
-    assert.doesNotThrow(() => ClaudeDataLoader.getProjectBreakdown(records, 60, 'flat'));
+    assert.doesNotThrow(() => LegacyClaudeLoader.getProjectBreakdown(records, 60, 'flat'));
     const durations = ClaudeDataLoader.activeDurationBySession(records);
     assert.equal(Object.getPrototypeOf(durations), Object.prototype);
     for (const key of [...keys, 'valueOf']) assert.ok(Object.prototype.hasOwnProperty.call(durations, key));

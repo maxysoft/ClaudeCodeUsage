@@ -46,7 +46,7 @@ Codex effort 统计及仅累计范围的金额新活动收据已完成接入。
 | `claudeApiClient.ts` | 既有 Claude OAuth／额度请求及最近成功请求所用凭证的运行期单向身份信号；周节奏只读取该信号，不新增请求或凭证查询。 |
 | `dataLoader.ts` | 为精确兼容保留的 Claude 解析、校验、归因和内容分析 primitive。 |
 | `claudeIncrementalIndex.ts` | 生产环境 Claude 内存 per-file 索引：append-tail 解析、精确跨文件 response 去重、受影响 group 聚合、内容分析 contribution 和已物化 dashboard row。 |
-| `achievements.ts`、`achievementSnapshot.ts`、`achievementCalendar.ts`、`achievementHours.ts` | 带版本的规则与数值 Token／日／周／小时证据；`codexAchievementCalendarProjection` 先解析全清单祖先关系，再选择有见证的日期，区分正向子集与全清单完整性。 |
+| `achievements.ts`、`achievementCalendar.ts`、`achievementHours.ts` | 带版本的规则与数值 Token／日／周／小时证据；`codexAchievementCalendarProjection` 先解析全清单祖先关系，再选择有见证的日期，区分正向子集与全清单完整性。 |
 | `achievementActivity.ts`、`achievementIcons.ts`、`achievementShare.ts` | 白名单内的主动本地行为枚举、随插件打包的徽章查找与明确触发的自包含 SVG 导出。 |
 | `achievementGallery.ts`、`achievementOverview.ts`、`achievementRecordStore.ts` | 纯主题归属／记录投影、稳定目标、自动／手动展示选择及 ≤64 KiB 权威 v2 封套；最多六项有序手动固定，共用 v1 租约／迁移屏障。 |
 | `achievementUiIcons.ts` | 纯函数渲染已知的内联 SVG 控件图标；无依赖、网络访问或额外资源文件。既有本地化标签仍由共享 Webview 渲染器提供。 |
@@ -68,7 +68,6 @@ Codex effort 统计及仅累计范围的金额新活动收据已完成接入。
 | `optimizerRequest.ts` | 仅用户粘贴草稿通过同一 Prepared 与严格发送边界；不回退到 advice 证据 parser。 |
 | `backgroundWorkState.ts` / `resourceOwnership.ts` | 可持久的 progress/backoff/pause 状态，以及供测试核对 timer、watcher、worker、network 和 backfill 创建者/停止/真实销毁的 registry。 |
 | `providers/providerTypes.ts` | Provider-neutral token、event、confidence、outcome、coverage 和 limit contract。 |
-| `providers/claudeProvider.ts` | 薄兼容 adapter，不改变既有 Claude 聚合结果。 |
 | `providers/codex/codexSchema.ts` | 最小安全 JSON guard，不展开或返回 message/command/tool body。 |
 | `providers/codex/codexParser.ts` | Codex 精确单次请求解析及 cumulative high-water 回退、伪名 lineage metadata、结构计数、quality flag 和 last-observed limit。 |
 | `providers/codex/codexManifest.ts` | Codex 允许目录发现、HMAC file key、fingerprint 和 manifest diff。 |
@@ -272,9 +271,10 @@ v2.3.0 不读 Codex credential，也不发网络请求刷新它。
 
 ### 本地成就（2.5.0）
 
-历史日期采用冻结的 138 项规则注册清单，逐项匹配 ID、计数器、门槛、分组、规则版本、
-系列、基础 ID 和金额范围。新增规则或修改口径不能默默继承日期；模块级签名覆盖实际及
-已注册元数据。会话重建仅消费规范索引完整的会话准入，不把任意正输出记录视为合格会话。
+历史日期采用由目录派生的 138 项规则注册清单：受支持历史计数器所计的每条 v1 规则，
+另含两项计数器映射。经审查的测试快照逐项固定 ID、计数器、门槛、分组、规则版本、系列、
+基础 ID 和金额范围；新增规则或修改口径会使该测试失败，不会默默继承或丢失日期。
+模块级签名覆盖实际及已注册元数据。会话重建仅消费规范索引完整的会话准入，不把任意正输出记录视为合格会话。
 会话缓存以记录数组为弱键，来源或证据退役时显式释放；日志变化后需要重新校准。
 校准期间暂存独立核验的真实增量收据，UI 取消或另一来源失败不丢失其首次记录日期。
 只有历史补认保持静默；完成、部分已保存、取消和失败分别报告。
@@ -296,12 +296,14 @@ title／ARIA；仅有首次记录日期时保留明确标签，未知仍为未�
 
 `root-portfolio` 本地化名称为「独立主任务」（Independent root tasks），ID、门槛及
 已存授奖不变。`achievements.ts` 仅在根归属可核验且已识别模型桶的输入**或**输出为正时
-建立 `modelsByRoot`；`verifiedRootCount` 将主任务树及其合格子任务合计一次，
+计入该根；`verifiedRootCount` 将主任务树及其合格子任务合计一次，
 不声明任务已完成，也不读取任务内容。
 
 「分享与对比」改名不改变 `compare` provider 键或导航状态归属。徽章分享仅增加
 选择项的基本等宽对齐及等级单列。本地图标修复沿用主仪表盘 CSP 的
-`webview.cspSource`，允许打包资源的 `asWebviewUri`，不新增远程图片权限。
+`webview.cspSource`，允许打包资源的 `asWebviewUri`，不新增远程图片权限。仪表盘面板的
+`localResourceRoots` 仅为 `assets/achievements`；徽章 PNG 只在自包含的分享 SVG 中转为
+data URL，并经由最多 12 个文件的内存缓存。
 `achievementShare.ts` 嵌入固定公开锚点 `https://github.com/ClaudeCodeUsage/ClaudeCodeUsage`，
 不接受输入派生目标，不获取资源、不新增遥测或个人元数据。标题、页脚及等级／门槛
 在既有网格内通过换行和间距避让；输出仍确定、自包含，使用内嵌图片，预览／导出不可变约定不变。
@@ -353,7 +355,7 @@ schema、来源解析器、依赖或软件包版本。
 
 `claude-api-week` 与 `codex-api-week` 各有五级：铜 $100、银 $500、金 $2,500、
 铂金 $10,000、传奇 $25,000。仅新增四个铂金／传奇 ID，原三级 ID／门槛、系列归属、
-图案、已结束周边界及固定价表来源不变。四项显式历史注册将清单增至 138 项；受支持的
+图案、已结束周边界及固定价表来源不变。四项历史注册将清单增至 138 项；受支持的
 日志日期注释仍不同于已存首次记录日。旧封套拒绝新 ID，扩展前的读取器遇未知等级拒绝
 操作，不改写或清除任一封套。schema／catalog 版本和 65,536 字节上限不变；已报告的
 最大封套夹具为 37,374 字节。这些合成检查不构成原生／F5 验收。
@@ -777,10 +779,14 @@ Resume 从 frame 起点重放到 decoded 游标，丢弃的前缀计入工作量
 Advice 只消费已物化聚合，不重读 JSONL，也不重遍历保留的 records。远程默认为
 aggregate-only；prompt sample 与可选 user context 需单独明确同意，并必须原样出现在精确请求预览中。
 host 保管 Prepared 对象和 API key；webview 只拿到预览与不透明 handle。第二次点击才把同一 bytes 对象
-发给用户配置的 BYOK endpoint。Feedback、comparable pair 与 comparison envelope 全部保持本地，
+发给用户配置的 BYOK endpoint，只走 fetch（绝不走 curl，其命令行会暴露密钥）并拒绝重定向；
+仅当连接在发出任何字节前失败时重试一次。Advice 请求结构化输出（强制 Anthropic tool 或 strict
+OpenAI `response_format`），system prompt 同时附带 schema 与一个示例；若 endpoint 以 HTTP 400/422
+拒绝 `response_format`，则改发一次已准备好的、不含该字段的请求体。Feedback、comparable pair 与 comparison envelope 全部保持本地，
 不接受 prompt、response、path、session、title、endpoint 或 credential 字段。
 
-预览同时显示解析后的 HTTP(S) 目标地址、API 格式和模型。规范化可以追加协议路径，
+预览同时显示解析后的 HTTP(S) 目标地址、API 格式和模型。明文 HTTP 只接受 loopback 主机
+（`localhost`、127.0.0.0/8、`::1`）。规范化可以追加协议路径，
 但不更换配置的主机或代理前缀；不匹配的直接供应商协议拒绝发送。URL 中的凭据、查询
 参数和片段在预览前拒绝，避免泄密。私有 WeakMap 完整性快照绑定全部目标元数据和
 原始请求字节对象，重新计算公开 hash 不能授权改换目标。恢复普通默认设置保留

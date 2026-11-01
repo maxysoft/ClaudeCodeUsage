@@ -169,13 +169,6 @@ function componentUnits(components: readonly AchievementMoneyComponent[]): bigin
   }
   return units;
 }
-/** Arithmetic helper only; arbitrary caller rates are never an award pricebook. */
-export function calculateAchievementMicroUsd(components: readonly AchievementMoneyComponent[]): number | null {
-  const units = componentUnits(components);
-  if (units === null || units / SCALE > MAX) return null;
-  return Number(units / SCALE);
-}
-
 export type AchievementMoneyModelBucket =
   | { readonly provider: 'claude'; readonly model: string | undefined; readonly usage: TokenUsage }
   | { readonly provider: 'codex'; readonly model: string | undefined; readonly tokens: ProviderTokenCounts };
@@ -259,59 +252,4 @@ export function priceAchievementModelBucket(bucket: AchievementMoneyModelBucket,
   if (units / SCALE > MAX) return excluded('overflow');
   return { canonicalModel, totalTokens, pricedTokens: totalTokens,
     microUsd: Number(units / SCALE), exactMicroUsdUnits: String(units), reason: null };
-}
-
-function evidence(provider: UsageProvider, backend: AchievementMoneyBackend,
-  total: bigint, priced: bigint, units: bigint): AchievementMoneyEvidence {
-  const totalTokens = safe(total);
-  const pricedTokens = safe(priced);
-  const rounded = units / SCALE;
-  const status: AchievementMoneyEvidence['status'] = rounded > MAX ? 'overflow'
-    : total === 0n ? 'empty' : priced === 0n ? 'unpriced' : priced < total ? 'partial' : 'complete';
-  return Object.freeze({ provider, backend, pricebookVersion: getAchievementMoneyPricebook(backend).version,
-    microUsd: status === 'overflow' || priced === 0n ? null : Number(rounded),
-    exactMicroUsdUnits: String(units), totalTokens, pricedTokens,
-    unpricedTokens: safe(total - priced), pricingCoverage: totalTokens > 0 ? pricedTokens / totalTokens : 0,
-    status });
-}
-/** Reduces only caller-selected aggregate buckets. Use independently proven
- * global/day/week/task scopes; this function cannot grant scope eligibility. */
-export function achievementMoneyEvidenceFromBuckets(provider: UsageProvider,
-  buckets: Iterable<AchievementMoneyModelBucket>, backend: AchievementMoneyBackend): AchievementMoneyEvidence {
-  if (provider !== 'claude' && provider !== 'codex') throw new RangeError('Unsupported achievement provider');
-  let total = 0n, priced = 0n, units = 0n;
-  for (const bucket of buckets) {
-    if (bucket.provider !== provider) throw new RangeError('Cannot combine achievement providers');
-    const result = priceAchievementModelBucket(bucket, backend);
-    total += BigInt(result.totalTokens);
-    priced += BigInt(result.pricedTokens);
-    units += BigInt(result.exactMicroUsdUnits);
-  }
-  return evidence(provider, backend, total, priced, units);
-}
-/** Lossless merge of numeric evidence, e.g. affected model/day buckets. Carry
- * exact units through indexes; adding individually floored microUSD loses value.
- * Versions/backends/providers may never be mixed. Empty input has no identity. */
-export function mergeAchievementMoneyEvidence(parts: readonly AchievementMoneyEvidence[]): AchievementMoneyEvidence {
-  if (parts.length === 0) throw new RangeError('At least one evidence item is required');
-  const first = parts[0];
-  const version = getAchievementMoneyPricebook(first.backend).version;
-  let total = 0n, priced = 0n, units = 0n;
-  for (const part of parts) {
-    if (part.provider !== first.provider) throw new RangeError('Cannot combine achievement providers');
-    if (part.backend !== first.backend || part.pricebookVersion !== version) throw new RangeError('Incompatible pricebook version');
-    const partTotal = count(part.totalTokens), partPriced = count(part.pricedTokens);
-    if (partPriced > partTotal || !/^\d{1,100}$/.test(part.exactMicroUsdUnits)) throw new RangeError('Invalid money evidence');
-    total += partTotal;
-    priced += partPriced;
-    units += BigInt(part.exactMicroUsdUnits);
-  }
-  return evidence(first.provider, first.backend, total, priced, units);
-}
-/** Threshold is a positive integer microUSD, before any whole-dollar display
- * rounding. Partial positive coverage can prove a lower bound. This proves
- * money only, never dates, identity, notification eligibility or task quality. */
-export function achievementMoneyMeetsThreshold(value: AchievementMoneyEvidence, thresholdMicroUsd: number): boolean {
-  if (!Number.isSafeInteger(thresholdMicroUsd) || thresholdMicroUsd <= 0) throw new RangeError('Invalid money threshold');
-  return (value.status === 'complete' || value.status === 'partial') && value.microUsd !== null && value.microUsd >= thresholdMicroUsd;
 }

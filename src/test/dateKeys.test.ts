@@ -4,7 +4,9 @@ import {
   dayKeyInZone,
   formatHourLabel,
   hourKeyInZone,
+  mondayOf,
   monthKeyInZone,
+  parseDayKey,
   resolveTimeZone,
   rollingDayKeys,
   rollingDayKeysFromDayKey,
@@ -148,4 +150,18 @@ test('memoised zones keep their own calendars apart', () => {
   assert.equal(dayKeyInZone(d, 'Asia/Hong_Kong'), '2026-07-01');
   assert.equal(hourKeyInZone(d, 'UTC'), '20');
   assert.equal(hourKeyInZone(d, 'Asia/Hong_Kong'), '04');
+});
+
+test('parseDayKey accepts only real calendar dates and mondayOf returns that week\'s Monday', () => {
+  assert.equal(parseDayKey('2026-03-02'), Date.UTC(2026, 2, 2));
+  assert.equal(parseDayKey('2024-02-29'), Date.UTC(2024, 1, 29));
+  for (const bad of ['2026-02-30', '2025-02-29', '2026-04-31', '2026-13-01', '2026-00-10', '2026-2-03',
+    '2026-03-02T00:00:00Z', ' 2026-03-02', '', undefined, null, 20260302]) {
+    assert.ok(Number.isNaN(parseDayKey(bad)), String(bad));
+  }
+  const iso = (time: number): string => new Date(time).toISOString().slice(0, 10);
+  assert.equal(iso(mondayOf(parseDayKey('2026-03-08'))), '2026-03-02', 'Sunday belongs to the preceding Monday');
+  assert.equal(iso(mondayOf(parseDayKey('2026-03-02'))), '2026-03-02');
+  assert.equal(iso(mondayOf(parseDayKey('2026-03-04'))), '2026-03-02');
+  assert.equal(iso(mondayOf(parseDayKey('2026-01-01'))), '2025-12-29', 'weeks cross year boundaries');
 });

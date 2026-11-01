@@ -27,7 +27,7 @@ const descriptors: ResourceDescriptor[] = [
     capability: 'codex-index',
     scope: 'codex',
     creator: 'codex-index-client',
-    stopConditions: ['completed', 'cancelled', 'feature-disabled', 'extension-dispose', 'user-pause'],
+    stopConditions: ['completed', 'cancelled', 'feature-disabled', 'extension-dispose'],
     boundedException: 'none',
   },
   {
@@ -43,7 +43,7 @@ const descriptors: ResourceDescriptor[] = [
     capability: 'codex-history',
     scope: 'codex',
     creator: 'refresh-coordinator',
-    stopConditions: ['completed', 'cancelled', 'feature-disabled', 'extension-dispose', 'user-pause'],
+    stopConditions: ['completed', 'cancelled', 'feature-disabled', 'extension-dispose'],
     boundedException: 'first-codex-history',
   },
 ];

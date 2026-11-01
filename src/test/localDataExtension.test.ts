@@ -141,6 +141,47 @@ test('host inventory exposes only value-free location classes and random quota s
   assert.equal(inventory.rows.find((row: any) => row.id === 'P7')?.approximateBytes, null);
 });
 
+test('quota scope keys are stable across inventories, distinct per epoch, and never carry the fingerprint', () => {
+  const extension = Object.create(ClaudeCodeUsageExtension.prototype) as any;
+  extension.localDataQuotaScopes = new Map();
+  const base = {
+    schemaVersion: 2,
+    accountAttribution: 'unattributed',
+    usedFraction: 0.25,
+    remainingFraction: 0.75,
+    source: 'codex-local-structured-event',
+    providerWindowFingerprint: null,
+    confidence: 'low',
+    captureReason: 'refresh',
+    flags: [],
+    periodType: 'seven-day',
+  };
+  const at = (fingerprint: string, day: number, provider = 'codex') => ({
+    ...base,
+    provider,
+    accountFingerprint: fingerprint,
+    observedAt: Date.parse('2026-09-0' + day + 'T00:00:00Z'),
+    resetAt: Date.parse('2026-09-0' + day + 'T00:00:00Z') + 86400000,
+    windowId: 'w' + day,
+  });
+  extension.quotaObservationStore = {
+    schemaVersion: 2,
+    fingerprintAlgorithm: 'hmac-sha256-v1',
+    observations: [at('fp-private-one', 1), at('fp-private-two', 3), at('fp-private-claude', 5, 'claude')],
+  };
+  extension.quotaObservationRevision = () => 'r';
+  const first = extension.buildQuotaScopeOptions();
+  const second = extension.buildQuotaScopeOptions();
+  assert.deepEqual(first.map((s: any) => s.key), second.map((s: any) => s.key));
+  assert.notDeepEqual(first.map((s: any) => s.token), second.map((s: any) => s.token));
+  const keys = first.map((s: any) => s.key);
+  assert.deepEqual(keys.slice(0, 3), ['all', 'claude', 'codex']);
+  assert.ok(keys.length >= 6);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.doesNotMatch(keys.join('|'), /fp-private/);
+  assert.ok(keys.slice(3).every((key: string) => /^(claude|codex):[a-f0-9]{16}$/.test(key)));
+});
+
 test('derived-file family matching accepts only exact canonical, recovery, and interrupted-write names', async () => {
   const root = path.join(os.tmpdir(), `ccu-local-family-${process.pid}-${Math.random().toString(16).slice(2)}`);
   await mkdir(root, { recursive: true });
@@ -376,7 +417,6 @@ test('clear-all uses the exact allowlist and preserves unrelated state', async (
     };
   });
   extension.initializationWriteFailure = null;
-  extension.stopQuotaColdRetry = () => undefined;
   extension.stopAutoRefresh = () => undefined;
   extension.stopFileWatching = () => undefined;
   extension.stopCredentialsWatching = () => undefined;

@@ -20,7 +20,6 @@ import {
   finalizeAnalysis,
   mergeAnalysisAcc,
   newAnalysisAcc,
-  recordTimestampBounds,
   validateUsageRecord,
 } from './dataLoader';
 import {
@@ -34,6 +33,8 @@ import { I18n } from './i18n';
 import { claudeAchievementFamily, claudeSessionAchievementEvidence, ClaudeSessionAchievementEvidence } from './achievements';
 import { detachedPromptPrefix, isRetryDuplicatePrompt } from './promptDedup';
 import { ownRecordValue, setRecordValue } from './ownRecord';
+import { isUnderDir } from './sessionResume';
+import { attachClaudeOutputHours } from './achievementHours';
 import { addClaudeReferenceUsage, claudeReferenceUsage } from './claudeReferenceUsage';
 import {claudeAchievementMoneyProjection,inheritClaudeAchievementMoneyProjection} from './claudeAchievementMoneyProjection';
 import { getAchievementMoneyPricebook, priceAchievementModelBucket, type AchievementMoneyBackend } from './achievementMoney';
@@ -66,6 +67,7 @@ import {
 } from './types';
 
 const TAIL_SIGNATURE_BYTES = 64;
+const HOUR_MS = 3_600_000;
 const ANALYSIS_PROMPT_ACC_LIMIT = 600;
 const ANALYSIS_SKILL_USE_LIMIT = 5_000;
 const ANALYSIS_UUID_LAYER_LIMIT = 64;
@@ -153,6 +155,7 @@ interface IndexedRecord {
 interface ClaudeUsageFileContribution {
   fileId: string;
   path: string;
+  sessionId: string;
   fingerprint: UsageFileFingerprint;
   offset: number;
   tailSignature: string;
@@ -185,6 +188,8 @@ interface UsageAggregates {
   byMonth: Map<string, UsageData>;
   byLocalDay: Map<string, UsageData>;
   byLocalHour: Map<string, UsageData>;
+  /** UTC hour buckets, retained 8 days, for the weekly billing window. */
+  byUtcHour: Map<string, UsageData>;
   /** Bounded configured-day project buckets used by the Projects matrix. */
   byProjectDay: Map<string, UsageData>;
   bySession: Map<string, UsageData>;
@@ -200,7 +205,18 @@ interface DirtyGroups {
   workflows: Set<string>;
 }
 
+interface GroupStats {
+  first: number;
+  last: number;
+  firstStale: boolean;
+  lastStale: boolean;
+  sessions: Map<string, number>;
+}
+
 interface CopyOnWriteKeys {
+  maps: Set<string>;
+  groupStats: WeakSet<GroupStats>;
+  freshRecords: WeakSet<ClaudeUsageRecord>;
   aggregateBuckets: WeakSet<UsageData>;
   candidateMessages: Set<string>;
   candidateDirect: Set<string>;
@@ -215,6 +231,8 @@ interface ConfiguredTimeKeyers {
   formatter: Intl.DateTimeFormat;
   hourWindowStartDay: string;
   projectWindowStartDay: string;
+  utcHourWindowStart: number;
+  outputDetailFromMs: number;
 }
 
 export interface ClaudeUsageIndex {
@@ -234,12 +252,18 @@ export interface ClaudeUsageIndex {
   visibleKeysByLocalDay: Map<string, Set<string>>;
   sessionRows: Map<string, ClaudeSessionUsage>;
   projectRows: Map<string, ProjectUsage>;
-  projectSessionIds: Map<string, Set<string>>;
+  projectStats: Map<string, GroupStats>;
   branchRows: Map<string, BranchUsage>;
+  branchStats: Map<string, GroupStats>;
   workflowRows: Map<string, WorkflowUsage>;
   costliestBySession: Map<string, CostlyMessage[]>;
   latestContextBySession: Map<string, ClaudeUsageRecord>;
   sessionWorkspaceKeys: Map<string, Set<string>>;
+  sessionTitles: Map<string, string>;
+  /** UTC hour -> visible records with output tokens in it. */
+  outputHours: Map<number, number>;
+  /** Exact output timestamps from the start of the refresh hour onward. */
+  recentOutputTimes: Map<number, number>;
   dirtyGroups: DirtyGroups;
   copyOnWrite: CopyOnWriteKeys;
   aggregates: UsageAggregates;
@@ -253,6 +277,8 @@ export interface ClaudeUsageIndex {
 
 export interface ClaudeUsageIndexDiagnostics extends LoadUsageDiagnostics {
   bodyReads: number;
+  /** Transcripts the OS refused to open; their usage is left out of this commit. */
+  filesSkipped: number;
   aggregateMutations: number;
   failureReason?: ClaudeRefreshFailureReason;
   changed: {
@@ -476,6 +502,7 @@ function emptyAggregates(): UsageAggregates {
     byMonth: new Map(),
     byLocalDay: new Map(),
     byLocalHour: new Map(),
+    byUtcHour: new Map(),
     byProjectDay: new Map(),
     bySession: new Map(),
     byProject: new Map(),
@@ -495,6 +522,9 @@ function emptyDirtyGroups(): DirtyGroups {
 
 function emptyCopyOnWriteKeys(): CopyOnWriteKeys {
   return {
+    maps: new Set(),
+    groupStats: new WeakSet(),
+    freshRecords: new WeakSet(),
     aggregateBuckets: new WeakSet(),
     candidateMessages: new Set(),
     candidateDirect: new Set(),
@@ -519,6 +549,8 @@ function createConfiguredTimeKeyers(timeZone: string, now = Date.now()): Configu
     }),
     hourWindowStartDay: rollingDayKeys(now, resolved, 30)[0] ?? '',
     projectWindowStartDay: rollingDayKeys(now, resolved, 90)[0] ?? '',
+    utcHourWindowStart: Math.floor(now / HOUR_MS) - 8 * 24,
+    outputDetailFromMs: Math.floor(now / HOUR_MS) * HOUR_MS,
   };
 }
 
@@ -540,12 +572,16 @@ export function createClaudeUsageIndex(): ClaudeUsageIndex {
     visibleKeysByLocalDay: new Map(),
     sessionRows: new Map(),
     projectRows: new Map(),
-    projectSessionIds: new Map(),
+    projectStats: new Map(),
     branchRows: new Map(),
+    branchStats: new Map(),
     workflowRows: new Map(),
     costliestBySession: new Map(),
     latestContextBySession: new Map(),
     sessionWorkspaceKeys: new Map(),
+    sessionTitles: new Map(),
+    outputHours: new Map(),
+    recentOutputTimes: new Map(),
     dirtyGroups: emptyDirtyGroups(),
     copyOnWrite: emptyCopyOnWriteKeys(),
     aggregates: emptyAggregates(),
@@ -557,8 +593,49 @@ export function createClaudeUsageIndex(): ClaudeUsageIndex {
   };
 }
 
+type OwnedMapKey = {
+  [K in keyof ClaudeUsageIndex]: ClaudeUsageIndex[K] extends Map<unknown, unknown> ? K : never;
+}[keyof ClaudeUsageIndex];
+type AggregateMapKey = Exclude<keyof UsageAggregates, 'allTime'>;
+type MembershipKey = 'visibleKeysBySession' | 'visibleKeysByProject' | 'visibleKeysByBranch' |
+  'visibleKeysByWorkflow' | 'visibleKeysByLocalDay';
+
+function own<K extends OwnedMapKey>(index: ClaudeUsageIndex, key: K): ClaudeUsageIndex[K] {
+  if (!index.copyOnWrite.maps.has(key)) {
+    index[key] = new Map(index[key] as unknown as Map<unknown, unknown>) as unknown as ClaudeUsageIndex[K];
+    index.copyOnWrite.maps.add(key);
+  }
+  return index[key];
+}
+
+function ownAggregate(index: ClaudeUsageIndex, key: AggregateMapKey): Map<string, UsageData> {
+  if (!index.copyOnWrite.maps.has(`aggregates.${key}`)) {
+    index.aggregates[key] = new Map(index.aggregates[key]);
+    index.copyOnWrite.maps.add(`aggregates.${key}`);
+  }
+  return index.aggregates[key];
+}
+
+function ownAllTime(index: ClaudeUsageIndex): UsageData {
+  if (!index.copyOnWrite.maps.has('aggregates.allTime')) {
+    index.aggregates.allTime = cloneUsageData(index.aggregates.allTime);
+    index.copyOnWrite.maps.add('aggregates.allTime');
+  }
+  return index.aggregates.allTime;
+}
+
+function deleteOwned<K extends OwnedMapKey>(index: ClaudeUsageIndex, name: K, key: string): void {
+  if ((index[name] as unknown as Map<string, unknown>).has(key)) (own(index, name) as unknown as Map<string, unknown>).delete(key);
+}
+
+function bumpCount<K>(counts: Map<K, number>, key: K, sign: 1 | -1): void {
+  const next = (counts.get(key) ?? 0) + sign;
+  if (next > 0) counts.set(key, next);
+  else counts.delete(key);
+}
+
 function stableFileId(entry: UsageFileFingerprint): string {
-  return (entry.dev ?? 0) > 0 && (entry.ino ?? 0) > 0
+  return entry.dev && entry.ino
     ? `inode:${entry.dev}:${entry.ino}`
     : `path:${entry.path}`;
 }
@@ -625,8 +702,6 @@ function runtimeEntry(entry: UsageFileFingerprint, fileId: string): CodexRuntime
     sourceArea: 'sessions',
     size: entry.size,
     mtimeMs: entry.mtimeMs,
-    dev: entry.dev,
-    ino: entry.ino,
   };
 }
 
@@ -1458,9 +1533,11 @@ async function parsePlan(
   workflowNameCache: Map<string, string>,
   analyzeContent: boolean,
   analysisCutoffMs: number,
+  freshRecords: WeakSet<ClaudeUsageRecord>,
   analysisSeenUuids?: Set<string>,
 ): Promise<ParsedPlan> {
   const rankDiscoveryIndex = plan.entry.discoveryIndex;
+  const sessionInfo = ClaudeDataLoader.parseSessionInfo(plan.entry.path);
   const priorOrderTimestampMs = plan.prior?.firstTimestampMs ?? 0;
   const orderTimestampMs = plan.orderTimestampMs ?? priorOrderTimestampMs;
   const base = plan.kind === 'append' && plan.prior
@@ -1468,6 +1545,7 @@ async function parsePlan(
     : {
         fileId: plan.fileId,
         path: plan.entry.path,
+        sessionId: sessionInfo.sessionId,
         fingerprint: plan.entry,
         offset: 0,
         tailSignature: '',
@@ -1483,6 +1561,7 @@ async function parsePlan(
         analysisHasUnboundedTimestamp: false,
       };
   base.firstTimestampMs = orderTimestampMs;
+  base.sessionId = sessionInfo.sessionId;
   if (!analyzeContent) base.analysis = null;
   else if (!base.analysis || base.analysis.cutoffMs !== analysisCutoffMs) {
     base.analysis = newAnalysisAcc(analysisCutoffMs, true);
@@ -1492,7 +1571,6 @@ async function parsePlan(
   if (base.analysis && analysisSeenUuids) {
     base.analysis.seenUuids = analysisSeenUuids;
   }
-  const sessionInfo = ClaudeDataLoader.parseSessionInfo(plan.entry.path);
   const isSubagentFile = /[\\/]subagents[\\/]/.test(plan.entry.path);
   let agentInfo: {
     agentId: string;
@@ -1548,8 +1626,8 @@ async function parsePlan(
           }
         }
         if (typeof parsed.uuid === 'string') {
-          base.analysisAllUuids.add(parsed.uuid);
           analysisTouchedUuids.add(parsed.uuid);
+          if (analyzeContent && !(analysisTimestampMs < analysisCutoffMs)) base.analysisAllUuids.add(parsed.uuid);
         }
         if (base.analysis) {
           const structuralEventStart = base.analysis.structuralEvents?.length ?? 0;
@@ -1604,6 +1682,7 @@ async function parsePlan(
               _sessionId: sessionInfo.sessionId,
               _projectDirEncoded: sessionInfo.projectPath,
             };
+            freshRecords.add(record);
             tagClaudeSessionEvidence(record, plan.entry.path);
             const cwd = parsed.cwd;
             if (typeof cwd === 'string' && cwd.trim()) {
@@ -1630,6 +1709,7 @@ async function parsePlan(
 
         if (!validateUsageRecord(parsed)) return;
         const record = compactUsageRecord(parsed as unknown as ClaudeUsageRecord);
+        freshRecords.add(record);
         record._sessionId = sessionInfo.sessionId;
         tagClaudeSessionEvidence(record, plan.entry.path);
         record._projectDirEncoded = sessionInfo.projectPath;
@@ -1817,64 +1897,79 @@ function applyBucket(
   else buckets.set(key, value);
 }
 
-function applyConfiguredTimeAggregate(
+function applyIndexBucket(
   index: ClaudeUsageIndex,
-  record: ClaudeUsageRecord,
+  name: AggregateMapKey,
+  key: string | undefined,
   contribution: UsageData,
   sign: 1 | -1,
 ): void {
-  const date = new Date(record.timestamp);
-  const { day, month, hour } = configuredTimeKeys(index, date);
-  const dayHour = day && hour
-    ? `${day}\0${hour}`
-    : '';
-  const owned = index.copyOnWrite.aggregateBuckets;
-  applyBucket(index.aggregates.byDay, day, contribution, sign, owned);
-  applyBucket(index.aggregates.byMonth, month, contribution, sign, owned);
-  applyBucket(index.aggregates.byLocalDay, day, contribution, sign, owned);
-  if (day >= index.timeKeyers.hourWindowStartDay) {
-    applyBucket(index.aggregates.byLocalHour, dayHour, contribution, sign, owned);
-  }
-  if (day >= index.timeKeyers.projectWindowStartDay) {
-    const rawProject = record._projectPath || record._projectName || 'unknown';
-    const project = ClaudeDataLoader.normalizePath(rawProject) || 'unknown';
-    applyBucket(index.aggregates.byProjectDay, `${project}\0${day}`, contribution, sign, owned);
-  }
+  if (key) applyBucket(ownAggregate(index, name), key, contribution, sign, index.copyOnWrite.aggregateBuckets);
 }
 
-function applyAggregate(index: ClaudeUsageIndex, record: ClaudeUsageRecord, sign: 1 | -1): void {
-  const contribution = ClaudeDataLoader.calculateUsageData([record]);
-  addUsageData(index.aggregates.allTime, contribution, sign);
-  applyConfiguredTimeAggregate(index, record, contribution, sign);
-  const project = record._projectPath || record._projectName || 'unknown';
-  const branch = record._gitBranch && record._gitBranch.trim() ? record._gitBranch : '-';
-  const owned = index.copyOnWrite.aggregateBuckets;
-  applyBucket(index.aggregates.bySession, record._sessionId || 'unknown', contribution, sign, owned);
-  applyBucket(index.aggregates.byProject, project.toLowerCase(), contribution, sign, owned);
-  applyBucket(index.aggregates.byBranch, `${record._projectName || 'unknown'}\0${branch}`, contribution, sign, owned);
-  applyBucket(index.aggregates.byWorkflow, record._workflowId, contribution, sign, owned);
-}
-
-function membershipKeys(index: ClaudeUsageIndex, record: ClaudeUsageRecord): {
+interface RecordKeys {
+  timestampMs: number;
   session: string;
   project: string;
   branch: string;
   workflow?: string;
-  localDay: string;
-} {
+  day: string;
+  month: string;
+  hour: string;
+}
+
+function recordKeys(index: ClaudeUsageIndex, record: ClaudeUsageRecord): RecordKeys {
+  const timestampMs = Date.parse(record.timestamp);
   const session = record._sessionId || 'unknown';
-  const rawProject = record._projectPath || record._projectName || 'unknown';
-  const project = ClaudeDataLoader.normalizePath(rawProject);
   const branchName = record._gitBranch && record._gitBranch.trim() ? record._gitBranch : '-';
-  const branch = `${record._projectName || 'unknown'}\0${branchName}`;
-  const workflow = record._workflowId || (record._agentId ? `adhoc:${session}` : undefined);
   return {
+    timestampMs,
     session,
-    project,
-    branch,
-    workflow,
-    localDay: dayKeyInZone(new Date(record.timestamp), index.timeZone),
+    project: ClaudeDataLoader.normalizePath(record._projectPath || record._projectName || 'unknown'),
+    branch: `${record._projectName || 'unknown'}\0${branchName}`,
+    workflow: record._workflowId || (record._agentId ? `adhoc:${session}` : undefined),
+    ...configuredTimeKeys(index, new Date(timestampMs)),
   };
+}
+
+function applyConfiguredTimeAggregate(
+  index: ClaudeUsageIndex,
+  keys: RecordKeys,
+  contribution: UsageData,
+  sign: 1 | -1,
+): void {
+  const { day, month, hour } = keys;
+  applyIndexBucket(index, 'byDay', day, contribution, sign);
+  applyIndexBucket(index, 'byMonth', month, contribution, sign);
+  applyIndexBucket(index, 'byLocalDay', day, contribution, sign);
+  if (day >= index.timeKeyers.hourWindowStartDay) {
+    applyIndexBucket(index, 'byLocalHour', day && hour ? `${day}\0${hour}` : '', contribution, sign);
+  }
+  if (day >= index.timeKeyers.projectWindowStartDay) {
+    applyIndexBucket(index, 'byProjectDay', `${keys.project || 'unknown'}\0${day}`, contribution, sign);
+  }
+}
+
+function applyOutputHour(index: ClaudeUsageIndex, record: ClaudeUsageRecord, timestampMs: number, sign: 1 | -1): void {
+  const output = record.message?.usage?.output_tokens ?? 0;
+  if (!Number.isSafeInteger(output) || output <= 0 || !Number.isFinite(timestampMs) || timestampMs <= 0) return;
+  bumpCount(own(index, 'outputHours'), Math.floor(timestampMs / HOUR_MS), sign);
+  if (timestampMs >= index.timeKeyers.outputDetailFromMs) bumpCount(own(index, 'recentOutputTimes'), timestampMs, sign);
+}
+
+function applyAggregate(index: ClaudeUsageIndex, record: ClaudeUsageRecord, keys: RecordKeys, sign: 1 | -1): void {
+  const contribution = ClaudeDataLoader.calculateUsageData([record]);
+  addUsageData(ownAllTime(index), contribution, sign);
+  applyConfiguredTimeAggregate(index, keys, contribution, sign);
+  applyIndexBucket(index, 'bySession', keys.session, contribution, sign);
+  applyIndexBucket(index, 'byProject', keys.project, contribution, sign);
+  applyIndexBucket(index, 'byBranch', keys.branch, contribution, sign);
+  applyIndexBucket(index, 'byWorkflow', record._workflowId, contribution, sign);
+  const utcHour = Math.floor(keys.timestampMs / HOUR_MS);
+  if (utcHour >= index.timeKeyers.utcHourWindowStart) {
+    applyIndexBucket(index, 'byUtcHour', String(utcHour), contribution, sign);
+  }
+  applyOutputHour(index, record, keys.timestampMs, sign);
 }
 
 function writableSet(
@@ -1896,54 +1991,139 @@ function writableSet(
 }
 
 function addMembership(
-  map: Map<string, Set<string>>,
+  index: ClaudeUsageIndex,
+  name: MembershipKey,
   key: string | undefined,
   visibleKey: string,
   copied: Set<string>,
 ): void {
   if (!key) return;
-  writableSet(map, key, copied).add(visibleKey);
+  writableSet(own(index, name), key, copied).add(visibleKey);
 }
 
 function removeMembership(
-  map: Map<string, Set<string>>,
+  index: ClaudeUsageIndex,
+  name: MembershipKey,
   key: string | undefined,
   visibleKey: string,
   copied: Set<string>,
 ): void {
-  if (!key) return;
-  if (!map.has(key)) return;
+  if (!key || !index[name].has(key)) return;
+  const map = own(index, name);
   const keys = writableSet(map, key, copied);
-  keys?.delete(visibleKey);
-  if (keys?.size === 0) map.delete(key);
+  keys.delete(visibleKey);
+  if (keys.size === 0) map.delete(key);
 }
 
-function markDirty(index: ClaudeUsageIndex, record: ClaudeUsageRecord): void {
-  const keys = membershipKeys(index, record);
+function writableStats(index: ClaudeUsageIndex, name: 'projectStats' | 'branchStats', key: string): GroupStats {
+  const stats = own(index, name);
+  let value = stats.get(key);
+  if (value && index.copyOnWrite.groupStats.has(value)) return value;
+  value = value
+    ? { ...value, sessions: new Map(value.sessions) }
+    : { first: Infinity, last: -Infinity, firstStale: false, lastStale: false, sessions: new Map() };
+  index.copyOnWrite.groupStats.add(value);
+  stats.set(key, value);
+  return value;
+}
+
+function addGroupStats(index: ClaudeUsageIndex, name: 'projectStats' | 'branchStats', key: string, keys: RecordKeys): void {
+  if (!key) return;
+  const stats = writableStats(index, name, key);
+  bumpCount(stats.sessions, keys.session, 1);
+  const time = keys.timestampMs;
+  if (!Number.isFinite(time)) return;
+  if (time <= stats.first) {
+    stats.first = time;
+    stats.firstStale = false;
+  }
+  if (time >= stats.last) {
+    stats.last = time;
+    stats.lastStale = false;
+  }
+}
+
+function removeGroupStats(index: ClaudeUsageIndex, name: 'projectStats' | 'branchStats', key: string, keys: RecordKeys): void {
+  if (!key || !index[name].has(key)) return;
+  const stats = writableStats(index, name, key);
+  bumpCount(stats.sessions, keys.session, -1);
+  if (stats.sessions.size === 0) {
+    own(index, name).delete(key);
+    return;
+  }
+  const time = keys.timestampMs;
+  if (!Number.isFinite(time)) return;
+  if (time <= stats.first) stats.firstStale = true;
+  if (time >= stats.last) stats.lastStale = true;
+}
+
+/** A removal at a bound leaves it unknown; rescan that group only then. */
+function settledStats(
+  index: ClaudeUsageIndex,
+  name: 'projectStats' | 'branchStats',
+  key: string,
+  members: ReadonlySet<string>,
+): GroupStats {
+  const current = index[name].get(key)!;
+  if (!current.firstStale && !current.lastStale) return current;
+  const stats = writableStats(index, name, key);
+  stats.first = Infinity;
+  stats.last = -Infinity;
+  for (const member of members) {
+    const time = Date.parse(index.visibleRecords.get(member)?.timestamp ?? '');
+    if (!Number.isFinite(time)) continue;
+    if (time < stats.first) stats.first = time;
+    if (time > stats.last) stats.last = time;
+  }
+  stats.firstStale = false;
+  stats.lastStale = false;
+  return stats;
+}
+
+function boundOrZero(time: number): number {
+  return Number.isFinite(time) ? time : 0;
+}
+
+function markDirty(index: ClaudeUsageIndex, keys: RecordKeys): void {
   index.dirtyGroups.sessions.add(keys.session);
   index.dirtyGroups.projects.add(keys.project);
   index.dirtyGroups.branches.add(keys.branch);
   if (keys.workflow) index.dirtyGroups.workflows.add(keys.workflow);
 }
 
-function addVisibleMembership(index: ClaudeUsageIndex, visibleKey: string, record: ClaudeUsageRecord): void {
-  const keys = membershipKeys(index, record);
-  addMembership(index.visibleKeysBySession, keys.session, visibleKey, index.copyOnWrite.visibleSessions);
-  addMembership(index.visibleKeysByProject, keys.project, visibleKey, index.copyOnWrite.visibleProjects);
-  addMembership(index.visibleKeysByBranch, keys.branch, visibleKey, index.copyOnWrite.visibleBranches);
-  addMembership(index.visibleKeysByWorkflow, keys.workflow, visibleKey, index.copyOnWrite.visibleWorkflows);
-  addMembership(index.visibleKeysByLocalDay, keys.localDay, visibleKey, index.copyOnWrite.visibleLocalDays);
-  markDirty(index, record);
+function addVisibleMembership(index: ClaudeUsageIndex, visibleKey: string, keys: RecordKeys): void {
+  const copied = index.copyOnWrite;
+  addMembership(index, 'visibleKeysBySession', keys.session, visibleKey, copied.visibleSessions);
+  addMembership(index, 'visibleKeysByProject', keys.project, visibleKey, copied.visibleProjects);
+  addMembership(index, 'visibleKeysByBranch', keys.branch, visibleKey, copied.visibleBranches);
+  addMembership(index, 'visibleKeysByWorkflow', keys.workflow, visibleKey, copied.visibleWorkflows);
+  addMembership(index, 'visibleKeysByLocalDay', keys.day, visibleKey, copied.visibleLocalDays);
+  addGroupStats(index, 'projectStats', keys.project, keys);
+  addGroupStats(index, 'branchStats', keys.branch, keys);
+  markDirty(index, keys);
 }
 
-function removeVisibleMembership(index: ClaudeUsageIndex, visibleKey: string, record: ClaudeUsageRecord): void {
-  const keys = membershipKeys(index, record);
-  removeMembership(index.visibleKeysBySession, keys.session, visibleKey, index.copyOnWrite.visibleSessions);
-  removeMembership(index.visibleKeysByProject, keys.project, visibleKey, index.copyOnWrite.visibleProjects);
-  removeMembership(index.visibleKeysByBranch, keys.branch, visibleKey, index.copyOnWrite.visibleBranches);
-  removeMembership(index.visibleKeysByWorkflow, keys.workflow, visibleKey, index.copyOnWrite.visibleWorkflows);
-  removeMembership(index.visibleKeysByLocalDay, keys.localDay, visibleKey, index.copyOnWrite.visibleLocalDays);
-  markDirty(index, record);
+function removeVisibleMembership(index: ClaudeUsageIndex, visibleKey: string, keys: RecordKeys): void {
+  const copied = index.copyOnWrite;
+  removeMembership(index, 'visibleKeysBySession', keys.session, visibleKey, copied.visibleSessions);
+  removeMembership(index, 'visibleKeysByProject', keys.project, visibleKey, copied.visibleProjects);
+  removeMembership(index, 'visibleKeysByBranch', keys.branch, visibleKey, copied.visibleBranches);
+  removeMembership(index, 'visibleKeysByWorkflow', keys.workflow, visibleKey, copied.visibleWorkflows);
+  removeMembership(index, 'visibleKeysByLocalDay', keys.day, visibleKey, copied.visibleLocalDays);
+  removeGroupStats(index, 'projectStats', keys.project, keys);
+  removeGroupStats(index, 'branchStats', keys.branch, keys);
+  markDirty(index, keys);
+}
+
+/** Records parsed in this transaction take their title in place; published
+ * records are copied, so an earlier snapshot never changes. */
+function withSessionTitle(index: ClaudeUsageIndex, record: ClaudeUsageRecord): ClaudeUsageRecord {
+  const title = record._sessionId ? index.sessionTitles.get(record._sessionId) : undefined;
+  if (record._sessionTitle === title) return record;
+  const target = index.copyOnWrite.freshRecords.has(record) ? record : { ...record };
+  if (title) target._sessionTitle = title;
+  else delete target._sessionTitle;
+  return target;
 }
 
 function setVisible(
@@ -1952,39 +2132,37 @@ function setVisible(
   next: ClaudeUsageRecord | undefined,
 ): number {
   const previous = index.visibleRecords.get(visibleKey);
+  if (next) next = withSessionTitle(index, next);
   if (previous === next) return 0;
   if (previous) {
-    applyAggregate(index, previous, -1);
-    removeVisibleMembership(index, visibleKey, previous);
+    const keys = recordKeys(index, previous);
+    applyAggregate(index, previous, keys, -1);
+    removeVisibleMembership(index, visibleKey, keys);
   }
   if (next) {
-    index.visibleRecords.set(visibleKey, next);
-    applyAggregate(index, next, 1);
-    addVisibleMembership(index, visibleKey, next);
+    own(index, 'visibleRecords').set(visibleKey, next);
+    const keys = recordKeys(index, next);
+    applyAggregate(index, next, keys, 1);
+    addVisibleMembership(index, visibleKey, keys);
   } else {
-    index.visibleRecords.delete(visibleKey);
+    own(index, 'visibleRecords').delete(visibleKey);
   }
   return 1;
 }
 
 /** Rebucket already-materialized records after an explicit timezone change. */
 function rebuildConfiguredTimeAggregates(index: ClaudeUsageIndex): void {
-  index.aggregates.byDay = new Map();
-  index.aggregates.byMonth = new Map();
-  index.aggregates.byLocalDay = new Map();
-  index.aggregates.byLocalHour = new Map();
-  index.aggregates.byProjectDay = new Map();
+  for (const name of ['byDay', 'byMonth', 'byLocalDay', 'byLocalHour', 'byProjectDay'] as const) {
+    index.aggregates[name] = new Map();
+    index.copyOnWrite.maps.add(`aggregates.${name}`);
+  }
   index.visibleKeysByLocalDay = new Map();
+  index.copyOnWrite.maps.add('visibleKeysByLocalDay');
   index.copyOnWrite.visibleLocalDays = new Set();
   for (const [visibleKey, record] of index.visibleRecords) {
-    const contribution = ClaudeDataLoader.calculateUsageData([record]);
-    applyConfiguredTimeAggregate(index, record, contribution, 1);
-    addMembership(
-      index.visibleKeysByLocalDay,
-      dayKeyInZone(new Date(record.timestamp), index.timeZone),
-      visibleKey,
-      index.copyOnWrite.visibleLocalDays,
-    );
+    const keys = recordKeys(index, record);
+    applyConfiguredTimeAggregate(index, keys, ClaudeDataLoader.calculateUsageData([record]), 1);
+    addMembership(index, 'visibleKeysByLocalDay', keys.day, visibleKey, index.copyOnWrite.visibleLocalDays);
   }
 }
 
@@ -1996,28 +2174,30 @@ function candidateMessageId(value: IndexedRecord): string | null {
 function addCandidate(index: ClaudeUsageIndex, value: IndexedRecord): void {
   const messageId = candidateMessageId(value);
   if (messageId) {
-    let values = index.candidatesByMessage.get(messageId);
+    const candidates = own(index, 'candidatesByMessage');
+    let values = candidates.get(messageId);
     if (!values) {
       values = new Map();
-      index.candidatesByMessage.set(messageId, values);
+      candidates.set(messageId, values);
       index.copyOnWrite.candidateMessages.add(messageId);
     } else if (!index.copyOnWrite.candidateMessages.has(messageId)) {
       values = new Map(values);
-      index.candidatesByMessage.set(messageId, values);
+      candidates.set(messageId, values);
       index.copyOnWrite.candidateMessages.add(messageId);
     }
     values.set(value.localKey, value);
     return;
   }
   const identity = directIdentity(value)!;
-  let values = index.candidatesByDirectIdentity.get(identity);
+  const candidates = own(index, 'candidatesByDirectIdentity');
+  let values = candidates.get(identity);
   if (!values) {
     values = new Map();
-    index.candidatesByDirectIdentity.set(identity, values);
+    candidates.set(identity, values);
     index.copyOnWrite.candidateDirect.add(identity);
   } else if (!index.copyOnWrite.candidateDirect.has(identity)) {
     values = new Map(values);
-    index.candidatesByDirectIdentity.set(identity, values);
+    candidates.set(identity, values);
     index.copyOnWrite.candidateDirect.add(identity);
   }
   values.set(value.localKey, value);
@@ -2026,37 +2206,41 @@ function addCandidate(index: ClaudeUsageIndex, value: IndexedRecord): void {
 function removeCandidate(index: ClaudeUsageIndex, value: IndexedRecord): void {
   const messageId = candidateMessageId(value);
   if (messageId) {
-    let values = index.candidatesByMessage.get(messageId);
-    if (values && !index.copyOnWrite.candidateMessages.has(messageId)) {
+    if (!index.candidatesByMessage.has(messageId)) return;
+    const candidates = own(index, 'candidatesByMessage');
+    let values = candidates.get(messageId)!;
+    if (!index.copyOnWrite.candidateMessages.has(messageId)) {
       values = new Map(values);
-      index.candidatesByMessage.set(messageId, values);
+      candidates.set(messageId, values);
       index.copyOnWrite.candidateMessages.add(messageId);
     }
-    values?.delete(value.localKey);
-    if (values?.size === 0) index.candidatesByMessage.delete(messageId);
+    values.delete(value.localKey);
+    if (values.size === 0) candidates.delete(messageId);
     return;
   }
   const identity = directIdentity(value)!;
-  let values = index.candidatesByDirectIdentity.get(identity);
-  if (values && !index.copyOnWrite.candidateDirect.has(identity)) {
+  if (!index.candidatesByDirectIdentity.has(identity)) return;
+  const candidates = own(index, 'candidatesByDirectIdentity');
+  let values = candidates.get(identity)!;
+  if (!index.copyOnWrite.candidateDirect.has(identity)) {
     values = new Map(values);
-    index.candidatesByDirectIdentity.set(identity, values);
+    candidates.set(identity, values);
     index.copyOnWrite.candidateDirect.add(identity);
   }
-  values?.delete(value.localKey);
-  if (values?.size === 0) index.candidatesByDirectIdentity.delete(identity);
+  values.delete(value.localKey);
+  if (values.size === 0) candidates.delete(identity);
 }
 
 function recomputeMessage(index: ClaudeUsageIndex, messageId: string): number {
   let mutations = 0;
   const priorIdentities = index.canonicalIdentitiesByMessage.get(messageId) ?? new Set<string>();
   for (const identity of priorIdentities) {
-    index.canonicalByIdentity.delete(identity);
+    own(index, 'canonicalByIdentity').delete(identity);
     mutations += setVisible(index, `usage:${identity}`, undefined);
   }
   const values = index.candidatesByMessage.get(messageId);
   if (!values || values.size === 0) {
-    index.canonicalIdentitiesByMessage.delete(messageId);
+    deleteOwned(index, 'canonicalIdentitiesByMessage', messageId);
     return mutations;
   }
   const requestIds = new Set<string>();
@@ -2073,11 +2257,11 @@ function recomputeMessage(index: ClaudeUsageIndex, messageId: string): number {
   const nextIdentities = new Set<string>();
   for (const [identity, group] of groups) {
     const winner = bestCandidate(group)!;
-    index.canonicalByIdentity.set(identity, winner);
+    own(index, 'canonicalByIdentity').set(identity, winner);
     nextIdentities.add(identity);
     mutations += setVisible(index, `usage:${identity}`, winner.record);
   }
-  index.canonicalIdentitiesByMessage.set(messageId, nextIdentities);
+  own(index, 'canonicalIdentitiesByMessage').set(messageId, nextIdentities);
   return mutations;
 }
 
@@ -2085,20 +2269,23 @@ function recomputeDirectIdentity(index: ClaudeUsageIndex, identity: string): num
   const previous = index.canonicalByIdentity.get(identity);
   const next = bestCandidate(index.candidatesByDirectIdentity.get(identity)?.values() ?? []);
   if (previous === next) return 0;
-  if (next) index.canonicalByIdentity.set(identity, next);
-  else index.canonicalByIdentity.delete(identity);
+  if (next) own(index, 'canonicalByIdentity').set(identity, next);
+  else own(index, 'canonicalByIdentity').delete(identity);
   return setVisible(index, `usage:${identity}`, next?.record);
 }
 
 function retagMovedFile(
   prior: ClaudeUsageFileContribution,
   entry: UsageFileFingerprint,
+  freshRecords: WeakSet<ClaudeUsageRecord>,
 ): ClaudeUsageFileContribution {
   const next = cloneFile(prior, entry);
   const oldInfo = ClaudeDataLoader.parseSessionInfo(prior.path);
   const newInfo = ClaudeDataLoader.parseSessionInfo(entry.path);
+  next.sessionId = newInfo.sessionId;
   const retag = (value: IndexedRecord): IndexedRecord => {
     const record = { ...value.record, message: value.record.message };
+    freshRecords.add(record);
     record._sessionId = newInfo.sessionId;
     tagClaudeSessionEvidence(record, entry.path);
     record._projectDirEncoded = newInfo.projectPath;
@@ -2130,13 +2317,9 @@ function retagFileOrdering(
   };
 }
 
-function titleForSession(index: ClaudeUsageIndex, sessionId: string): string | undefined {
-  let ai: { value: OrderedText; file: ClaudeUsageFileContribution } | undefined;
-  let custom: { value: OrderedText; file: ClaudeUsageFileContribution } | undefined;
-  const later = (
-    left: { value: OrderedText; file: ClaudeUsageFileContribution } | undefined,
-    right: { value: OrderedText; file: ClaudeUsageFileContribution },
-  ): typeof right => {
+function sessionTitlesFor(index: ClaudeUsageIndex, sessions: ReadonlySet<string>): Map<string, string> {
+  type Candidate = { value: OrderedText; file: ClaudeUsageFileContribution };
+  const later = (left: Candidate | undefined, right: Candidate): Candidate => {
     if (!left) return right;
     if (right.file.firstTimestampMs !== left.file.firstTimestampMs) {
       return right.file.firstTimestampMs > left.file.firstTimestampMs ? right : left;
@@ -2146,87 +2329,67 @@ function titleForSession(index: ClaudeUsageIndex, sessionId: string): string | u
     }
     return right.value.endOffset > left.value.endOffset ? right : left;
   };
+  const ai = new Map<string, Candidate>();
+  const custom = new Map<string, Candidate>();
   for (const file of index.files.values()) {
-    if (ClaudeDataLoader.parseSessionInfo(file.path).sessionId !== sessionId) continue;
-    if (file.aiTitle) ai = later(ai, { value: file.aiTitle, file });
-    if (file.customTitle) custom = later(custom, { value: file.customTitle, file });
+    if (!sessions.has(file.sessionId)) continue;
+    if (file.aiTitle) ai.set(file.sessionId, later(ai.get(file.sessionId), { value: file.aiTitle, file }));
+    if (file.customTitle) custom.set(file.sessionId, later(custom.get(file.sessionId), { value: file.customTitle, file }));
   }
-  return custom?.value.text ?? ai?.value.text;
-}
-
-function refreshSessionTitle(index: ClaudeUsageIndex, sessionId: string): void {
-  const title = titleForSession(index, sessionId);
-  for (const key of index.visibleKeysBySession.get(sessionId) ?? []) {
-    const record = index.visibleRecords.get(key);
-    if (!record) continue;
-    if (record._sessionTitle === title) continue;
-    const next = { ...record };
-    if (title) next._sessionTitle = title;
-    else delete next._sessionTitle;
-    index.visibleRecords.set(key, next);
+  const titles = new Map<string, string>();
+  for (const sessionId of sessions) {
+    const title = custom.get(sessionId)?.value.text ?? ai.get(sessionId)?.value.text;
+    if (title) titles.set(sessionId, title);
   }
+  return titles;
 }
 
 function cloneIndexForCommit(previous: ClaudeUsageIndex): ClaudeUsageIndex {
+  // Every map stays shared with the published index until own()/ownAggregate()
+  // copies it: writing to one directly would change the previous snapshot.
   return {
     ...previous,
-    files: new Map(previous.files),
-    candidatesByMessage: new Map(previous.candidatesByMessage),
-    candidatesByDirectIdentity: new Map(previous.candidatesByDirectIdentity),
-    canonicalByIdentity: new Map(previous.canonicalByIdentity),
-    canonicalIdentitiesByMessage: new Map(previous.canonicalIdentitiesByMessage),
-    visibleRecords: new Map(previous.visibleRecords),
-    visibleKeysBySession: new Map(previous.visibleKeysBySession),
-    visibleKeysByProject: new Map(previous.visibleKeysByProject),
-    visibleKeysByBranch: new Map(previous.visibleKeysByBranch),
-    visibleKeysByWorkflow: new Map(previous.visibleKeysByWorkflow),
-    visibleKeysByLocalDay: new Map(previous.visibleKeysByLocalDay),
-    sessionRows: new Map(previous.sessionRows),
-    projectRows: new Map(previous.projectRows),
-    projectSessionIds: new Map(previous.projectSessionIds),
-    branchRows: new Map(previous.branchRows),
-    workflowRows: new Map(previous.workflowRows),
-    costliestBySession: new Map(previous.costliestBySession),
-    latestContextBySession: new Map(previous.latestContextBySession),
-    sessionWorkspaceKeys: new Map(previous.sessionWorkspaceKeys),
+    aggregates: { ...previous.aggregates },
     dirtyGroups: emptyDirtyGroups(),
     copyOnWrite: emptyCopyOnWriteKeys(),
-    aggregates: {
-      allTime: cloneUsageData(previous.aggregates.allTime),
-      byDay: new Map(previous.aggregates.byDay),
-      byMonth: new Map(previous.aggregates.byMonth),
-      byLocalDay: new Map(previous.aggregates.byLocalDay),
-      byLocalHour: new Map(previous.aggregates.byLocalHour),
-      byProjectDay: new Map(previous.aggregates.byProjectDay),
-      bySession: new Map(previous.aggregates.bySession),
-      byProject: new Map(previous.aggregates.byProject),
-      byBranch: new Map(previous.aggregates.byBranch),
-      byWorkflow: new Map(previous.aggregates.byWorkflow),
-    },
   };
+}
+
+function pruneBuckets(index: ClaudeUsageIndex, name: AggregateMapKey, expired: (key: string) => boolean): void {
+  for (const key of index.aggregates[name].keys()) {
+    if (expired(key)) ownAggregate(index, name).delete(key);
+  }
 }
 
 function pruneHourlyBuckets(index: ClaudeUsageIndex): void {
   const cutoff = index.timeKeyers.hourWindowStartDay;
-  if (!cutoff) return;
-  for (const key of index.aggregates.byLocalHour.keys()) {
-    if (key.slice(0, 10) < cutoff) index.aggregates.byLocalHour.delete(key);
+  if (cutoff) pruneBuckets(index, 'byLocalHour', (key) => key.slice(0, 10) < cutoff);
+  pruneBuckets(index, 'byUtcHour', (key) => Number(key) < index.timeKeyers.utcHourWindowStart);
+  for (const time of index.recentOutputTimes.keys()) {
+    if (time < index.timeKeyers.outputDetailFromMs) own(index, 'recentOutputTimes').delete(time);
   }
 }
 
 function pruneProjectDayBuckets(index: ClaudeUsageIndex): void {
   const cutoff = index.timeKeyers.projectWindowStartDay;
   if (!cutoff) return;
-  for (const key of index.aggregates.byProjectDay.keys()) {
+  pruneBuckets(index, 'byProjectDay', (key) => {
     const separator = key.lastIndexOf('\0');
-    if (separator >= 0 && key.slice(separator + 1) < cutoff) {
-      index.aggregates.byProjectDay.delete(key);
-    }
-  }
+    return separator >= 0 && key.slice(separator + 1) < cutoff;
+  });
 }
 
+const publishedIndex = new WeakMap<object, ClaudeUsageIndex>();
+
 function recordsOf(index: ClaudeUsageIndex): ClaudeUsageRecord[] {
-  return [...index.visibleRecords.values()];
+  const records = [...index.visibleRecords.values()];
+  attachClaudeOutputHours(records, {
+    counts: index.outputHours,
+    recent: index.recentOutputTimes,
+    detailFromMs: index.timeKeyers.outputDetailFromMs,
+  });
+  publishedIndex.set(records, index);
+  return records;
 }
 
 function recordsForKeys(index: ClaudeUsageIndex, keys?: ReadonlySet<string>): ClaudeUsageRecord[] {
@@ -2249,19 +2412,19 @@ function recomputeDerivedRows(index: ClaudeUsageIndex): void {
   for (const sessionId of index.dirtyGroups.sessions) {
     const records = recordsForKeys(index, index.visibleKeysBySession.get(sessionId));
     const row = ClaudeDataLoader.getSessionBreakdown(records, 1)[0];
-    if (row) index.sessionRows.set(sessionId, row);
-    else index.sessionRows.delete(sessionId);
+    if (row) own(index, 'sessionRows').set(sessionId, row);
+    else deleteOwned(index, 'sessionRows', sessionId);
     const costliest = ClaudeDataLoader.getCostliestMessages(records, 10);
-    if (costliest.length > 0) index.costliestBySession.set(sessionId, costliest);
-    else index.costliestBySession.delete(sessionId);
+    if (costliest.length > 0) own(index, 'costliestBySession').set(sessionId, costliest);
+    else deleteOwned(index, 'costliestBySession', sessionId);
 
     const workspaceKeys = new Set<string>();
     for (const record of records) {
       if (record._projectDirEncoded) workspaceKeys.add(`encoded:${record._projectDirEncoded.toLowerCase()}`);
       if (record._projectPath) workspaceKeys.add(`path:${ClaudeDataLoader.normalizePath(record._projectPath)}`);
     }
-    if (workspaceKeys.size > 0) index.sessionWorkspaceKeys.set(sessionId, workspaceKeys);
-    else index.sessionWorkspaceKeys.delete(sessionId);
+    if (workspaceKeys.size > 0) own(index, 'sessionWorkspaceKeys').set(sessionId, workspaceKeys);
+    else deleteOwned(index, 'sessionWorkspaceKeys', sessionId);
 
     const contextRecords = records.filter((record) => contextTokens(record) > 0);
     const main = contextRecords.filter((record) => !record._agentId && !record._workflowId);
@@ -2270,47 +2433,85 @@ function recomputeDerivedRows(index: ClaudeUsageIndex): void {
     for (const record of pool) {
       if (!latest || Date.parse(record.timestamp) > Date.parse(latest.timestamp)) latest = record;
     }
-    if (latest) index.latestContextBySession.set(sessionId, latest);
-    else index.latestContextBySession.delete(sessionId);
+    if (latest) own(index, 'latestContextBySession').set(sessionId, latest);
+    else deleteOwned(index, 'latestContextBySession', sessionId);
   }
 
   for (const projectKey of index.dirtyGroups.projects) {
-    const records = recordsForKeys(index, index.visibleKeysByProject.get(projectKey));
-    if (records.length === 0) {
-      index.projectRows.delete(projectKey);
-      index.projectSessionIds.delete(projectKey);
+    const members = index.visibleKeysByProject.get(projectKey);
+    if (!members || members.size === 0) {
+      deleteOwned(index, 'projectRows', projectKey);
       continue;
     }
-    const timestamps = recordTimestampBounds(records);
-    const first = records[0];
-    const sessions = new Set(records.map((record) => record._sessionId || 'unknown'));
-    index.projectSessionIds.set(projectKey, sessions);
-    index.projectRows.set(projectKey, {
+    const first = index.visibleRecords.get(members.values().next().value!)!;
+    const stats = settledStats(index, 'projectStats', projectKey, members);
+    own(index, 'projectRows').set(projectKey, {
       projectName: first._projectName || 'unknown',
       projectPath: first._projectPath || first._projectName || 'unknown',
-      sessionCount: sessions.size,
-      firstSeen: new Date(timestamps.first),
-      lastSeen: new Date(timestamps.last),
-      data: ClaudeDataLoader.calculateUsageData(records),
+      sessionCount: stats.sessions.size,
+      firstSeen: new Date(boundOrZero(stats.first)),
+      lastSeen: new Date(boundOrZero(stats.last)),
+      data: cloneUsageData(index.aggregates.byProject.get(projectKey) ?? emptyUsageData()),
     });
   }
 
   for (const branchKey of index.dirtyGroups.branches) {
-    const records = recordsForKeys(index, index.visibleKeysByBranch.get(branchKey));
-    const row = ClaudeDataLoader.getBranchBreakdown(records, 1)[0];
-    if (row) index.branchRows.set(branchKey, row);
-    else index.branchRows.delete(branchKey);
+    const members = index.visibleKeysByBranch.get(branchKey);
+    const data = index.aggregates.byBranch.get(branchKey);
+    if (!members || members.size === 0 || !data || data.messageCount <= 0) {
+      deleteOwned(index, 'branchRows', branchKey);
+      continue;
+    }
+    const first = index.visibleRecords.get(members.values().next().value!)!;
+    const stats = settledStats(index, 'branchStats', branchKey, members);
+    own(index, 'branchRows').set(branchKey, {
+      branch: first._gitBranch && first._gitBranch.trim() !== '' ? first._gitBranch : '-',
+      projectName: first._projectName || 'unknown',
+      projectPath: first._projectPath || '',
+      sessionCount: stats.sessions.size,
+      lastSeen: new Date(boundOrZero(stats.last)),
+      data: cloneUsageData(data),
+    });
   }
 
+  const orchestrationSessions = new Set(index.dirtyGroups.sessions);
   for (const workflowKey of index.dirtyGroups.workflows) {
+    const prior = index.workflowRows.get(workflowKey);
+    if (prior) orchestrationSessions.add(prior.sessionId);
     const records = recordsForKeys(index, index.visibleKeysByWorkflow.get(workflowKey));
     const row = ClaudeDataLoader.getWorkflowBreakdown(records, 50)
       .find((candidate) => candidate.workflowId === workflowKey);
-    if (row) index.workflowRows.set(workflowKey, row);
-    else index.workflowRows.delete(workflowKey);
+    if (row) {
+      own(index, 'workflowRows').set(workflowKey, row);
+      orchestrationSessions.add(row.sessionId);
+    } else {
+      deleteOwned(index, 'workflowRows', workflowKey);
+    }
   }
+  refreshOrchestration(index, orchestrationSessions);
   index.dirtyGroups = emptyDirtyGroups();
 }
+
+function refreshOrchestration(index: ClaudeUsageIndex, sessions: ReadonlySet<string>): void {
+  const rowsBySession = new Map<string, Array<[string, WorkflowUsage]>>();
+  for (const [key, row] of index.workflowRows) {
+    if (!sessions.has(row.sessionId)) continue;
+    const copy = { ...row };
+    delete copy.orchestration;
+    const rows = rowsBySession.get(row.sessionId) ?? [];
+    rows.push([key, copy]);
+    rowsBySession.set(row.sessionId, rows);
+  }
+  for (const [sessionId, rows] of rowsBySession) {
+    ClaudeDataLoader.attachOrchestrationCost(
+      rows.map(([, row]) => row),
+      recordsForKeys(index, index.visibleKeysBySession.get(sessionId)),
+    );
+    for (const [key, row] of rows) own(index, 'workflowRows').set(key, row);
+  }
+}
+
+const gitRootCache = new Map<string, string | null>();
 
 function buildProjectGroups(
   index: ClaudeUsageIndex,
@@ -2321,7 +2522,8 @@ function buildProjectGroups(
   if (projects.length === 0) return [];
   const segmentLists = projects.map(([key]) => key.split('/').filter(Boolean));
   const commonRootLen = ClaudeDataLoader.commonPrefixLength(segmentLists);
-  const gitCache = new Map<string, string | null>();
+  // ponytail: a repository created inside an already-seen project path is noticed only once a new project path appears.
+  if (mode === 'git' && projects.some(([, project]) => !gitRootCache.has(project.projectPath))) gitRootCache.clear();
   const groups = new Map<string, {
     displayPath: string;
     isGitRepo: boolean;
@@ -2342,7 +2544,7 @@ function buildProjectGroups(
       displayPath = project.projectPath;
     } else {
       const gitRoot = mode === 'git'
-        ? ClaudeDataLoader.resolveGitRoot(project.projectPath, gitCache)
+        ? ClaudeDataLoader.resolveGitRoot(project.projectPath, gitRootCache)
         : null;
       if (gitRoot) {
         groupKey = ClaudeDataLoader.normalizePath(gitRoot);
@@ -2370,7 +2572,7 @@ function buildProjectGroups(
       groups.set(groupKey, group);
     }
     group.children.push(project);
-    for (const session of index.projectSessionIds.get(projectKey) ?? []) group.sessions.add(session);
+    for (const session of index.projectStats.get(projectKey)?.sessions.keys() ?? []) group.sessions.add(session);
     addUsageData(group.data, project.data, 1);
     if (project.firstSeen < group.firstSeen) group.firstSeen = project.firstSeen;
     if (project.lastSeen > group.lastSeen) group.lastSeen = project.lastSeen;
@@ -2397,19 +2599,17 @@ function buildProjectGroups(
 }
 
 function recordMatchesWorkspace(record: ClaudeUsageRecord, workspacePath: string): boolean {
-  const normalizedWorkspace = ClaudeDataLoader.normalizePath(workspacePath);
   const encoded = workspacePath.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
   if ((record._projectDirEncoded || '').toLowerCase() === encoded) return true;
-  const projectPath = ClaudeDataLoader.normalizePath(record._projectPath || '');
-  return projectPath.startsWith(normalizedWorkspace) || projectPath === encoded;
+  const projectPath = record._projectPath || '';
+  return isUnderDir(projectPath, workspacePath) || ClaudeDataLoader.normalizePath(projectPath) === encoded;
 }
 
 function sessionMatchesWorkspace(index: ClaudeUsageIndex, sessionId: string, workspacePath: string): boolean {
-  const normalizedWorkspace = ClaudeDataLoader.normalizePath(workspacePath);
   const encoded = workspacePath.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
   for (const key of index.sessionWorkspaceKeys.get(sessionId) ?? []) {
     if (key === `encoded:${encoded}`) return true;
-    if (key.startsWith('path:') && key.slice(5).startsWith(normalizedWorkspace)) return true;
+    if (key.startsWith('path:') && isUnderDir(key.slice(5), workspacePath)) return true;
   }
   return false;
 }
@@ -2545,6 +2745,59 @@ function claudeProjectUsageMatrixSnapshot(
   });
 }
 
+/** Equals ClaudeDataLoader.getThisWeekData over the index's records: whole
+ * UTC hours come from byUtcHour, the partial first hour from its records. */
+export function claudeWeekUsage(index: ClaudeUsageIndex, weekStart: Date): UsageData {
+  const startMs = weekStart.getTime();
+  const startHour = Math.floor(startMs / HOUR_MS);
+  if (!(startHour >= index.timeKeyers.utcHourWindowStart)) {
+    return ClaudeDataLoader.getThisWeekData([...index.visibleRecords.values()], weekStart);
+  }
+  const firstWholeHour = startMs === startHour * HOUR_MS ? startHour : startHour + 1;
+  const total = emptyUsageData();
+  for (const [hour, data] of index.aggregates.byUtcHour) {
+    if (Number(hour) >= firstWholeHour) addUsageData(total, data, 1);
+  }
+  if (firstWholeHour > startHour) {
+    const endMs = firstWholeHour * HOUR_MS;
+    const days = new Set([dayKeyInZone(weekStart, index.timeZone), dayKeyInZone(new Date(endMs - 1), index.timeZone)]);
+    const partial: ClaudeUsageRecord[] = [];
+    for (const day of days) {
+      for (const record of recordsForKeys(index, index.visibleKeysByLocalDay.get(day))) {
+        const time = Date.parse(record.timestamp);
+        if (time >= startMs && time < endMs) partial.push(record);
+      }
+    }
+    addUsageData(total, ClaudeDataLoader.calculateUsageData(partial), 1);
+  }
+  return total;
+}
+
+/** Equals ClaudeDataLoader.getDailyDataForWeek over an index-published records
+ * array: whole days come from byLocalDay, and only the days that can straddle
+ * weekStart regroup their own records. */
+export function claudeWeekDailyUsage(records: ClaudeUsageRecord[], weekStart: Date): { date: string; data: UsageData }[] {
+  const index = publishedIndex.get(records);
+  const startMs = weekStart.getTime();
+  if (!index || !Number.isFinite(startMs) || index.timeZone !== resolveTimeZone(I18n.getTimezone())) {
+    return ClaudeDataLoader.getDailyDataForWeek(records, weekStart);
+  }
+  // No zone is 15 h or more from UTC, so a day outside [first, last] lies wholly on one side of weekStart.
+  const first = new Date(startMs - 15 * HOUR_MS).toISOString().slice(0, 10);
+  const last = new Date(startMs + 15 * HOUR_MS).toISOString().slice(0, 10);
+  const days: { date: string; data: UsageData }[] = [];
+  for (const [date, keys] of index.visibleKeysByLocalDay) {
+    if (date < first) continue;
+    if (date > last) {
+      days.push({ date, data: cloneUsageData(index.aggregates.byLocalDay.get(date) ?? emptyUsageData()) });
+      continue;
+    }
+    const inWindow = recordsForKeys(index, keys).filter((record) => Date.parse(record.timestamp) >= startMs);
+    if (inWindow.length > 0) days.push({ date, data: ClaudeDataLoader.calculateUsageData(inWindow) });
+  }
+  return days.sort((left, right) => right.date.localeCompare(left.date));
+}
+
 export function claudeUsageDashboardSnapshot(
   index: ClaudeUsageIndex,
   options: {
@@ -2656,12 +2909,37 @@ export function claudeUsageDashboardSnapshot(
   };
 }
 
+const UNREADABLE_TRANSCRIPT_CODES = new Set(['EACCES', 'EPERM']);
+const RESTART_WITHOUT_SKIPPED = new Error('restart without unreadable transcripts');
+
+function isUnreadableTranscript(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === 'string' && UNREADABLE_TRANSCRIPT_CODES.has(code);
+}
+
 export async function updateClaudeUsageIndex(
   previous: ClaudeUsageIndex,
   root: string,
   options: ClaudeUsageIndexUpdateOptions = {},
 ): Promise<ClaudeUsageIndexUpdateResult> {
   const started = performance.now();
+  const manifest = options.manifest ?? await scanUsageManifest([root]);
+  const skipped = new Set<string>();
+  for (;;) {
+    const result = await updateFromManifest(previous, manifest, skipped, options, started);
+    if (result) return result;
+  }
+}
+
+/** Returns null when an indexed transcript turned unreadable: the caller
+ * replans without it, so its removal takes the ordinary deletion path. */
+async function updateFromManifest(
+  previous: ClaudeUsageIndex,
+  manifest: UsageManifest,
+  skipped: Set<string>,
+  options: ClaudeUsageIndexUpdateOptions,
+  started: number,
+): Promise<ClaudeUsageIndexUpdateResult | null> {
   const achievementUsageWindow = options.achievementUsageWindow ? {
     after: options.achievementUsageWindow.after, through: options.achievementUsageWindow.through,
   } : undefined;
@@ -2677,9 +2955,9 @@ export async function updateClaudeUsageIndex(
   // avoid reparsing between actual expiries without rounding or widening the
   // established content-analysis window.
   const analysisCutoffMs = analysisWindowCutoffMs(nowMs, windowDays);
-  const manifest = options.manifest ?? await scanUsageManifest([root]);
   options.onStage?.('planning', { filesDiscovered: manifest.entries.size });
-  const currentEntries = stableDiscoveryRanks(previous, [...manifest.entries.values()]);
+  const readableEntries = [...manifest.entries.values()].filter((entry) => !skipped.has(entry.path));
+  const currentEntries = stableDiscoveryRanks(previous, readableEntries);
   const previousByPath = new Map<string, ClaudeUsageFileContribution>();
   let completeUsageBaseline = previous.manifest !== null &&
     previous.files.size === previous.manifest.entries.size;
@@ -2912,8 +3190,13 @@ export async function updateClaudeUsageIndex(
         if (deletedIds.has(fileId)) continue;
         const prior = previous.files.get(fileId);
         if (!prior) continue;
-        const canRestoreOwnership = [...prior.analysisAllUuids]
-          .some((uuid) => removedOwnedUuids.has(uuid));
+        let canRestoreOwnership = false;
+        for (const uuid of prior.analysisAllUuids) {
+          if (removedOwnedUuids.has(uuid)) {
+            canRestoreOwnership = true;
+            break;
+          }
+        }
         if (!canRestoreOwnership) continue;
         const plannedIndex = plans.findIndex((plan) => plan.fileId === fileId);
         if (plannedIndex >= 0) {
@@ -2967,6 +3250,7 @@ export async function updateClaudeUsageIndex(
   let linesParsed = 0;
   let bodyReads = 0;
   const analysisUuidAdditions = new Set<string>();
+  const freshRecords = new WeakSet<ClaudeUsageRecord>();
   try {
     const agentTypeCache = new Map<string, string>();
     const workflowNameCache = new Map<string, string>();
@@ -3015,14 +3299,25 @@ export async function updateClaudeUsageIndex(
         }
       }
       for (const plan of plans) {
-        const parsed = await parsePlan(
-          plan,
-          agentTypeCache,
-          workflowNameCache,
-          analyzeContent,
-          analysisCutoffMs,
-          analyzeContent ? analysisSeenUuids : undefined,
-        );
+        let parsed: ParsedPlan;
+        try {
+          parsed = await parsePlan(
+            plan,
+            agentTypeCache,
+            workflowNameCache,
+            analyzeContent,
+            analysisCutoffMs,
+            freshRecords,
+            analyzeContent ? analysisSeenUuids : undefined,
+          );
+        } catch (error) {
+          if (!isUnreadableTranscript(error)) throw error;
+          skipped.add(plan.entry.path);
+          // A new file fails at open and leaves nothing behind; a known one
+          // must leave the index the way a deletion does.
+          if (plan.prior) throw RESTART_WITHOUT_SKIPPED;
+          continue;
+        }
         parsedPlans.push(parsed);
         bodyReads += 1;
         bytesRead += parsed.bytesRead;
@@ -3111,6 +3406,7 @@ export async function updateClaudeUsageIndex(
       }
     }
   } catch (error) {
+    if (error === RESTART_WITHOUT_SKIPPED) return null;
     const failureReason = claudeRefreshFailureReason(error);
     options.onStage?.('read-parse', {
       filesFailed: 1, bytesRead, linesParsed, bodyReads: bodyReads + 1,
@@ -3123,6 +3419,7 @@ export async function updateClaudeUsageIndex(
       diagnostics: {
         filesDiscovered: manifest.entries.size,
         filesFailed: 1,
+        filesSkipped: skipped.size,
         failureReason,
         bytesRead,
         linesParsed,
@@ -3141,12 +3438,16 @@ export async function updateClaudeUsageIndex(
   const next = cloneIndexForCommit(previous);
   next.timeZone = configuredTimeZone;
   next.timeKeyers = timeKeyers;
+  next.copyOnWrite.freshRecords = freshRecords;
   pruneHourlyBuckets(next);
   pruneProjectDayBuckets(next);
   if (timeZoneChanged) {
     rebuildConfiguredTimeAggregates(next);
   }
-  next.manifest = manifest;
+  next.manifest = skipped.size === 0 ? manifest : {
+    ...manifest,
+    entries: new Map(readableEntries.map((entry) => [entry.path, entry])),
+  };
   next.analyzeContent = analyzeContent;
   next.windowDays = windowDays;
   next.analysisCutoffMs = analyzeContent ? analysisCutoffMs : 0;
@@ -3155,8 +3456,8 @@ export async function updateClaudeUsageIndex(
   const affectedSessions = new Set<string>();
   let aggregateMutations = timeZoneChanged ? next.visibleRecords.size : 0;
   const removeFile = (file: ClaudeUsageFileContribution): void => {
-    next.files.delete(file.fileId);
-    affectedSessions.add(ClaudeDataLoader.parseSessionInfo(file.path).sessionId);
+    own(next, 'files').delete(file.fileId);
+    affectedSessions.add(file.sessionId);
     for (const value of file.usage.values()) {
       const messageId = candidateMessageId(value);
       if (messageId) affectedMessages.add(messageId);
@@ -3168,8 +3469,8 @@ export async function updateClaudeUsageIndex(
     }
   };
   const addFile = (file: ClaudeUsageFileContribution): void => {
-    next.files.set(file.fileId, file);
-    affectedSessions.add(ClaudeDataLoader.parseSessionInfo(file.path).sessionId);
+    own(next, 'files').set(file.fileId, file);
+    affectedSessions.add(file.sessionId);
     for (const value of file.usage.values()) {
       const messageId = candidateMessageId(value);
       if (messageId) affectedMessages.add(messageId);
@@ -3182,7 +3483,7 @@ export async function updateClaudeUsageIndex(
   };
 
   for (const [fileId, rebased] of analysisRebases) {
-    next.files.set(fileId, rebased);
+    own(next, 'files').set(fileId, rebased);
   }
   const plannedFileIds = new Set(plans.map((plan) => plan.fileId));
   const movedFileIds = new Set(moves.map((move) => move.prior.fileId));
@@ -3198,12 +3499,12 @@ export async function updateClaudeUsageIndex(
   for (const move of moves) {
     if (plans.some((plan) => plan.fileId === move.prior.fileId)) continue;
     removeFile(move.prior);
-    addFile(retagMovedFile(move.prior, move.entry));
+    addFile(retagMovedFile(move.prior, move.entry, freshRecords));
   }
   for (const plan of parsedPlans) {
     if (plan.kind === 'append' && plan.prior) {
-      next.files.set(plan.fileId, plan.contribution);
-      affectedSessions.add(ClaudeDataLoader.parseSessionInfo(plan.contribution.path).sessionId);
+      own(next, 'files').set(plan.fileId, plan.contribution);
+      affectedSessions.add(plan.contribution.sessionId);
       for (const [key, value] of plan.contribution.usage) {
         if (plan.prior.usage.has(key)) continue;
         const messageId = candidateMessageId(value);
@@ -3218,19 +3519,33 @@ export async function updateClaudeUsageIndex(
     } else {
       if (plan.prior) removeFile(plan.prior);
       if (plan.replacedFileId && plan.replacedFileId !== plan.fileId) {
-        next.files.delete(plan.replacedFileId);
+        deleteOwned(next, 'files', plan.replacedFileId);
       }
       addFile(plan.contribution);
     }
+  }
+  const titles = sessionTitlesFor(next, affectedSessions);
+  const retitled: string[] = [];
+  for (const sessionId of affectedSessions) {
+    const title = titles.get(sessionId);
+    if (next.sessionTitles.get(sessionId) === title) continue;
+    if (title) own(next, 'sessionTitles').set(sessionId, title);
+    else own(next, 'sessionTitles').delete(sessionId);
+    retitled.push(sessionId);
   }
   for (const messageId of affectedMessages) aggregateMutations += recomputeMessage(next, messageId);
   for (const identity of affectedDirect) aggregateMutations += recomputeDirectIdentity(next, identity);
   const achievementUsageDelta = acceptedTailUsageDelta(previous, next, verifiedUsageTails,
     affectedMessages, affectedDirect, achievementUsageWindow, completeUsageBaseline);
-  for (const sessionId of affectedSessions) {
-    refreshSessionTitle(next, sessionId);
-    next.dirtyGroups.sessions.add(sessionId);
+  for (const sessionId of retitled) {
+    for (const key of next.visibleKeysBySession.get(sessionId) ?? []) {
+      const record = next.visibleRecords.get(key)!;
+      const titled = withSessionTitle(next, record);
+      if (titled !== record) own(next, 'visibleRecords').set(key, titled);
+    }
+    next.dirtyGroups.workflows.add(`adhoc:${sessionId}`);
   }
+  for (const sessionId of affectedSessions) next.dirtyGroups.sessions.add(sessionId);
   recomputeDerivedRows(next);
   options.onStage?.('content-analysis', { aggregateMutations });
 
@@ -3361,7 +3676,7 @@ export async function updateClaudeUsageIndex(
 
   options.log?.(
     `incremental loader: bodies=${bodyReads}, bytes=${bytesRead}, ` +
-    `lines=${linesParsed}, aggregate-mutations=${aggregateMutations}`,
+    `lines=${linesParsed}, aggregate-mutations=${aggregateMutations}, skipped=${skipped.size}`,
   );
   if (aggregateMutations===0 && !timeZoneChanged) inheritClaudeAchievementMoneyProjection(previous,next);
   return {
@@ -3372,6 +3687,7 @@ export async function updateClaudeUsageIndex(
     diagnostics: {
       filesDiscovered: manifest.entries.size,
       filesFailed: 0,
+      filesSkipped: skipped.size,
       bytesRead,
       linesParsed,
       readParseMs: performance.now() - started,

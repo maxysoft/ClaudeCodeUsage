@@ -1,6 +1,4 @@
-import { expect, test } from '@playwright/test';
-
-import { openClaude, openCodex } from './support/app.mjs';
+import { test, expect, openClaude, openCodex } from './support/app.mjs';
 
 // The This Week tab is fork-exclusive and had no UI coverage at all, which is
 // how several regressions reached a release: the markup kept rendering while
@@ -86,4 +84,52 @@ test('Codex never shows the Claude-only week tab', async ({ page }) => {
   await openCodex(page);
   await expect(page.locator('#tab-week')).toHaveCount(0);
   await expect(page.locator('#week')).toHaveCount(0);
+});
+
+async function dispatchPatch(page, provider, tab, revision) {
+  await page.evaluate(({ provider, tab, revision }) => {
+    const panel = document.getElementById('provider-panel');
+    window.dispatchEvent(new MessageEvent('message', { data: {
+      command: 'dashboardDataPatch', provider, tab, revision,
+      html: panel.innerHTML, claudeLast30HoursByDay: {},
+    } }));
+  }, { provider, tab, revision });
+}
+
+function postedMessages(page, command) {
+  return page.evaluate((name) => window.__ccuPostedMessages.filter((message) => message.command === name), command);
+}
+
+test('the week tab survives a live patch and a reload, and the reload keeps live patching', async ({ page }) => {
+  await openClaude(page, { fixture: 'week-records' });
+  await page.locator('#tab-week').click();
+  expect((await postedMessages(page, 'tabChanged')).at(-1)).toMatchObject({ tab: 'week' });
+
+  await dispatchPatch(page, 'claude', 'week', 1);
+  await expect.poll(() => postedMessages(page, 'dashboardDataPatchAck'))
+    .toEqual([{ command: 'dashboardDataPatchAck', revision: 1, ok: true }]);
+  await expect(page.locator('#tab-week')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#week')).toBeVisible();
+
+  await page.reload();
+  await page.locator('.tab-content.active').waitFor();
+  await expect(page.locator('#tab-week')).toHaveAttribute('aria-selected', 'true');
+  expect((await postedMessages(page, 'localDataClientReady')).at(-1)).toMatchObject({ provider: 'claude', activeTab: 'week' });
+  await dispatchPatch(page, 'claude', 'week', 2);
+  await expect.poll(() => postedMessages(page, 'dashboardDataPatchAck'))
+    .toEqual([{ command: 'dashboardDataPatchAck', revision: 2, ok: true }]);
+  await expect(page.locator('#week')).toBeVisible();
+});
+
+test('a stored week tab falls back cleanly on Codex', async ({ page }) => {
+  await openCodex(page);
+  await page.evaluate(() => localStorage.setItem('ccu.activeTab', 'week'));
+  await page.reload();
+  await page.locator('.tab-content.active').waitFor();
+  await expect(page.locator('#tab-today')).toHaveAttribute('aria-selected', 'true');
+  expect((await postedMessages(page, 'localDataClientReady')).at(-1)).toMatchObject({ provider: 'codex', activeTab: 'today' });
+  await dispatchPatch(page, 'codex', 'week', 1);
+  await expect.poll(() => postedMessages(page, 'dashboardDataPatchAck'))
+    .toEqual([{ command: 'dashboardDataPatchAck', revision: 1, ok: false }]);
+  await expect(page.locator('#tab-today')).toHaveAttribute('aria-selected', 'true');
 });

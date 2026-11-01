@@ -10,11 +10,11 @@ import {
   RefreshSingleFlight,
   WindowActivityGate,
 } from '../refreshPolicy';
-import { createClaudeUsageIndex } from '../claudeIncrementalIndex';
+import { createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import {
   beginBackgroundWork,
   createBackgroundWorkState,
-  pauseBackgroundWork,
+  restoreBackgroundWorkState,
   recordBackgroundWorkFailure,
   recordBackgroundWorkProgress,
 } from '../backgroundWorkState';
@@ -124,6 +124,7 @@ function bareExtension(): any {
   extension.debounceTimerLeases = new Map();
   extension.activeAdviceNetworks = new Map();
   extension.activeQuotaNetworks = new Map();
+  extension.apiClient = { cancelCredentialRead: () => undefined };
   extension.codexProviderRetirements = new Set();
   extension.activeCodexRefreshes = new Set();
   extension.pendingResourceStops = new Set();
@@ -366,7 +367,6 @@ function coordinatorHarness(dashboardAutoRefresh = false): {
   extension.cache = { records: [], contentAnalysis: null, manifest: null,
     claudeIndex: createClaudeUsageIndex(), lastUpdate: new Date(0), dataDirectory: null,
     usageLimits: null };
-  extension.quotaColdRetryDone = true;
   extension.maybeFetchUsageLimits = async () => null;
   extension.codexView = null;
   extension.codexAvailable = true;
@@ -789,17 +789,15 @@ test('coordinator Codex progress selects actual main, period and hourly counters
   assert.equal(JSON.stringify(deliveries).includes('/private/fixture'), false);
 });
 
-test('coordinator Codex cooldown and user pause retain exact hourly phase after the worker settles', async () => {
-  for (const pausedReason of ['failure-backoff', 'user'] as const) {
+test('coordinator Codex cooldown retains exact hourly phase after the worker settles', async () => {
+  for (const pausedReason of ['failure-backoff'] as const) {
     const { extension, deliveries } = coordinatorHarness(true);
     const snapshot = completeCoordinatorSnapshot();
     Object.assign(snapshot.hourlyCoverage!, { indexedFiles: 1, indexedBytes: 300, complete: false });
     const seed = createBackgroundWorkState({ measurementVersion: 1, reason: 'hourly-history',
       now: Date.now(), progress: extension.codexBackgroundProgress(snapshot) });
-    extension.codexBackgroundState = pausedReason === 'user'
-      ? pauseBackgroundWork(seed, { now: Date.now() })
-      : recordBackgroundWorkFailure(beginBackgroundWork(seed,
-        { trigger: 'automatic', now: Date.now() }).state, { now: Date.now() });
+    extension.codexBackgroundState = recordBackgroundWorkFailure(beginBackgroundWork(seed,
+      { trigger: 'automatic', now: Date.now() }).state, { now: Date.now() });
     extension.codexProvider.loadPersistedSnapshot = async () => snapshot;
     extension.codexProvider.refresh = async (_profile: unknown, _progress: unknown, allowed: boolean) => {
       assert.equal(allowed, false);
@@ -812,7 +810,7 @@ test('coordinator Codex cooldown and user pause retain exact hourly phase after 
     assert.equal(value.codexProgress.scannedFiles, 1);
     assert.equal(value.codexProgress.totalFiles, 3);
     assert.deepEqual(value.codexProgress.workState, {
-      status: pausedReason === 'user' ? 'paused' : 'cooldown', pausedReason,
+      status: 'cooldown', pausedReason,
       nextEligibleAt: extension.codexBackgroundState.nextEligibleAt,
     });
   }
@@ -830,6 +828,21 @@ test('paused refresh failures withdraw achievement authority without replacing n
   assert.deepEqual(invalidated, ['codex', 'claude']);
   assert.equal(extension.codexView, displayed);
   assert.equal(deliveries.length, 0, 'proof revocation is not a dashboard refresh');
+});
+
+test('settled terminal compression failures leave no historical Codex work pending', () => {
+  const { extension, snapshot } = coordinatorHarness(false);
+  snapshot.outputHourProof = { complete: false, hours: [], provenFiles: 4, totalFiles: 5,
+    backfillableFiles: 0 } as any;
+  snapshot.coverage.complete = false;
+  snapshot.coverage.indexedFiles = snapshot.coverage.totalFiles - 1;
+  for (const range of [snapshot.coverage.period.last7Days, snapshot.coverage.period.last30Days,
+    snapshot.coverage.period.allTime]) Object.assign(range, { migratedFiles: 4, complete: false });
+  snapshot.hourlyCoverage!.complete = false;
+  (snapshot.coverage as any).terminalFiles = 1;
+  assert.equal(extension.codexHistoricalWorkPending(snapshot), false);
+  delete (snapshot.coverage as any).terminalFiles;
+  assert.equal(extension.codexHistoricalWorkPending(snapshot), true);
 });
 
 test('disabled achievements do not schedule their independent historical proof migration', () => {
@@ -989,7 +1002,6 @@ test('coordinator accepts and revokes effort-only proof without rebuilding the r
     assert.equal(extension.codexInsights, insights);
     assert.notEqual(extension.codexAchievementSignals, previous);
     assert.deepEqual(extension.codexAchievementSignals.familyProcessedTokens, previous.familyProcessedTokens);
-    assert.equal(extension.codexAchievementSignals.effortProcessedTokens.high, initiallyValid ? 600 : 1_200);
   }
 });
 
@@ -1038,11 +1050,11 @@ test('coordinator disabled achievements skip proof computation and re-enable ado
   assert.equal(revisions, 1, 'OFF does not even fingerprint the achievement projection');
   assert.equal(extension.codexAchievementSignals, disabled);
   assert.equal(extension.codexAchievementRevision, undefined);
-  assert.equal(disabled.effortProcessedTokens, undefined, 'OFF cannot retain proof for a newer render snapshot');
+  assert.deepEqual(disabled, {}, 'OFF cannot retain proof for a newer render snapshot');
   config.enableAchievements = true;
   extension.applyCodexSnapshot(updated);
   assert.equal(revisions, 2);
-  assert.equal(extension.codexAchievementSignals.effortProcessedTokens.high, 600);
+  assert.equal(extension.codexAchievementSignals.verifiedSubset, true);
 });
 
 test('coordinator retirement during preflight state persistence cannot start a retired worker', async () => {
@@ -1185,7 +1197,7 @@ test('coordinator real main, period and hourly history work keeps its own truthf
     assert.equal(progress.phase, phase);
     assert.equal(progress.workState.status, 'cooldown');
     assert.ok(progress.scannedFiles < progress.totalFiles);
-    extension.codexBackgroundState = pauseBackgroundWork(extension.codexBackgroundState, { now: 3 });
+    extension.codexBackgroundState = restoreBackgroundWorkState({}, { measurementVersion: 1, reason: 'history-backfill', now: 3 }).state;
     assert.equal(extension.codexDashboardProgress().workState.status, 'paused');
   }
   assert.equal(bareExtension().codexHistoricalWorkPending(null), true);
@@ -2417,7 +2429,7 @@ test('cooldown, user pause, and completed measurement suppress historical backfi
   }).state;
   const states = [
     recordBackgroundWorkFailure(running, { now: 1_000 }),
-    pauseBackgroundWork(seed, { now: 1_000 }),
+    restoreBackgroundWorkState({}, { measurementVersion: 1, reason: 'history-backfill', now: 1_000, progress }).state,
     recordBackgroundWorkProgress(running, {
       now: 1_000,
       complete: true,
@@ -2864,36 +2876,6 @@ test('advice consent cancellation aborts advice without cancelling a separate op
   assert.equal(extension.resourceOwnership.snapshotForTests().byKind.network, 0);
 });
 
-test('quota cold retry timer is owned and cleared on blur', async () => {
-  const extension = bareExtension();
-  const originalSetTimeout = global.setTimeout;
-  const originalClearTimeout = global.clearTimeout;
-  let cleared = 0;
-  const fakeTimer = { fake: true } as unknown as NodeJS.Timeout;
-  global.setTimeout = ((_callback: () => void, _ms: number) =>
-    fakeTimer) as typeof setTimeout;
-  global.clearTimeout = ((handle: NodeJS.Timeout) => {
-    assert.equal(handle, fakeTimer);
-    cleared += 1;
-  }) as typeof clearTimeout;
-  extension.windowActivity = new WindowActivityGate(true);
-  extension.getConfiguration = () => ({ usageLimitTracking: true });
-  extension.maybeFetchUsageLimits = async () => null;
-
-  try {
-    extension.scheduleQuotaColdRetry();
-    assert.equal(extension.resourceOwnership.snapshotForTests().byKind.timer, 1);
-    extension.stopQuotaColdRetry('window-blur');
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(cleared, 1);
-    assert.equal(extension.resourceOwnership.snapshotForTests().byKind.timer, 0);
-  } finally {
-    global.setTimeout = originalSetTimeout;
-    global.clearTimeout = originalClearTimeout;
-  }
-});
-
 test('extension disposal releases worker and backfill only after provider termination', async () => {
   const extension = bareExtension();
   let finishProviderDispose!: () => void;
@@ -3066,7 +3048,6 @@ test('disposal drains every resource kind and stale callbacks cannot recreate wo
   };
   extension.statusBar = { dispose: () => { hostDisposals += 1; } };
   extension.webviewProvider = { dispose: () => { hostDisposals += 1; } };
-  extension.stopQuotaColdRetry = ClaudeCodeUsageExtension.prototype['stopQuotaColdRetry'];
   extension.stopAutoRefresh = ClaudeCodeUsageExtension.prototype['stopAutoRefresh'];
   extension.stopFileWatching = ClaudeCodeUsageExtension.prototype['stopFileWatching'];
   extension.stopCodexWatching = ClaudeCodeUsageExtension.prototype['stopCodexWatching'];
@@ -3092,7 +3073,6 @@ test('disposal drains every resource kind and stale callbacks cannot recreate wo
     extension.startAutoRefresh();
     await extension.startFileWatching();
     extension.startCodexWatching();
-    extension.scheduleQuotaColdRetry();
     await extension.refreshData(false, 'poll');
   });
   const disposal = extension.dispose();
@@ -3639,7 +3619,6 @@ test('unchanged Claude history republishes Today and rolling 30 days at configur
   I18n.setTimezone('Asia/Hong_Kong');
   extension.localDataClearedRequiresReload = false;
   extension.refreshGate = new RefreshSingleFlight();
-  extension.quotaColdRetryDone = true;
   extension.cache = {
     records: [],
     contentAnalysis: null,
@@ -3757,7 +3736,6 @@ test('the weekly billing window reaches updateData and is reused across unchange
   I18n.setTimezone('Asia/Hong_Kong');
   extension.localDataClearedRequiresReload = false;
   extension.refreshGate = new RefreshSingleFlight();
-  extension.quotaColdRetryDone = true;
   extension.cache = {
     records: [],
     contentAnalysis: null,
@@ -3819,21 +3797,19 @@ test('the weekly billing window reaches updateData and is reused across unchange
       'an unchanged poll reuses the same object, so the dashboard keeps its panel cache',
     );
 
-    // A new array holding the same in-window usage recomputes, finds the result
+    // A new index holding the same in-window usage recomputes, finds the result
     // equal and hands back the previous object, so the panel cache holds. The
-    // memo now points at the new array, so the old corpus is released.
-    const replacedArray = [...extension.cache.records];
-    extension.cache.records = replacedArray;
-    const replaced = extension.weekAggregate(replacedArray);
+    // memo now points at the new index, so the old corpus is released.
+    const replacedIndex = { ...extension.cache.claudeIndex };
+    const replaced = extension.weekAggregate(replacedIndex);
     assert.equal(replaced.data, first.data, 'an equal recompute keeps object identity');
-    assert.equal(extension.weekMemo.records, replacedArray, 'the old array is released');
+    assert.equal(extension.weekMemo.index, replacedIndex, 'the old index is released');
 
     // Usage that actually lands inside the window produces a different object.
-    const grown = [...replacedArray, {
-      timestamp: '2030-03-10T10:00:00.000Z',
-      message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 5, output_tokens: 1 } },
-    }];
-    const changed = extension.weekAggregate(grown);
+    fs.appendFileSync(path.join(project, 'session-week.jsonl'),
+      `${usageLine('grown', '2030-03-10T10:00:00.000Z', 5)}\n`, 'utf8');
+    const grown = await updateClaudeUsageIndex(replacedIndex, root, { analyzeContent: false });
+    const changed = extension.weekAggregate(grown.index);
     assert.notEqual(changed.data, first.data, 'changed usage recomputes');
     assert.equal(changed.data?.totalInputTokens, 45);
 
@@ -4358,7 +4334,6 @@ test('Claude commits a verified index even when rendering its new snapshot throw
   extension.refreshGate = new RefreshSingleFlight();
   extension.cache = { records: [], contentAnalysis: null, manifest: null, claudeIndex: createClaudeUsageIndex(),
     lastUpdate: new Date(0), dataDirectory: null, usageLimits: null };
-  extension.quotaColdRetryDone = true;
   extension.getConfiguration = () => ({ dataDirectory: root, dashboardAutoRefresh: true,
     enableContentAnalysis: false, advicePromptWindowDays: 30, projectGroupingMode: 'flat', contextWindowOverride: 0 });
   extension.maybeFetchUsageLimits = async () => null;
@@ -4425,7 +4400,6 @@ test('real Claude filesystem events flow through manifest, index, and dashboard 
   extension.fileWatcher = undefined;
   extension.fileWatcherLease = undefined;
   extension.watchedDir = null;
-  extension.quotaColdRetryDone = true;
   extension.cache = {
     records: [],
     contentAnalysis: null,
@@ -4583,7 +4557,6 @@ test('rapid settings changes wait for every provider retirement and only latest 
   });
   extension.cancelAdviceNetworks = async () => undefined;
   extension.cancelQuotaNetworks = async () => undefined;
-  extension.stopQuotaColdRetry = () => undefined;
   extension.startAutoRefresh = () => undefined;
   extension.stopFileWatching = () => undefined;
   extension.stopCodexWatching = () => undefined;
@@ -4642,7 +4615,6 @@ for (const focused of [false, true]) {
     });
     extension.cancelAdviceNetworks = async () => undefined;
     extension.cancelQuotaNetworks = async () => undefined;
-    extension.stopQuotaColdRetry = () => undefined;
     extension.startAutoRefresh = () => undefined;
     extension.stopFileWatching = () => undefined;
     extension.stopCodexWatching = () => undefined;
@@ -4711,8 +4683,10 @@ test('changing Claude profiles replaces the quota client and clears account stat
   const quotaUpdates: unknown[] = [];
   const weeklyHistoryUpdates: unknown[] = [];
   extension.outputChannel = null;
+  let oldCredentialReadsKilled = 0;
   extension.apiClient = {
     getCredentialsPath: () => path.join(oldProfile, '.credentials.json'),
+    cancelCredentialRead: () => { oldCredentialReadsKilled += 1; },
   };
   extension.cache = {
     usageLimits: { five_hour: { utilization: 42, resets_at: null } },
@@ -4720,7 +4694,6 @@ test('changing Claude profiles replaces the quota client and clears account stat
     usageLimitsBackoffUntil: new Date(456_000),
     usageLimitsFailStreak: 3,
   };
-  extension.quotaColdRetryDone = true;
   extension.statusBar = { updateQuota: (value: unknown) => quotaUpdates.push(value) };
   extension.webviewProvider = {
     updateQuota: (value: unknown) => quotaUpdates.push(value),
@@ -4739,9 +4712,19 @@ test('changing Claude profiles replaces the quota client and clears account stat
   assert.equal(extension.cache.usageLimitsLastUpdate.getTime(), 0);
   assert.equal(extension.cache.usageLimitsBackoffUntil.getTime(), 0);
   assert.equal(extension.cache.usageLimitsFailStreak, 0);
-  assert.equal(extension.quotaColdRetryDone, false);
   assert.deepEqual(quotaUpdates, [null, null]);
   assert.deepEqual(weeklyHistoryUpdates, [[], []]);
+  assert.equal(oldCredentialReadsKilled, 1, 'the old profile Keychain read is killed');
+});
+
+test('only clear, dispose and profile change kill a pending Keychain credential read', async () => {
+  const extension = bareExtension();
+  const killed: string[] = [];
+  for (const condition of ['window-blur', 'settings-change', 'cancelled', 'extension-dispose', 'profile-change']) {
+    extension.apiClient = { cancelCredentialRead: () => killed.push(condition) };
+    await extension.cancelQuotaNetworks(condition);
+  }
+  assert.deepEqual(killed, ['cancelled', 'extension-dispose', 'profile-change']);
 });
 
 test('a quota response from the previous profile is discarded after a switch', async () => {
@@ -4835,6 +4818,76 @@ test('disabled quota tracking neither calls the provider nor records an observat
   );
   assert.equal(fetches, 0);
   assert.equal(extension.quotaObservationStore.observations.length, 0);
+});
+
+test('concurrent quota callers share one in-flight fetch until it settles', async () => {
+  const extension = bareExtension();
+  let fetches = 0;
+  let release!: (value: unknown) => void;
+  extension.apiClient = {
+    fetchUsageLimits: () => {
+      fetches += 1;
+      return new Promise((resolve) => { release = resolve; });
+    },
+  };
+  extension.claudeProfileGeneration = 0;
+  extension.cache = {
+    usageLimits: null,
+    usageLimitsLastUpdate: new Date(0),
+    usageLimitsBackoffUntil: new Date(0),
+    usageLimitsFailStreak: 0,
+  };
+  extension.isActive = () => false;
+  extension.recordClaudeQuotaObservation = async () => undefined;
+
+  const first = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+  const second = extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+  assert.equal(fetches, 1);
+  const limits = { five_hour: { utilization: 10, resets_at: null } };
+  release(limits);
+  assert.equal(await first, limits);
+  assert.equal(await second, limits);
+
+  extension.cache.usageLimitsLastUpdate = new Date(0);
+  extension.cache.usageLimitsBackoffUntil = new Date(0);
+  extension.apiClient = { fetchUsageLimits: async () => { fetches += 1; throw new Error('transport'); } };
+  await assert.rejects(extension.maybeFetchUsageLimits({ usageLimitTracking: true }));
+  extension.apiClient = { fetchUsageLimits: async () => { fetches += 1; return null; } };
+  assert.equal(await extension.maybeFetchUsageLimits({ usageLimitTracking: true }), limits);
+  assert.equal(fetches, 3, 'a settled or failed fetch never blocks the next one');
+});
+
+test('panel settings reload only for source-affecting keys', () => {
+  const extension = bareExtension();
+  const calls: string[] = [];
+  extension.onConfigurationChanged = () => calls.push('reload');
+  extension.syncProviderUi = () => calls.push('sync');
+  extension.startAutoRefresh = () => calls.push('timer');
+  extension.stopFileWatching = () => calls.push('stop-claude-watch');
+  extension.startFileWatching = async () => { calls.push('start-claude-watch'); };
+  extension.stopCodexWatching = () => calls.push('stop-codex-watch');
+  extension.startCodexWatching = () => calls.push('start-codex-watch');
+  extension.cancelAdviceNetworks = async () => { calls.push('cancel-advice'); };
+  extension.refreshOpenRouterCredits = async () => { calls.push('openrouter'); };
+  extension.refreshData = async () => { calls.push('republish'); };
+  extension.webviewProvider = { invalidatePreparedAiRequests: () => calls.push('invalidate') };
+  extension.getConfiguration = () => ({});
+  const route = (key?: string): string[] => {
+    calls.length = 0;
+    extension.onSettingsChangedFromPanel(key);
+    return [...calls];
+  };
+
+  assert.deepEqual(route('showHeatmap'), ['sync']);
+  assert.deepEqual(route('refreshInterval'), ['timer']);
+  assert.deepEqual(route('fileWatchSeconds'), ['stop-claude-watch', 'start-claude-watch']);
+  assert.deepEqual(route('codex.fileWatchSeconds'), ['stop-codex-watch', 'start-codex-watch']);
+  assert.deepEqual(route('advice.model'), ['invalidate', 'cancel-advice', 'sync']);
+  assert.deepEqual(route('openrouter.apiKey'), ['openrouter']);
+  assert.deepEqual(route('projectGroupingMode'), ['republish']);
+  assert.deepEqual(route('pricingBackend'), ['reload']);
+  assert.deepEqual(route('advice.promptWindowDays'), ['reload']);
+  assert.deepEqual(route(undefined), ['reload']);
 });
 
 test('repeated quota failures use the one-hour backoff cap', async () => {
@@ -5046,3 +5099,47 @@ test('a failed P2 migration write preserves every legacy quota source and retry 
   assert.equal(state.has('ccu.usageLimits.retryable-profile'), true);
   assert.equal(state.has('ccu.quota.migratedCodexIndex.v2'), false);
 });
+test('unavailable credentials hold a fixed 60 s floor without growing the quota backoff', async () => {
+  const extension = bareExtension();
+  const originalNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  extension.cache = {
+    usageLimits: null,
+    usageLimitsLastUpdate: new Date(0),
+    usageLimitsBackoffUntil: new Date(0),
+    usageLimitsFailStreak: 2,
+  };
+  let unavailable = true;
+  let fetches = 0;
+  const fresh = { seven_day: { utilization: 5, resets_at: '2026-09-07T03:24:00.000Z' } };
+  extension.apiClient = {
+    get lastFetchCredentialsUnavailable() { return unavailable; },
+    fetchUsageLimits: async () => { fetches += 1; return unavailable ? null : fresh; },
+    getCredentialsPath: () => '/private/profile/.credentials.json',
+    getLastQuotaIdentitySignal: () => null,
+  };
+  extension.claudeProfileGeneration = 0;
+  extension.isActive = () => false;
+  extension.recordClaudeQuotaObservation = async () => undefined;
+
+  try {
+    await extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+    await extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+    assert.equal(fetches, 1, 'a tick inside the floor does not fetch');
+    assert.equal(extension.cache.usageLimitsFailStreak, 2);
+    assert.equal(extension.cache.usageLimitsBackoffUntil.getTime(), 1_060_000);
+    now += 60_000;
+    await extension.maybeFetchUsageLimits({ usageLimitTracking: true });
+    assert.equal(fetches, 2, 'the floor expires after 60 s');
+    assert.equal(extension.cache.usageLimitsFailStreak, 2);
+    assert.equal(extension.cache.usageLimitsBackoffUntil.getTime(), 1_120_000, 'the floor never grows');
+    now += 60_000;
+    unavailable = false;
+    assert.ok(await extension.maybeFetchUsageLimits({ usageLimitTracking: true }));
+    assert.equal(extension.cache.usageLimitsFailStreak, 0);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+

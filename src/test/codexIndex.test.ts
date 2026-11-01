@@ -40,7 +40,7 @@ import {
 } from '../providers/codex/codexFilePassPool';
 import { pseudonymousIdentityKey } from '../providers/codex/codexIdentity';
 import { parseCodexLine } from '../providers/codex/codexParser';
-import { codexAchievementDayEvidence } from '../achievementCalendar';
+import { codexAchievementCalendarProjection } from '../achievementCalendar';
 import { CODEX_PERIOD_LINEAGE_VERSION } from '../providers/codex/codexPeriodIndex';
 
 const SALT = 'test-machine-salt';
@@ -743,9 +743,14 @@ for (const batched of [false, true]) test(`legacy calendar proof recovers one fi
       // replay bodies rather than blessing otherwise plausible legacy buckets.
       period.days = { '2026-07-19': period.days['2026-07-20'] };
     }
-    const evidence = (index: typeof legacy) => codexAchievementDayEvidence(
-      Object.values(index.files).map(row => row.aggregate), 'UTC', index.coverage.period.allTime.complete,
-    );
+    const evidence = (index: typeof legacy) => {
+      const files = Object.values(index.files).map(({ aggregate }) => ({ ...aggregate, achievementPeriodWitness: {
+        size: aggregate.period?.indexedThrough ?? -1, offset: aggregate.period?.indexedThrough ?? -1, timeZone: 'UTC',
+        expectedPrefixEvents: aggregate.period?.lineagePrefixEvents ?? -1 } }));
+      const { sourceRevision: _revision, ...proof } =
+        codexAchievementCalendarProjection(files, 'UTC', index.coverage.period.allTime.complete).evidence;
+      return proof;
+    };
     assert.equal(legacy.coverage.complete, true);
     assert.equal(legacy.coverage.period.allTime.complete, true);
     assert.equal(evidence(legacy).complete, false);

@@ -32,6 +32,7 @@ import {
 } from './codexStatus';
 import { CodexUsageScopeView } from './providers/codex/codexUsage';
 import { ProviderLimitSnapshot } from './providers/providerTypes';
+import { matchesClaudeQuotaPaceWindow } from './quotaPaceSource';
 import {
   adaptClaudeQuotaPace,
   adaptCodexQuotaPace,
@@ -58,7 +59,6 @@ export class StatusBarManager {
   private showScopedWeekly: boolean = false;
   private showWeeklyQuotaPace: boolean = false;
   private lastClaudePace: QuotaPaceAdapterSnapshot | null = null;
-  private previousClaudePace: QuotaPaceAdapterSnapshot | null = null;
   // Quota display preferences.
   private quotaFiveHourOnly: boolean = false; // show only the 5h window
   private showResetInBar: boolean = false;    // append reset countdown to the bar
@@ -79,7 +79,6 @@ export class StatusBarManager {
     metric: CodexStatusMetric;
     limit: ProviderLimitSnapshot | null;
     pace: QuotaPaceAdapterSnapshot | null;
-    previousPace: QuotaPaceAdapterSnapshot | null;
   } | null = null;
 
   constructor() {
@@ -120,7 +119,6 @@ export class StatusBarManager {
           this.lastCodex.metric,
           this.lastCodex.limit,
           this.lastCodex.pace,
-          this.lastCodex.previousPace,
         );
       } else {
         this.statusBarItem.text = 'CX —';
@@ -141,7 +139,7 @@ export class StatusBarManager {
         this.lastClaudeUsage.sessionData,
       );
     }
-    this.updateQuota(this.lastClaudeQuota, this.lastClaudePace, this.previousClaudePace);
+    this.updateQuota(this.lastClaudeQuota, this.lastClaudePace);
     this.updateContext(this.lastClaudeContext);
   }
 
@@ -172,10 +170,8 @@ export class StatusBarManager {
     this.showWeeklyQuotaPace = showWeeklyQuotaPace && usageLimitTracking;
     if (!this.showWeeklyQuotaPace) {
       this.lastClaudePace = null;
-      this.previousClaudePace = null;
       if (this.lastCodex) {
         this.lastCodex.pace = null;
-        this.lastCodex.previousPace = null;
       }
     }
     if (!showContext) {
@@ -192,10 +188,9 @@ export class StatusBarManager {
         this.lastCodex.metric,
         this.lastCodex.limit,
         this.lastCodex.pace,
-        this.lastCodex.previousPace,
       );
     } else if (this.provider === 'claude' && this.lastClaudeQuota) {
-      this.updateQuota(this.lastClaudeQuota, this.lastClaudePace, this.previousClaudePace);
+      this.updateQuota(this.lastClaudeQuota, this.lastClaudePace);
     }
   }
 
@@ -376,11 +371,9 @@ export class StatusBarManager {
   updateQuota(
     usageLimits: ClaudeApiUsageResponse | null,
     pace: QuotaPaceAdapterSnapshot | null = null,
-    previousPace: QuotaPaceAdapterSnapshot | null = null,
   ): void {
     this.lastClaudeQuota = usageLimits;
     this.lastClaudePace = this.showWeeklyQuotaPace && this.usageLimitTracking ? pace : null;
-    this.previousClaudePace = this.lastClaudePace ? previousPace : null;
     if (this.provider === 'codex') {
       return;
     }
@@ -424,12 +417,12 @@ export class StatusBarManager {
     const tooltip = this.createQuotaTooltip(live, creditsFromUsage(usageLimits));
     if (this.showWeeklyQuotaPace && this.lastClaudePace) {
       const raw = normalizeQuotaWindows(usageLimits);
-      const entries = adaptClaudeQuotaPace({ enabled: true, now: Date.now(), snapshot: this.lastClaudePace, previous: this.previousClaudePace });
+      const entries = adaptClaudeQuotaPace({ enabled: true, now: Date.now(), snapshot: this.lastClaudePace });
       this.appendQuotaPace(tooltip, entries, (entry) => {
         const window = raw[entry.slot];
         const evidence = this.lastClaudePace?.windows.find((w) => w.slot === entry.slot);
         if (!window || !evidence || raw.length > QUOTA_PACE_MAX_WINDOWS || window.kind !== entry.kind ||
-            !this.hasRawClaudePaceNumber(usageLimits, window) ||
+            !matchesClaudeQuotaPaceWindow(usageLimits, evidence) ||
             window.utilization !== evidence.usedPercent || Date.parse(window.resetsAt) !== evidence.resetAt) return null;
         return this.quotaRowLabel(window);
       });
@@ -438,43 +431,16 @@ export class StatusBarManager {
     this.quotaItem.show();
   }
 
-  /** normalizeQuotaWindows intentionally tolerates invalid numeric fields for
-   * the existing quota display. That fallback has no prediction authority.
-   * Unknown weekly-group kinds also cannot establish a seven-day duration.
-   */
-  private hasRawClaudePaceNumber(usage: ClaudeApiUsageResponse | null, window: QuotaWindow): boolean {
-    if (!usage) return false;
-    const entries = usage.limits;
-    if (Array.isArray(entries) && entries.length > 0) {
-      if (entries.length > QUOTA_PACE_MAX_WINDOWS) return false;
-      const usesEntries = entries.some((entry) => ['session', 'weekly_all', 'weekly_scoped'].includes(entry.kind ?? '') ||
-        entry.group === 'session' || entry.group === 'weekly');
-      if (usesEntries) {
-        const matches = entries.filter((entry) => entry.kind === window.kind &&
-          (window.kind === 'weekly_all' || (entry.scope?.model?.display_name || entry.scope?.surface || undefined) === window.scopeLabel));
-        return matches.length === 1 && typeof matches[0].percent === 'number' &&
-          Number.isFinite(matches[0].percent) && matches[0].percent === window.utilization &&
-          matches[0].resets_at === window.resetsAt;
-      }
-    }
-    const legacy = window.kind === 'weekly_all' ? usage.seven_day :
-      window.scopeLabel === 'Opus' ? usage.seven_day_opus :
-      window.scopeLabel === 'Sonnet' ? usage.seven_day_sonnet : null;
-    return !!legacy && typeof legacy.utilization === 'number' && Number.isFinite(legacy.utilization) &&
-      legacy.utilization === window.utilization && legacy.resets_at === window.resetsAt;
-  }
-
   updateCodex(
     scope: CodexUsageScopeView,
     metric: CodexStatusMetric,
     limit: ProviderLimitSnapshot | null,
     pace: QuotaPaceAdapterSnapshot | null = null,
-    previousPace: QuotaPaceAdapterSnapshot | null = null,
   ): void {
     const retainedPace = this.showWeeklyQuotaPace && this.usageLimitTracking ? pace : null;
-    this.lastCodex = { scope, metric, limit, pace: retainedPace, previousPace: retainedPace ? previousPace : null };
+    this.lastCodex = { scope, metric, limit, pace: retainedPace };
     if (this.provider === 'codex') {
-      this.renderCodex(scope, metric, limit, this.lastCodex.pace, this.lastCodex.previousPace);
+      this.renderCodex(scope, metric, limit, this.lastCodex.pace);
     }
   }
 
@@ -494,7 +460,6 @@ export class StatusBarManager {
     metric: CodexStatusMetric,
     limit: ProviderLimitSnapshot | null,
     pace: QuotaPaceAdapterSnapshot | null = null,
-    previousPace: QuotaPaceAdapterSnapshot | null = null,
   ): void {
     const now = Date.now();
     const quotaOptions = { quotaFiveHourOnly: this.quotaFiveHourOnly };
@@ -530,7 +495,7 @@ export class StatusBarManager {
       limit
     ) {
       this.quotaItem.text = `$(dashboard) ${formatted.limitText}`;
-      this.quotaItem.tooltip = this.createCodexQuotaTooltip(limit, now, pace, previousPace);
+      this.quotaItem.tooltip = this.createCodexQuotaTooltip(limit, now, pace);
       this.quotaItem.backgroundColor = this.fillBackground(
         fillLevel(codexQuotaWarningPercent(limit, now, quotaOptions), QUOTA_FILL_THRESHOLDS),
       );
@@ -672,7 +637,6 @@ export class StatusBarManager {
     limit: ProviderLimitSnapshot,
     now: number,
     pace: QuotaPaceAdapterSnapshot | null = null,
-    previousPace: QuotaPaceAdapterSnapshot | null = null,
   ): vscode.MarkdownString {
     const t = I18n.t.popup;
     const copy = I18n.t.providers.codex;
@@ -725,7 +689,7 @@ export class StatusBarManager {
         pace.observedAt === limit.observedAt &&
         limit.windows.length <= QUOTA_PACE_MAX_WINDOWS &&
         limit.windows.filter((window) => window.windowMinutes === 10080).length === 1) {
-      const entries = adaptCodexQuotaPace({ enabled: true, now, snapshot: pace, previous: previousPace });
+      const entries = adaptCodexQuotaPace({ enabled: true, now, snapshot: pace });
       this.appendQuotaPace(md, entries, (entry) => {
         const window = limit.windows[entry.slot];
         const evidence = pace.windows.find((w) => w.slot === entry.slot);

@@ -214,7 +214,7 @@ if (!threads.isMainThread) {
           assert.equal(current.failedFiles, 0);
           assert.equal(current.index.coverage.complete, true);
           assert.equal(current.index.aggregate.total.inputTotal, rowsPerFile * fileCount);
-          assert.equal(ownedWorkers.size, 0, 'terminal replies wait for controller termination');
+          assert.equal(ownedWorkers.size, 1, 'a successful reply keeps one controller for the next refresh');
           // Construct an incomplete legacy period projection in our synthetic
           // cache, to exercise expedited production migration and its parser pool.
           let legacy = JSON.parse(await fs.readFile(indexPath, 'utf8'));
@@ -238,8 +238,8 @@ if (!threads.isMainThread) {
             assert.equal(current.bodyReads, 0);
             assert.equal(current.migration.bytesRead, 0);
             assert.equal(current.indexChanged, false);
-            assert.equal(ownedWorkers.size, 0);
-            assert.equal(observations.size, 0);
+            assert.equal(ownedWorkers.size, 1);
+            assert.equal(observations.size, 1);
             const memory = await settledMemory();
             peakSettledHeapGrowth = Math.max(peakSettledHeapGrowth, memory.heapUsed - warmStarted.heapUsed);
             peakSettledExternalGrowth = Math.max(peakSettledExternalGrowth, memory.external - warmStarted.external);

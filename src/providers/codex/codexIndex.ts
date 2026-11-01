@@ -265,12 +265,34 @@ export interface CodexIndexCoverage {
   indexedBytes: number;
   totalBytes: number;
   complete: boolean;
+  /** Manifest files whose exact compressed bytes failed terminally: never indexed, never usage. */
+  terminalFiles?: number;
   identity: CodexIdentityCoverage;
   period: CodexPeriodCoverage;
   /** Missing only on pre-v2.3.1 schema-3 snapshots. */
   hourly?: CodexHourlyCoverage;
   /** Current-day compatibility projection of `hourly`. */
   today: CodexTodayCoverage;
+}
+
+/** Completeness that excuses only settled terminal compression failures; `complete` itself stays false. */
+export function codexCoverageSettled(coverage: CodexIndexCoverage): {
+  complete: boolean; last7Days: boolean; last30Days: boolean; allTime: boolean; hourly: boolean;
+} {
+  const terminal = coverage.terminalFiles ?? 0;
+  const range = (value: CodexRangeCoverage | undefined): boolean => !!value &&
+    (value.complete || (terminal > 0 && value.migratedFiles + terminal === value.totalFiles));
+  const period = coverage.period;
+  const hourly = coverage.hourly;
+  return {
+    complete: coverage.complete ||
+      (terminal > 0 && coverage.indexedFiles + terminal === coverage.totalFiles),
+    last7Days: range(period?.last7Days),
+    last30Days: range(period?.last30Days),
+    allTime: range(period?.allTime),
+    hourly: !hourly || hourly.complete ||
+      (terminal > 0 && range(period?.last30Days) && hourly.indexedFiles === hourly.totalFiles),
+  };
 }
 
 export interface CodexIdentityCoverage {
@@ -2281,12 +2303,14 @@ function coverageFor(
 ): CodexIndexCoverage {
   let indexedFiles = 0;
   let indexedBytes = 0;
+  let terminalFiles = 0;
   const totalBytes = manifest.files.reduce((sum, file) => sum + file.size, 0);
   for (const entry of manifest.files) {
     const contribution = files[entry.fileKey];
     if (!contribution) {
       continue;
     }
+    if (hasCurrentCompressionFailure(contribution, entry)) terminalFiles += 1;
     const flags = new Set(contribution.qualityFlags);
     const resetIsStale = flags.has('stale-reset-required');
     const parsedBytes = resetIsStale
@@ -2500,6 +2524,7 @@ function coverageFor(
     indexedBytes,
     totalBytes,
     complete: indexedFiles === totalFiles,
+    ...(terminalFiles ? { terminalFiles } : {}),
     identity: {
       exactDuplicateFiles: deduplication.exactDuplicateFileKeys.size,
       ambiguousSessionGroups: deduplication.ambiguousSessionGroups,
@@ -2606,6 +2631,7 @@ function isWarmNoOp(
     (!terminalCount && !previous.coverage.complete) ||
     previous.coverage.totalFiles !== manifest.files.length ||
     previous.coverage.indexedFiles + terminalCount !== manifest.files.length ||
+    (previous.coverage.terminalFiles ?? 0) !== terminalCount ||
     previous.coverage.totalBytes !== totalBytes ||
     previous.coverage.indexedBytes !== availableBytes ||
     (terminalCount ? previous.coverage.period.allTime.migratedFiles + terminalCount !== previous.coverage.period.allTime.totalFiles
@@ -4577,6 +4603,7 @@ function sanitizeCoverage(value: unknown): CodexIndexCoverage {
     finiteNumber(rawToday.indexedFiles),
   );
   const todayTotalFiles = Math.max(0, finiteNumber(rawToday.totalFiles));
+  const terminalFiles = Math.max(0, finiteNumber(coverage.terminalFiles));
   if (!hasValidAsOfDay) {
     last7Days.complete = false;
     last30Days.complete = false;
@@ -4587,6 +4614,7 @@ function sanitizeCoverage(value: unknown): CodexIndexCoverage {
     indexedBytes: finiteNumber(coverage.indexedBytes),
     totalBytes: finiteNumber(coverage.totalBytes),
     complete: coverage.complete === true,
+    ...(terminalFiles ? { terminalFiles } : {}),
     identity: {
       exactDuplicateFiles: Math.max(
         0,

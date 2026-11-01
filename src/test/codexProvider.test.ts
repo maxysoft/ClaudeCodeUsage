@@ -1225,3 +1225,40 @@ test('incomplete base, identity, or required period coverage is partial', async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('settled terminal compression failures stay visible but neither make the refresh partial nor withhold proof', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-codex-provider-terminal-'));
+  try {
+    await mkdir(path.join(root, 'sessions'));
+    const window = { after: 100, through: 200 };
+    const delta = { ...window, provider: 'codex' as const, processed: 100, output: 20,
+      cacheRead: 30, families: { astra: 100, sol: 0, luna: 0 } };
+    const terminalResult = (transientFailures: number): CodexWorkerResult => {
+      const index = calendarWitnessIndex();
+      Object.assign(index.coverage, { complete: false, totalFiles: 2, terminalFiles: 1 });
+      for (const range of ['last7Days', 'last30Days', 'allTime'] as const) {
+        Object.assign(index.coverage.period[range], { migratedFiles: 1, totalFiles: 2, complete: false });
+      }
+      index.coverage.hourly = { ...createEmptyCodexIndex('UTC').coverage.hourly!,
+        indexedFiles: 1, totalFiles: 1, complete: false };
+      return { ...workerResult(index), failedFiles: 1 + transientFailures, achievementUsageDelta: delta };
+    };
+    const provider = new CodexProvider(
+      { enabled: true, codexHome: root, indexPath: 'unused', salt: 'salt', timeZone: 'UTC' },
+      () => new FakeClient([terminalResult(0), terminalResult(1)]),
+    );
+    const settled = await (provider.refresh as any)('background', undefined, true, window);
+    assert.equal(settled.outcome, 'success');
+    assert.equal(settled.diagnostic.failedFiles, 0);
+    assert.deepEqual(settled.achievementUsageDelta, delta);
+    assert.equal(settled.snapshot.coverage.complete, false);
+    assert.equal(settled.snapshot.coverage.terminalFiles, 1);
+    const failing = await (provider.refresh as any)('background', undefined, true, window);
+    assert.equal(failing.outcome, 'partial');
+    assert.equal(failing.diagnostic.failedFiles, 1);
+    assert.equal(failing.achievementUsageDelta, undefined);
+    await provider.dispose();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

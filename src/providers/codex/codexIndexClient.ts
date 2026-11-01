@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
-import { CodexIndexProgress } from './codexIndex';
+import { CodexIndexProgress, CodexIndexV1 } from './codexIndex';
 import { CodexAchievementUsageWindow, copyCodexUsageWindow, copyCodexUsageDelta } from './codexAchievementOrigin';
 import {
   CodexWorkerMessage,
@@ -17,6 +17,7 @@ export interface CodexWorkerLike {
     listener: (message: CodexWorkerMessage) => void,
   ): this;
   on(event: 'error', listener: (error: Error) => void): this;
+  on(event: 'exit', listener: (exitCode: number) => void): this;
   terminate(): Promise<number> | number;
 }
 
@@ -54,6 +55,7 @@ export class CodexIndexClient {
   private termination: Promise<void> | null = null;
   private terminationFailure: unknown = null;
   private disposal: Promise<void> | null = null;
+  private held: { key: string; index: CodexIndexV1 } | null = null;
 
   constructor(private readonly workerFactory: CodexWorkerFactory = defaultWorkerFactory) {}
 
@@ -75,7 +77,15 @@ export class CodexIndexClient {
         // A manual refresh must not be swallowed by a watcher scan that was
         // already in flight. Let the bounded background pass checkpoint, then
         // immediately run one accelerated pass.
-        return this.active.promise.then(() => this.refresh(input, onProgress));
+        const queued = this.active;
+        const run = (): Promise<CodexWorkerResult> => this.refresh(input, onProgress);
+        // A cancelled pass must not let its queued follow-up restart work after cancelAndWait().
+        const cancelled = (): Promise<CodexWorkerResult> =>
+          Promise.reject(new CodexWorkerError('cancelled', 'Codex indexing was cancelled'));
+        return queued.promise.then(
+          () => queued.cancelSent ? cancelled() : run(),
+          (error: unknown) => queued.cancelSent ? Promise.reject(error) : run(),
+        );
       }
       if (onProgress) {
         this.active.progressListeners.push(onProgress);
@@ -102,7 +112,8 @@ export class CodexIndexClient {
       finishing: false,
       profile: input.profile ?? 'background',
     };
-    worker.postMessage({ type: 'refresh', requestId, ...input });
+    worker.postMessage({ type: 'refresh', requestId, ...input,
+      ...(this.held ? { knownIndexKey: this.held.key } : {}) });
     return promise;
   }
 
@@ -138,6 +149,7 @@ export class CodexIndexClient {
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.disposed = true;
+    this.held = null;
     const active = this.active;
     if (active) {
       active.reject(
@@ -170,7 +182,8 @@ export class CodexIndexClient {
     }
     const worker = this.workerFactory();
     worker.on('message', (message) => this.handleMessage(message));
-    worker.on('error', () => this.handleWorkerFailure());
+    worker.on('error', () => this.handleWorkerFailure(worker));
+    worker.on('exit', () => this.handleWorkerFailure(worker));
     this.worker = worker;
     return worker;
   }
@@ -188,18 +201,25 @@ export class CodexIndexClient {
     }
     if (active.finishing) return;
     active.finishing = true;
-    const terminal = message;
+    if (message.type === 'result') {
+      if (this.active === active) this.active = null;
+      const { achievementUsageDelta: rawDelta, index: sent, indexKey, ...committed } = message.result;
+      const index = sent ?? (indexKey !== undefined && this.held?.key === indexKey ? this.held.index : undefined);
+      this.held = index && indexKey !== undefined ? { key: indexKey, index } : null;
+      if (!index) {
+        active.reject(new CodexWorkerError('worker-failed', 'Codex index worker returned no index'));
+        return;
+      }
+      const achievementUsageDelta = !active.cancelSent
+        ? copyCodexUsageDelta(rawDelta, active.achievementUsageWindow) : undefined;
+      active.resolve({ ...committed, index, ...(achievementUsageDelta ? { achievementUsageDelta } : {}) });
+      return;
+    }
+    const { error } = message;
     void this.terminateSettledWorker()
       .then(() => {
         if (this.active === active) this.active = null;
-        if (terminal.type === 'result') {
-          const { achievementUsageDelta: rawDelta, ...committed } = terminal.result;
-          const achievementUsageDelta = !active.cancelSent
-            ? copyCodexUsageDelta(rawDelta, active.achievementUsageWindow) : undefined;
-          active.resolve({ ...committed, ...(achievementUsageDelta ? { achievementUsageDelta } : {}) });
-        } else {
-          active.reject(new CodexWorkerError(terminal.error.code, terminal.error.message));
-        }
+        active.reject(new CodexWorkerError(error.code, error.message));
       })
       .catch(() => {
         if (this.active === active) this.active = null;
@@ -210,7 +230,6 @@ export class CodexIndexClient {
       });
   }
 
-  /** A worker owns no steady-state responsibility after one terminal reply. */
   private async terminateSettledWorker(): Promise<void> {
     const worker = this.worker;
     this.worker = null;
@@ -228,9 +247,14 @@ export class CodexIndexClient {
     }
   }
 
-  private handleWorkerFailure(): void {
+  private handleWorkerFailure(worker: CodexWorkerLike): void {
+    if (worker !== this.worker) return;
     const active = this.active;
-    if (!active || active.finishing) return;
+    if (!active) {
+      void this.terminateSettledWorker().catch(() => undefined);
+      return;
+    }
+    if (active.finishing) return;
     active.finishing = true;
     const settle = (): void => {
       if (this.active === active) this.active = null;

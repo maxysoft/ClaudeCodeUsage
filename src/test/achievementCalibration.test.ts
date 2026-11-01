@@ -278,7 +278,6 @@ test('production runRefresh excludes credentials and quota transport only for lo
       statusBar: { updateQuota: () => undefined },
       webviewProvider: { updateQuota: () => undefined },
       getClaudeQuotaPaceSnapshot: () => undefined,
-      scheduleQuotaColdRetry: () => undefined,
       maybeFetchUsageLimits: async () => { quotaCalls++; credentialReads++; return {}; },
     });
     await extension.runRefresh({ forceReload: false, trigger: 'manual', localOnly });
@@ -297,7 +296,7 @@ function calibrationExtension(directory: string) {
   Object.assign(extension, {
     disposed: false, configurationGeneration: 0, claudeIndexGeneration: 0,
     achievementCalibrationGeneration: 0, achievementCalibration: new AchievementCalibrationSingleFlight(),
-    getConfiguration: () => config, codexProvider: {}, codexRefreshSuspensionDepth: 0,
+    getConfiguration: () => config, settings: { get: () => undefined }, codexProvider: {}, codexRefreshSuspensionDepth: 0,
     refreshGate: new RefreshSingleFlight(),
     cache: { records: [], contentAnalysis: null, manifest: null, claudeIndex: createClaudeUsageIndex(),
       lastUpdate: new Date(0), dataDirectory: null, usageLimits: null },

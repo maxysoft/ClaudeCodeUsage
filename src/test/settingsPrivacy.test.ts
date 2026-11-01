@@ -241,6 +241,25 @@ test('activation can continue without a BYOK key when workspace plaintext needs 
   assert.equal(activeConfiguration.updates.length, 0);
 });
 
+test('an advice-key migration error keeps the OpenRouter key loaded', async () => {
+  activeConfiguration = fakeConfiguration();
+  activeConfiguration.inspect = <T>(key: string) => key === 'advice.apiKey'
+    ? { workspaceValue: 'sk-workspace-plaintext' as T } : {};
+  activeWorkspaceFolders = [];
+  activeFolderConfigurations = new Map();
+  const context = fakeContext({ secrets: new Map([['claudeCodeUsage.secret.openrouter.apiKey', 'sk-or-fixture']]) });
+  const store = new SettingsStore(context);
+
+  assert.equal(
+    await store.initializeSecretsForActivation(),
+    'workspace-secret-requires-manual-migration',
+  );
+  assert.equal(store.get('openrouter.apiKey'), 'sk-or-fixture');
+  assert.equal(store.get('advice.apiKey'), '');
+  assert.equal(context._state.has('ccu.migrated.adviceDefaultFormat.v2.4.1'), false,
+    'advice format stays unpinned until its key migrates');
+});
+
 test('activation loads an existing SecretStorage key when no legacy plaintext remains', async () => {
   activeConfiguration = fakeConfiguration();
   activeWorkspaceFolders = [];

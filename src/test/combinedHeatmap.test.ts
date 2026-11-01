@@ -1,11 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import {
-  claudeDailyPointsFromUsage,
-  codexDailyPointsFromUsage,
-  combinedHeatmapFilename,
-  combinedHeatmapMarkdown,
-  mergeCombinedDailyUsage,
+  CombinedDayUsage,
   sanitizeCombinedHeatmapTitle,
   selectCombinedHeatmapWindow,
 } from '../combinedHeatmap';
@@ -33,94 +29,12 @@ function contrastRatio(foreground: string, background: string): number {
     (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
 }
 
-test('provider mappings preserve the processed-token formulas without double counting', () => {
-  const claude = claudeDailyPointsFromUsage({
-    '2026-07-20': { tokens: 100, cost: 2, sessions: 1 },
-  });
-  const codex = codexDailyPointsFromUsage([{
-    day: '2026-07-20',
-    total: {
-      input: 200,
-      output: 50,
-      cachedInput: 190,
-      reasoning: 40,
-      processed: 99_999,
-    },
-  }]);
-  assert.deepEqual(claude, [{ dateISO: '2026-07-20', processed: 100 }]);
-  assert.deepEqual(codex, [{ dateISO: '2026-07-20', processed: 250 }]);
-});
-
-test('merge de-duplicates identical provider days and zero-fills the missing provider', () => {
-  const daily = mergeCombinedDailyUsage(
-    [
-      { dateISO: '2026-07-19', processed: 30 },
-      { dateISO: '2026-07-19', processed: 30 },
-    ],
-    [
-      { dateISO: '2026-07-19', processed: 5 },
-      { dateISO: '2026-07-20', processed: 7 },
-    ],
-  );
-  assert.deepEqual(daily, {
-    '2026-07-19': {
-      dateISO: '2026-07-19',
-      claudeProcessed: 30,
-      codexProcessed: 5,
-      combinedProcessed: 35,
-    },
-    '2026-07-20': {
-      dateISO: '2026-07-20',
-      claudeProcessed: 0,
-      codexProcessed: 7,
-      combinedProcessed: 7,
-    },
-  });
-});
-
-test('conflicting duplicate provider days fail closed instead of inflating output', () => {
-  assert.throws(
-    () => mergeCombinedDailyUsage([
-      { dateISO: '2026-07-19', processed: 10 },
-      { dateISO: '2026-07-19', processed: 20 },
-    ], []),
-    /Conflicting duplicate daily aggregate/,
-  );
-});
-
-test('single-provider and empty inputs remain valid instead of producing a blank compare contract', () => {
-  assert.deepEqual(
-    mergeCombinedDailyUsage([{ dateISO: '2026-07-20', processed: 9 }], []),
-    {
-      '2026-07-20': {
-        dateISO: '2026-07-20',
-        claudeProcessed: 9,
-        codexProcessed: 0,
-        combinedProcessed: 9,
-      },
-    },
-  );
-  assert.deepEqual(
-    mergeCombinedDailyUsage([], [{ dateISO: '2026-07-20', processed: 11 }]),
-    {
-      '2026-07-20': {
-        dateISO: '2026-07-20',
-        claudeProcessed: 0,
-        codexProcessed: 11,
-        combinedProcessed: 11,
-      },
-    },
-  );
-  assert.deepEqual(mergeCombinedDailyUsage([], []), {});
-});
+const days = (rows: Array<[string, number, number?]>): Record<string, CombinedDayUsage> =>
+  Object.fromEntries(rows.map(([dateISO, claudeProcessed, codexProcessed = 0]) =>
+    [dateISO, { dateISO, claudeProcessed, codexProcessed, combinedProcessed: claudeProcessed + codexProcessed }]));
 
 test('range boundaries use inclusive configured-timezone date keys', () => {
-  const daily = mergeCombinedDailyUsage([
-    { dateISO: '2026-06-20', processed: 1 },
-    { dateISO: '2026-06-21', processed: 2 },
-    { dateISO: '2026-07-20', processed: 3 },
-    { dateISO: '2026-07-21', processed: 4 },
-  ], []);
+  const daily = days([['2026-06-20', 1], ['2026-06-21', 2], ['2026-07-20', 3], ['2026-07-21', 4]]);
   const window = selectCombinedHeatmapWindow(daily, '30d', '2026-07-20');
   assert.equal(window.startDateISO, '2026-06-21');
   assert.deepEqual(Object.keys(window.daily), ['2026-06-21', '2026-07-20']);
@@ -131,10 +45,7 @@ test('SVG is deterministic and tooltips disclose both provider totals and the co
   assert.deepEqual(ACADEMIC_VIOLET_SCALE, [
     '#ebedf0', '#eee8f8', '#d8c9f1', '#bca5e6', '#8668c7', '#4f2f87',
   ]);
-  const daily = mergeCombinedDailyUsage(
-    [{ dateISO: '2026-07-20', processed: 1_200_000 }],
-    [{ dateISO: '2026-07-20', processed: 300_000 }],
-  );
+  const daily = days([['2026-07-20', 1_200_000, 300_000]]);
   const options = { range: '30d' as const, endDateISO: '2026-07-20', title: 'Local AI activity' };
   const first = renderCombinedHeatmapSvg(daily, options);
   const second = renderCombinedHeatmapSvg(daily, options);
@@ -153,10 +64,7 @@ test('SVG is deterministic and tooltips disclose both provider totals and the co
 });
 
 test('combined heatmap supports curated and sanitized custom colour ramps', () => {
-  const daily = mergeCombinedDailyUsage(
-    [{ dateISO: '2026-07-20', processed: 100 }],
-    [{ dateISO: '2026-07-20', processed: 50 }],
-  );
+  const daily = days([['2026-07-20', 100, 50]]);
   const custom = customCombinedHeatmapScale('#0f766e');
   assert.equal(custom.length, 6);
   assert.equal(custom[custom.length - 1], '#0f766e');
@@ -197,12 +105,7 @@ test('combined heatmap exposes deterministic quantile, logarithmic, and linear i
   assert.equal(normalizeCombinedHeatmapIntensityMode('linear'), 'linear');
   assert.equal(normalizeCombinedHeatmapIntensityMode('unexpected'), 'quantile');
 
-  const daily = mergeCombinedDailyUsage([
-    { dateISO: '2026-07-17', processed: 1 },
-    { dateISO: '2026-07-18', processed: 9 },
-    { dateISO: '2026-07-19', processed: 99 },
-    { dateISO: '2026-07-20', processed: 999 },
-  ], []);
+  const daily = days([['2026-07-17', 1], ['2026-07-18', 9], ['2026-07-19', 99], ['2026-07-20', 999]]);
   const base = { range: '30d' as const, endDateISO: '2026-07-20' };
   const logarithmic = renderCombinedHeatmapSvg(daily, { ...base, intensityMode: 'logarithmic' });
   const linear = renderCombinedHeatmapSvg(daily, { ...base, intensityMode: 'linear' });
@@ -228,9 +131,7 @@ test('30d and 90d SVG windows render every date from non-Sunday starts in the co
 });
 
 test('combined rendering zero-fills a date absent from both providers', () => {
-  const daily = mergeCombinedDailyUsage([], [
-    { dateISO: '2026-06-24', processed: 5 },
-  ]);
+  const daily = days([['2026-06-24', 0, 5]]);
   const svg = renderCombinedHeatmapSvg(daily, {
     range: '30d',
     endDateISO: '2026-07-22',
@@ -253,7 +154,7 @@ test('share artifact cannot serialize privacy canaries from extra source fields'
       localPath: '/PRIVACY_CANARY_PATH',
       logContent: 'PRIVACY_CANARY_LOG',
     },
-  } as unknown as Record<string, import('../combinedHeatmap').CombinedDayUsage>;
+  } as unknown as Record<string, CombinedDayUsage>;
   const svg = renderCombinedHeatmapSvg(source, {
     range: '30d',
     endDateISO: '2026-07-20',
@@ -262,15 +163,9 @@ test('share artifact cannot serialize privacy canaries from extra source fields'
   assert.doesNotMatch(svg, /PRIVACY_CANARY/);
 });
 
-test('title, filename, and Markdown are bounded and deterministic', () => {
+test('title is bounded and deterministic', () => {
   assert.equal(sanitizeCombinedHeatmapTitle('  Team\nactivity  ', 'Fallback'), 'Team activity');
   assert.equal(sanitizeCombinedHeatmapTitle('', 'Fallback'), 'Fallback');
-  const filename = combinedHeatmapFilename('90d', '2026-07-20');
-  assert.equal(filename, 'claude-codex-activity-90d-2026-07-20.svg');
-  assert.equal(
-    combinedHeatmapMarkdown(filename, 'Claude + Codex [activity]'),
-    '![Claude + Codex activity](claude-codex-activity-90d-2026-07-20.svg)',
-  );
 });
 
 test('combined exported SVG copy is localized in all eight UI locales', () => {

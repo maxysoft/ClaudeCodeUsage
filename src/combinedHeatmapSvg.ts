@@ -32,9 +32,6 @@ export const COMBINED_ACTIVITY_PALETTES: Record<Exclude<CombinedHeatmapPalette, 
   githubGreen: ['#ebedf0', '#dafbe1', '#aceebb', '#6fdd8b', '#2da44e', '#116329'],
 };
 
-/** Compatibility alias for callers that imported the original scale. */
-export const COMBINED_ACTIVITY_SCALE = ACADEMIC_VIOLET_SCALE;
-
 export function normalizeCombinedHeatmapPalette(value: unknown): CombinedHeatmapPalette {
   return value === 'claudeOrange' || value === 'codexBlue' ||
     value === 'githubGreen' || value === 'custom'

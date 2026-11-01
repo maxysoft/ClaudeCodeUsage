@@ -8,6 +8,7 @@ test('Claude month drill-down accepts the production first-day key and replies t
   const replies: Array<Record<string, unknown>> = [];
   const vscode = {
     ViewColumn: { One: 1 },
+    Uri: { file: (fsPath: string) => ({ fsPath }) },
     window: {
       createWebviewPanel: () => ({
         webview: {

@@ -28,6 +28,7 @@ export interface LocalDataClientSummary {
 
 export interface LocalDataQuotaScopeOption {
   token: string;
+  key: string;
   label: string;
   provider: UsageProvider | 'all';
   itemCount: number;
@@ -89,13 +90,6 @@ export interface ResolvedQuotaScope {
   provider?: UsageProvider;
   accountFingerprint?: string;
 }
-
-export const LOCAL_DATA_SOURCE_EXCLUSIONS = [
-  'Claude provider-owned source logs',
-  'Codex provider-owned source logs',
-  'provider-owned OAuth credentials and cookies',
-  'external account quotas and subscription state',
-] as const;
 
 /** Exact globalState prefixes owned by this extension and eligible for clear-all. */
 export const LOCAL_DATA_GLOBAL_STATE_PREFIXES = [
@@ -260,18 +254,4 @@ export function shouldClearQuotaObservation(
   return (scope.provider === undefined || observation.provider === scope.provider) &&
     (scope.accountFingerprint === undefined ||
       observation.accountFingerprint === scope.accountFingerprint);
-}
-
-export function localDataActionTitle(action: LocalDataAction, locale: string): string {
-  const zh = locale === 'zh-CN';
-  const labels: Record<LocalDataAction, [string, string]> = {
-    'rebuild-codex-index': ['Rebuild Codex derived index', '重建 Codex 派生索引'],
-    'clear-quota-history': ['Clear quota observation history', '清除额度观测历史'],
-    'clear-advice-data': ['Clear advice data', '清除建议数据'],
-    'reset-ui-state': ['Reset dashboard UI state', '重置仪表板界面状态'],
-    'reset-sharing-preferences': ['Reset sharing preferences', '重置分享偏好'],
-    'clear-byok-secret': ['Clear BYOK advice secret', '清除 BYOK 建议密钥'],
-    'clear-all-derived-data': ['Clear all extension-derived data', '清除全部插件派生数据'],
-  };
-  return labels[action][zh ? 1 : 0];
 }

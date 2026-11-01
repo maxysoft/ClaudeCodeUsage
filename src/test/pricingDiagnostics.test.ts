@@ -4,11 +4,11 @@ import { execFileSync } from 'node:child_process';
 
 import {
   calculateCostBreakdown,
-  calculateCostFromTokens,
   getExactModelPricing,
   getModelPricing,
   setPricingBackend,
 } from '../pricing';
+import { calculateCostFromTokens } from './helpers/costTotal';
 
 const usage = {
   input_tokens: 1_000,

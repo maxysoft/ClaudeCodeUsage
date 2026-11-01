@@ -34,12 +34,6 @@ export interface QuotaPaceAdapterInput {
   readonly enabled: boolean;
   readonly now: number;
   readonly snapshot: QuotaPaceAdapterSnapshot | null;
-  /** Optional immediately preceding observation from the SAME verified source.
-   * Do not replace this with a historical reset-cluster representative. The
-   * owner retains any discontinuity until a trustworthy new window is observed.
-   * Slots must preserve window identity; otherwise mark trust ambiguous.
-   */
-  readonly previous?: QuotaPaceAdapterSnapshot | null;
 }
 
 export interface QuotaPaceAdapterEntry {
@@ -55,27 +49,6 @@ function rejected(slot = 0, kind: QuotaPaceAdapterEntry['kind'] = 'weekly_all'):
 function bounded(snapshot: QuotaPaceAdapterSnapshot): boolean {
   return Array.isArray(snapshot.windows) && snapshot.windows.length <= QUOTA_PACE_MAX_WINDOWS &&
     snapshot.windows.every((window) => Number.isInteger(window.slot) && window.slot >= 0 && window.slot < QUOTA_PACE_MAX_WINDOWS);
-}
-
-function continuous(current: QuotaPaceAdapterSnapshot, window: QuotaPaceAdapterWindow, previous?: QuotaPaceAdapterSnapshot | null): boolean {
-  if (!previous) return true;
-  if (!bounded(previous) || previous.accountWindowTrust !== 'trusted' || previous.source !== 'observed') return false;
-  if (current.observedAt === null || previous.observedAt === null ||
-      !Number.isFinite(previous.observedAt) || current.observedAt < previous.observedAt) return false;
-  const matches = previous.windows.filter((prior) => prior.slot === window.slot && prior.kind === window.kind);
-  if (matches.length !== 1) return false;
-  const prior = matches[0];
-  if (!Number.isFinite(prior.usedPercent) || prior.usedPercent < 0 || prior.usedPercent > 100 ||
-      prior.periodMs !== QUOTA_PACE_WEEK_MS || prior.resetAt === null || !Number.isFinite(prior.resetAt) ||
-      previous.observedAt < prior.resetAt - QUOTA_PACE_WEEK_MS || previous.observedAt >= prior.resetAt) return false;
-  if (window.resetAt === prior.resetAt) {
-    return window.usedPercent >= prior.usedPercent &&
-      (current.observedAt !== previous.observedAt || window.usedPercent === prior.usedPercent);
-  }
-  // A decrease is allowed only after a verified ordinary rollover. Early reset
-  // drift and arbitrary account/window substitution are never extrapolated.
-  return window.resetAt !== null && window.resetAt === prior.resetAt + QUOTA_PACE_WEEK_MS &&
-    current.observedAt >= prior.resetAt;
 }
 
 function adapt(input: QuotaPaceAdapterInput, provider: 'claude' | 'codex'): QuotaPaceAdapterEntry[] {
@@ -96,8 +69,7 @@ function adapt(input: QuotaPaceAdapterInput, provider: 'claude' | 'codex'): Quot
   return windows.map((window): QuotaPaceAdapterEntry => {
     const kind = window.kind as QuotaPaceAdapterEntry['kind'];
     if (duplicateSlot || duplicateAccount) return rejected(window.slot, kind);
-    const trust = continuous(snapshot, window, input.previous) ? snapshot.accountWindowTrust : 'discontinuous';
-    return {
+        return {
       slot: window.slot,
       kind,
       result: calculateQuotaPace({
@@ -109,7 +81,7 @@ function adapt(input: QuotaPaceAdapterInput, provider: 'claude' | 'codex'): Quot
           periodMs: window.periodMs,
           usedFraction: typeof window.usedPercent === 'number' ? window.usedPercent / 100 : NaN,
           source: snapshot.source,
-          accountWindowTrust: trust,
+          accountWindowTrust: snapshot.accountWindowTrust,
         },
       }),
     };

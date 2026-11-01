@@ -47,7 +47,7 @@ test('background eligibility is persisted and controls historical work only', ()
   assert.match(extension, /codexIndexGeneration/);
 });
 
-test('Codex worker is terminal after every result instead of remaining idle', () => {
+test('Codex worker stays alive only after a successful result and stops after an error', () => {
   const source = readFileSync(
     path.join(root, 'src', 'providers', 'codex', 'codexIndexClient.ts'),
     'utf8',
@@ -55,5 +55,5 @@ test('Codex worker is terminal after every result instead of remaining idle', ()
   assert.match(source, /terminateSettledWorker/);
   assert.match(source, /Promise\.resolve\(worker\.terminate\(\)\)/);
   assert.match(source, /await termination/);
-  assert.match(source, /terminateSettledWorker\(\)[\s\S]*active\.resolve/);
+  assert.match(source, /message\.type === 'result'[\s\S]*active\.resolve[\s\S]*terminateSettledWorker\(\)[\s\S]*active\.reject/);
 });

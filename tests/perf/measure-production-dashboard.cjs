@@ -82,7 +82,7 @@ Module._load = load;
     const diagnostics = [];
     const e = Object.create(ClaudeCodeUsageExtension.prototype);
     Object.assign(e, {
-      configurationGeneration: 0, claudeIndexGeneration: 0, disposed: false, quotaColdRetryDone: true,
+      configurationGeneration: 0, claudeIndexGeneration: 0, disposed: false,
       settings, refreshGate: new RefreshSingleFlight(),
       providerRefreshStates: { claude: { failed: false }, codex: { failed: false } }, deliveredRefreshStates: {},
       cache: { records: [], contentAnalysis: null, manifest: null, claudeIndex: createClaudeUsageIndex(),

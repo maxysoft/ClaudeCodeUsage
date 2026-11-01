@@ -863,12 +863,14 @@ export class SettingsStore {
     if (!secrets) {
       throw new SettingsSecretMigrationError('secret-storage-unavailable');
     }
-    try {
-      const rootConfiguration = this.cfg();
-      for (const def of SETTINGS) {
-        if (def.storage !== 'secret') {
-          continue;
-        }
+    let firstError: SettingsSecretMigrationError | undefined;
+    let adviceKeyFailed = false;
+    const rootConfiguration = this.cfg();
+    for (const def of SETTINGS) {
+      if (def.storage !== 'secret') {
+        continue;
+      }
+      try {
         const storageKey = this.secretKey(def.key);
         let value = await secrets.get(storageKey);
         const legacyStateKey = STATE_PREFIX + def.key;
@@ -961,15 +963,22 @@ export class SettingsStore {
         if (value) {
           this.secretValues.set(def.key, value);
         }
+      } catch (error) {
+        firstError ??= error instanceof SettingsSecretMigrationError
+          ? error
+          : new SettingsSecretMigrationError('secret-storage-failed');
+        adviceKeyFailed ||= def.key === 'advice.apiKey';
       }
-      await this.migrateAdviceDefaultFormat();
-    } catch (error) {
-      this.secretValues.clear();
-      if (error instanceof SettingsSecretMigrationError) {
-        throw error;
-      }
-      throw new SettingsSecretMigrationError('secret-storage-failed');
     }
+    if (!adviceKeyFailed) {
+      try {
+        await this.migrateAdviceDefaultFormat();
+      } catch {
+        this.secretValues.delete('advice.apiKey');
+        firstError ??= new SettingsSecretMigrationError('secret-storage-failed');
+      }
+    }
+    if (firstError) throw firstError;
   }
 
   /** Runs before activation exposes a key to advice/Optimizer. New installs use
@@ -1009,7 +1018,6 @@ export class SettingsStore {
       await this.initializeSecrets();
       return null;
     } catch (error) {
-      this.secretValues.clear();
       return error instanceof SettingsSecretMigrationError
         ? error.code
         : 'secret-storage-failed';

@@ -81,8 +81,27 @@ test('Claude advice consumes the materialized index snapshot instead of rebuildi
   const end = source.indexOf('private codexHistoricalWorkPending', start);
   assert.ok(start >= 0 && end > start);
   const builder = source.slice(start, end);
-  assert.match(builder, /claudeUsageDashboardSnapshot\s*\(/);
-  assert.match(builder, /adviceWindowDays:\s*windowDays/);
+  assert.match(builder, /this\.claudeRenderSnapshot\?\.adviceWindow/);
+  assert.doesNotMatch(builder, /claudeUsageDashboardSnapshot\s*\(/, 'no second full snapshot per UI sync');
+  const materializerStart = source.indexOf('private materializeClaudeDashboard');
+  const materializer = source.slice(materializerStart, source.indexOf('private async runRefresh', materializerStart));
+  assert.match(materializer, /adviceWindowDays:/);
   assert.doesNotMatch(builder, /this\.cache\.records/);
   assert.doesNotMatch(builder, /ClaudeDataLoader\.(?:getAllTimeData|getSessionBreakdown)/);
+});
+
+test('the advice preview verifies and shows the fallback body behind a localized label in every locale', () => {
+  const webview = readFileSync(path.join(root, 'src', 'webview.ts'), 'utf8');
+  assert.match(webview, /message\.fallbackBody/);
+  assert.match(webview, /message\.fallbackSha256/);
+  assert.match(webview, /__adviceCopy\.fallbackBodyLabel/);
+  const i18n = readFileSync(path.join(root, 'src', 'i18n.ts'), 'utf8');
+  assert.equal(i18n.match(/^\s+fallbackBodyLabel:/gm)?.length, 9);
+});
+
+test('Claude advice reuses the render snapshot only when it came from the committed index', () => {
+  const source = readFileSync(path.join(root, 'src', 'extension.ts'), 'utf8');
+  const start = source.indexOf('private buildAdviceEffectivenessProviderStates');
+  const builder = source.slice(start, source.indexOf('private codexHistoricalWorkPending', start));
+  assert.match(builder, /claudeRenderSnapshotIndex === this\.cache\.claudeIndex/);
 });

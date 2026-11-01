@@ -150,10 +150,10 @@ export interface AdviceContractInput {
   provenance: AdviceProvenance;
 }
 
-const ID_PATTERN = /^[a-z][a-z0-9._-]{0,95}$/;
+export const ADVICE_ID_PATTERN = /^[a-z][a-z0-9._-]{0,95}$/;
 
 export function isAdviceIdentifier(value: string): boolean {
-  return ID_PATTERN.test(value);
+  return ADVICE_ID_PATTERN.test(value);
 }
 
 function uniqueIds<T extends { id: string }>(items: T[], label: string, issues: string[]): Set<string> {

@@ -167,8 +167,6 @@ const SONNET_5_INTRO: ModelPricing = {
 };
 
 // Sonnet 5.5 — verified 2026-09-30, including the separate 1h TTL rate.
-// Distinct object from SONNET_5_INTRO on purpose: getModelPricing() compares by
-// identity to apply the Sonnet 5 introductory cutover, which 5.5 must not hit.
 // https://platform.claude.com/docs/en/about-claude/pricing
 const SONNET_55: ModelPricing = {
   input_cost_per_token: 2 / MILL,
@@ -522,7 +520,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-20250514': OPUS_LEGACY,
 
   // Claude Sonnet 5 — introductory $2 / $10 tier until 2026-09-01 (see
-  // SONNET_5_INTRO); the timestamp-aware switch lives in getModelPricing().
+  // SONNET_5_INTRO); the timestamp-aware switch lives in sonnet5PricingAt().
   'claude-sonnet-5': SONNET_5_INTRO,
 
   // Sonnet 5.5 is a dedicated rate, not a generic Sonnet fallback.
@@ -658,7 +656,7 @@ function inferPricingByFamily(modelName: string): { pricing: ModelPricing; famil
  * @returns Pricing information, or null if not found
  */
 export function getModelPricing(modelName: string | undefined, atMs?: number): ModelPricing | null {
-  return withSonnet5Cutover(resolveModelPricing(modelName, true, true), atMs);
+  return resolveModelPricing(modelName, true, true, atMs);
 }
 
 /** Current floating estimate coverage: explicit runtime/built-in/family rates
@@ -666,18 +664,24 @@ export function getModelPricing(modelName: string | undefined, atMs?: number): M
  * network or price update, and missing component fields remain missing.
  */
 export function getCurrentEstimatePricing(modelName: string | undefined): ModelPricing | null {
-  return withSonnet5Cutover(resolveModelPricing(modelName, false, false));
+  return resolveModelPricing(modelName, false, false);
 }
 
 // Sonnet 5's $2 / $10 rate is introductory: usage from 2026-09-01 onward is
 // billed at the standard Sonnet tier. Undated lookups (UI rate display) use
 // "now" so the shown rate always matches what a request would cost today.
-function withSonnet5Cutover(pricing: ModelPricing | null, atMs?: number): ModelPricing | null {
-  return pricing === SONNET_5_INTRO && (atMs ?? Date.now()) >= SONNET_5_STANDARD_START_MS ? SONNET : pricing;
+// Keyed on the model label, not the resolved rate object, so a LiteLLM runtime
+// override (flat rates, no dates) cannot bypass the cutover.
+const SONNET_5_LABEL =
+  /^(?:[a-z0-9._-]+\/)*(?:(?:[a-z-]+\.)?anthropic\.)?(?:claude-)?sonnet-5(?:[-@]\d{8})?(?:-v\d+(?::\d+)?)?$/i;
+
+function sonnet5PricingAt(modelName: string, atMs?: number): ModelPricing | null {
+  if (!SONNET_5_LABEL.test(modelName)) return null;
+  return (atMs ?? Date.now()) >= SONNET_5_STANDARD_START_MS ? SONNET : SONNET_5_INTRO;
 }
 
 function resolveModelPricing(modelName: string | undefined, genericDefault: boolean,
-  diagnostics: boolean): ModelPricing | null {
+  diagnostics: boolean, atMs?: number): ModelPricing | null {
   if (typeof modelName !== 'string' || !modelName || modelName === '<unknown>') {
     return null;
   }
@@ -698,6 +702,9 @@ function resolveModelPricing(modelName: string | undefined, genericDefault: bool
       return bedrockPricing;
     }
   }
+
+  const sonnet5 = sonnet5PricingAt(modelName, atMs);
+  if (sonnet5) return sonnet5;
 
   // Try different variation matches (similar to ccusage logic)
   const variations = [modelName, `anthropic/${modelName}`, `claude-3-5-${modelName}`, `claude-3-${modelName}`, `claude-${modelName}`];
@@ -768,7 +775,7 @@ function warnUnknownModelOnce(modelName: string, family: string): void {
  * unauditable dollar figure. Runtime LiteLLM overrides are also excluded so a
  * historical trend is recalculated against one reviewable built-in rate table.
  */
-export function getExactModelPricing(modelName: string | undefined): ModelPricing | null {
+export function getExactModelPricing(modelName: string | undefined, atMs?: number): ModelPricing | null {
   if (typeof modelName !== 'string' || !modelName || modelName === '<unknown>') {
     return null;
   }
@@ -788,7 +795,7 @@ export function getExactModelPricing(modelName: string | undefined): ModelPricin
   ];
   for (const variation of variations) {
     if (Object.prototype.hasOwnProperty.call(MODEL_PRICING, variation)) {
-      return MODEL_PRICING[variation];
+      return sonnet5PricingAt(base, atMs) ?? MODEL_PRICING[variation];
     }
   }
   return null;
@@ -825,19 +832,8 @@ export function calculateCostFromPricing(tokens: TokenUsage, pricing: ModelPrici
 }
 
 /**
- * Calculate total cost of model usage
- * @param tokens Token usage
- * @param modelName Model name
- * @returns Total cost (USD), returns 0 if pricing not found
- */
-export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | undefined, atMs?: number): number {
-  const parts = calculateCostBreakdown(tokens, modelName, atMs);
-  return parts.input + parts.output + parts.cacheWrite + parts.cacheRead;
-}
-
-/**
  * Break a model's cost down by token type (input / output / cache write / cache read).
- * The four components sum to the same total as calculateCostFromTokens.
+ * The four components sum to the total cost.
  *
  * Honours two per-record billing modifiers when the usage carries them:
  * - speed: "fast" swaps in the fast-mode premium rates (Opus 4.7/4.8);

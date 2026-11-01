@@ -1,5 +1,6 @@
 import type { ApiHeatmapConfig, ApiHeatmapDaily, ApiHeatmapDailyUsage, ApiHeatmapMetric, ApiHeatmapProvider } from './apiHeatmap';
 import { addCalendarDays } from './combinedHeatmap';
+import { parseDayKey } from './dateKeys';
 import type { CodexDailyUsageView } from './providers/codex/codexUsage';
 import type { UsageData } from './types';
 import {getCurrentEstimatePricing} from './pricing';
@@ -129,8 +130,8 @@ function codexDay(row: CodexDailyUsageView, amounts: boolean): ApiHeatmapDailyUs
 }
 
 function calendarKey(value: string): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Invalid heatmap daily date');
-  return addCalendarDays(value, 0);
+  if (!Number.isFinite(parseDayKey(value))) throw new Error('Invalid heatmap daily date');
+  return value;
 }
 
 /** Read date keys to locate the selected interval in an existing descending

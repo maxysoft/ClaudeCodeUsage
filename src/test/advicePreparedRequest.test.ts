@@ -359,3 +359,92 @@ test('prepared request fails closed for subscription OAuth, missing BYOK, stale 
   );
   assert.equal(calls, 0);
 });
+
+test('plain HTTP endpoints are accepted only for loopback hosts', () => {
+  for (const apiUrl of [
+    'http://localhost:8080/v1',
+    'http://LOCALHOST/v1',
+    'http://127.0.0.1/v1',
+    'http://127.9.8.7:1234',
+    'http://[::1]:8080/v1',
+  ]) {
+    assert.doesNotThrow(() => prepareAiInvocation(invocationInput({ apiUrl })), apiUrl);
+  }
+  for (const apiUrl of [
+    'http://proxy.example.invalid/v1',
+    'http://localhost.evil.example/v1',
+    'http://127.0.0.1.evil.example/v1',
+    'http://127.0.0.1@evil.example/v1',
+    'http://10.0.0.1/v1',
+    'http://0.0.0.0/v1',
+    'http://[::2]/v1',
+  ]) {
+    assert.throws(() => prepareAiInvocation(invocationInput({ apiUrl })), /HTTPS|credentials/, apiUrl);
+  }
+});
+
+const fixtureResponseSchema = {
+  name: 'submit_fixture',
+  schema: {
+    type: 'object',
+    properties: { answer: { type: 'string' } },
+    required: ['answer'],
+    additionalProperties: false,
+  },
+};
+
+function withResponseSchema(overrides: Partial<PrepareAiInvocationInput>): PrepareAiInvocationInput {
+  return { ...invocationInput(overrides), responseSchema: fixtureResponseSchema } as unknown as PrepareAiInvocationInput;
+}
+
+test('Anthropic structured output forces one tool whose input_schema is the response schema', () => {
+  const body = JSON.parse(previewAiInvocation(prepareAiInvocation(withResponseSchema({
+    apiFormat: 'anthropic',
+    apiUrl: 'https://api.anthropic.com',
+  }))).body);
+  assert.deepEqual(body.tools, [{ name: 'submit_fixture', input_schema: fixtureResponseSchema.schema }]);
+  assert.deepEqual(body.tool_choice, { type: 'tool', name: 'submit_fixture' });
+  assert.equal(body.thinking, undefined);
+  assert.equal(body.response_format, undefined);
+});
+
+test('OpenAI-compatible structured output uses a strict json_schema response_format', () => {
+  const body = JSON.parse(previewAiInvocation(prepareAiInvocation(withResponseSchema({}))).body);
+  assert.deepEqual(body.response_format, {
+    type: 'json_schema',
+    json_schema: { name: 'submit_fixture', strict: true, schema: fixtureResponseSchema.schema },
+  });
+  assert.equal(body.tools, undefined);
+});
+
+test('the preview shows the schema-less fallback body and hash only when a fallback exists', () => {
+  const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+  const preview = previewAiInvocation(prepareAiInvocation(withResponseSchema({}))) as any;
+  assert.ok(preview.fallbackBody, 'fallback body previewed');
+  assert.equal(JSON.parse(preview.fallbackBody).response_format, undefined);
+  assert.equal(preview.fallbackSha256, sha(preview.fallbackBody));
+  assert.equal(preview.fallbackUtf8Bytes, Buffer.byteLength(preview.fallbackBody, 'utf8'));
+  const plain = previewAiInvocation(prepareAiInvocation(invocationInput())) as any;
+  assert.equal(plain.fallbackBody, undefined);
+  const anthropic = previewAiInvocation(prepareAiInvocation(withResponseSchema({
+    apiFormat: 'anthropic',
+    apiUrl: 'https://api.anthropic.com',
+  }))) as any;
+  assert.equal(anthropic.fallbackBody, undefined);
+});
+
+test('the fallback resend carries exactly the previewed fallback bytes and is integrity checked', async () => {
+  const prepared = prepareAiInvocation(withResponseSchema({}));
+  const preview = previewAiInvocation(prepared) as any;
+  let sent: Uint8Array | undefined;
+  await sendPreparedAiInvocation(prepared, { backend: 'api', apiKey: 'k' }, async (request) => {
+    sent = request.fallbackCanonicalBytes;
+  });
+  assert.equal(Buffer.from(sent!).toString('utf8'), preview.fallbackBody);
+  assert.equal(createHash('sha256').update(sent!).digest('hex'), preview.fallbackSha256);
+  (prepared as any).fallbackCanonicalBytes[0] ^= 1;
+  await assert.rejects(
+    sendPreparedAiInvocation(prepared, { backend: 'api', apiKey: 'k' }, async () => undefined),
+    /integrity/,
+  );
+});

@@ -138,11 +138,6 @@ test('BYOK privacy copy points every locale to SecretStorage, not plaintext sett
           })()
         : I18n.settingText('advice.apiKey');
       assert.match(text.help ?? '', /SecretStorage/, `${lang}: BYOK help must name SecretStorage`);
-      assert.doesNotMatch(
-        I18n.t.popup.adviceDemoNotice,
-        /claudeCodeUsage\.advice\.apiKey/,
-        `${lang}: demo must not direct users to the retired plaintext setting`,
-      );
       assert.ok(I18n.t.popup.secretMigrationFailed.length > 20, `${lang}: needs migration failure copy`);
       assert.ok(I18n.t.popup.secretMigrationWorkspace.length > 20, `${lang}: needs workspace migration copy`);
       assert.doesNotMatch(

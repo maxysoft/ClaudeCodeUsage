@@ -21,6 +21,7 @@ import {
   CodexIndexV1,
   createEmptyCodexIndex,
   loadCodexIndex,
+  saveCodexIndexAtomic,
 } from '../providers/codex/codexIndex';
 import { runCodexWorkerRefresh } from '../providers/codex/codexIndexWorker';
 import { recommendedCodexBackfillWorkers } from '../providers/codex/codexFilePassPool';
@@ -285,6 +286,104 @@ test('a foreground refresh arriving during background work queues one accelerate
   client.dispose();
 });
 
+test('a queued foreground refresh still runs and reports its own result when the background pass fails', async () => {
+  const firstWorker = new FakeWorker();
+  const secondWorker = new FakeWorker();
+  const workers = [firstWorker, secondWorker];
+  const client = new CodexIndexClient(() => workers.shift()!);
+  const background = client.refresh({ ...request, profile: 'background' });
+  const foreground = client.refresh({ ...request, profile: 'foreground' });
+  const backgroundRejected = assert.rejects(background, { code: 'busy' });
+  firstWorker.emitMessage({ type: 'error', requestId: firstWorker.requests[0].requestId,
+    error: { code: 'busy', message: 'Another Codex usage refresh is already running' } });
+  await backgroundRejected;
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = secondWorker.requests[0];
+  assert.ok(second && second.type === 'refresh');
+  assert.equal(second.profile, 'foreground');
+  const own = { ...result(), bodyReads: 7 };
+  secondWorker.emitMessage({ type: 'result', requestId: second.requestId, result: own });
+  assert.deepEqual(await foreground, own);
+  await client.dispose();
+});
+
+test('cancelling the background pass also cancels its queued foreground refresh', async () => {
+  const worker = new FakeWorker();
+  const client = new CodexIndexClient(() => worker);
+  const background = client.refresh({ ...request, profile: 'background' });
+  const foreground = client.refresh({ ...request, profile: 'foreground' });
+  client.cancel();
+  worker.emitMessage({ type: 'error', requestId: worker.requests[0].requestId,
+    error: { code: 'cancelled', message: 'Codex indexing was cancelled' } });
+  await assert.rejects(background, { code: 'cancelled' });
+  await assert.rejects(foreground, { code: 'cancelled' });
+  assert.equal(worker.requests.filter((item) => item.type === 'refresh').length, 1);
+  await client.dispose();
+});
+
+test('a cancelled background pass that still resolves does not start the queued foreground refresh', async () => {
+  const worker = new FakeWorker();
+  const client = new CodexIndexClient(() => worker);
+  const background = client.refresh({ ...request, profile: 'background' });
+  const foreground = client.refresh({ ...request, profile: 'foreground' });
+  client.cancel();
+  worker.emitMessage({ type: 'result', requestId: worker.requests[0].requestId, result: result() });
+  await background;
+  await assert.rejects(foreground, { code: 'cancelled' });
+  assert.equal(worker.requests.filter((item) => item.type === 'refresh').length, 1);
+  await client.dispose();
+});
+
+test('a worker exit without an error event fails the active refresh and the next refresh spawns a fresh worker', async () => {
+  const workers: FakeWorker[] = [];
+  const client = new CodexIndexClient(() => { const w = new FakeWorker(); workers.push(w); return w; });
+  const first = client.refresh(request);
+  workers[0].emit('exit', 1);
+  workers[0].emit('error', new Error('late'));
+  await assert.rejects(first, { code: 'worker-failed' });
+  const second = client.refresh(request);
+  assert.equal(workers.length, 2);
+  workers[1].emitMessage({ type: 'result', requestId: workers[1].requests[0].requestId, result: result() });
+  await second;
+  workers[1].emit('exit', 1);
+  await client.whenIdle();
+  const third = client.refresh(request);
+  const thirdOutcome = assert.rejects(third, { code: 'disposed' });
+  assert.equal(workers.length, 3);
+  await client.dispose();
+  await thirdOutcome;
+});
+
+test('settled terminal compression failures do not keep the worker in expedited backfill', async () => {
+  const budgets: Array<{ maxFilePasses: number; maxBytes: number }> = [];
+  let pools = 0;
+  for (const indexedFiles of [1, 0]) {
+    const previous = createEmptyCodexIndex(request.timeZone);
+    previous.files['corrupt-log'] = {} as any;
+    Object.assign(previous.coverage, { indexedFiles, totalFiles: 2, complete: false, terminalFiles: 1 });
+    Object.assign(previous.coverage.period.allTime, { migratedFiles: indexedFiles, totalFiles: 2, complete: false });
+    await runCodexWorkerRefresh({ type: 'refresh', requestId: `terminal-${indexedFiles}`, ...request }, {
+      isCancelled: () => false,
+      post: () => undefined,
+      acquireCodexIndexLease: async () => ({ release: async () => undefined }),
+      loadCodexIndex: async () => previous,
+      scanCodexManifest: async () => ({ files: [{}, {}] as any, persistable: {} }),
+      updateCodexIndex: async (_previous, _manifest, options) => {
+        budgets.push(options.budget!);
+        return { index: previous, indexChanged: false, bodyReads: 0, failedFiles: 1,
+          migration: { filePasses: 0, bytesRead: 0, pending: false } };
+      },
+      saveCodexIndexAtomic: async () => undefined,
+      createCodexFilePassPool: () => { pools += 1; return { run: async () => undefined, dispose: async () => undefined }; },
+    });
+  }
+  assert.deepEqual(budgets, [
+    { maxFilePasses: CODEX_REFRESH_BACKGROUND_MAX_FILE_PASSES, maxBytes: CODEX_REFRESH_BACKGROUND_MAX_BYTES },
+    { maxFilePasses: CODEX_REFRESH_BACKFILL_MAX_FILE_PASSES, maxBytes: CODEX_REFRESH_BACKFILL_MAX_BYTES },
+  ]);
+  assert.equal(pools, 1);
+});
+
 test('cancel sends exactly one message for the active request', async () => {
   const worker = new FakeWorker();
   const client = new CodexIndexClient(() => worker);
@@ -360,18 +459,18 @@ test('terminal refresh remains owned until the worker has actually terminated', 
     return worker;
   });
   let firstSettled = false;
-  const first = client.refresh(request).finally(() => {
+  const first = client.refresh(request).catch((error: unknown) => error).finally(() => {
     firstSettled = true;
   });
   const firstRequest = firstWorker.requests[0];
   if (firstRequest.type !== 'refresh') throw new Error('expected refresh');
 
   firstWorker.emitMessage({
-    type: 'result',
+    type: 'error',
     requestId: firstRequest.requestId,
-    result: result(),
+    error: { code: 'refresh-failed', message: 'Codex usage refresh could not be completed' },
   });
-  const sharedWhileStopping = client.refresh(request);
+  const sharedWhileStopping = client.refresh(request).catch((error: unknown) => error);
   await Promise.resolve();
   assert.equal(firstSettled, false);
   assert.equal(secondWorker.requests.length, 0);
@@ -382,6 +481,158 @@ test('terminal refresh remains owned until the worker has actually terminated', 
   assert.equal(firstWorker.terminated, 1);
   assert.equal(secondWorker.requests.length, 0);
   await client.dispose();
+});
+
+test('a successful reply keeps the worker for the next refresh until dispose', async () => {
+  const worker = new FakeWorker();
+  let created = 0;
+  const client = new CodexIndexClient(() => { created += 1; return worker; });
+  for (let i = 0; i < 2; i++) {
+    const pending = client.refresh(request);
+    worker.emitMessage({ type: 'result', requestId: worker.requests[i].requestId, result: result() });
+    await pending;
+  }
+  assert.equal(created, 1);
+  assert.equal(worker.terminated, 0);
+  await client.dispose();
+  assert.equal(worker.terminated, 1);
+});
+
+test('an idle kept-alive worker that fails is replaced on the next refresh', async () => {
+  const firstWorker = new FakeWorker();
+  const secondWorker = new FakeWorker();
+  const workers = [firstWorker, secondWorker];
+  const client = new CodexIndexClient(() => workers.shift()!);
+  const first = client.refresh(request);
+  firstWorker.emitMessage({ type: 'result', requestId: firstWorker.requests[0].requestId, result: result() });
+  await first;
+  firstWorker.emit('error', new Error('idle worker crashed'));
+  await client.whenIdle();
+  assert.equal(firstWorker.terminated, 1);
+  const next = client.refresh(request);
+  assert.equal(secondWorker.requests.length, 1);
+  secondWorker.emitMessage({ type: 'result', requestId: secondWorker.requests[0].requestId, result: result() });
+  await next;
+  await client.dispose();
+});
+
+test('a late exit from a replaced worker does not fail the refresh of its successor', async () => {
+  const firstWorker = new FakeWorker();
+  const secondWorker = new FakeWorker();
+  const workers = [firstWorker, secondWorker];
+  const client = new CodexIndexClient(() => workers.shift()!);
+  const first = client.refresh(request);
+  firstWorker.emitMessage({ type: 'result', requestId: firstWorker.requests[0].requestId, result: result() });
+  await first;
+  firstWorker.emit('error', new Error('idle worker crashed'));
+  const next = client.refresh(request);
+  firstWorker.emit('exit', 1);
+  secondWorker.emitMessage({ type: 'result', requestId: secondWorker.requests[0].requestId, result: result() });
+  await next;
+  assert.equal(secondWorker.terminated, 0);
+  await client.dispose();
+});
+
+test('an unchanged reply without a body reuses the index the client already holds', async () => {
+  const worker = new FakeWorker();
+  const client = new CodexIndexClient(() => worker);
+  const reply = async (message: unknown) => {
+    const pending = client.refresh(request);
+    const sent = worker.requests[worker.requests.length - 1] as any;
+    worker.emitMessage({ type: 'result', requestId: sent.requestId, result: message as any });
+    return { sent, received: await pending };
+  };
+  const { index: _body, ...bodyless } = result();
+  const first = await reply({ ...result(), indexKey: 'disk-1' });
+  assert.equal(first.sent.knownIndexKey, undefined);
+  assert.equal('indexKey' in first.received, false);
+  const second = await reply({ ...bodyless, indexKey: 'disk-1' });
+  assert.equal(second.sent.knownIndexKey, 'disk-1');
+  assert.strictEqual(second.received.index, first.received.index);
+  const changed = await reply({ ...result(), indexChanged: true });
+  assert.equal(changed.sent.knownIndexKey, 'disk-1');
+  const after = await reply(result());
+  assert.equal(after.sent.knownIndexKey, undefined);
+  await client.dispose();
+});
+
+test('a kept-alive worker reuses its cached index only for the same unchanged file and omits a body the client holds', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-codex-worker-cache-'));
+  try {
+    const indexPath = path.join(root, 'index.json');
+    await saveCodexIndexAtomic(indexPath, createEmptyCodexIndex(request.timeZone));
+    const indexCache = {};
+    let loads = 0;
+    let changed = false;
+    const run = async (knownIndexKey?: string): Promise<any> => {
+      const messages: CodexWorkerMessage[] = [];
+      await runCodexWorkerRefresh({ type: 'refresh', requestId: 'cache', ...request, indexPath,
+        ...(knownIndexKey ? { knownIndexKey } : {}) } as any, {
+        isCancelled: () => false,
+        post: (message: CodexWorkerMessage) => messages.push(message),
+        acquireCodexIndexLease: async () => ({ release: async () => undefined }),
+        loadCodexIndex: async (...args: Parameters<typeof loadCodexIndex>) => { loads += 1; return loadCodexIndex(...args); },
+        scanCodexManifest: async () => ({ files: [], persistable: {} }),
+        updateCodexIndex: async (previous: CodexIndexV1) => changed
+          ? { ...result(), index: structuredClone(previous), indexChanged: true }
+          : { ...result(), index: previous },
+        saveCodexIndexAtomic,
+        indexCache,
+      } as any);
+      const reply = messages.find((message) => message.type === 'result');
+      assert.ok(reply && reply.type === 'result');
+      return reply.result;
+    };
+    const first = await run();
+    assert.ok(first.index);
+    assert.equal(typeof first.indexKey, 'string');
+    assert.equal(loads, 1);
+    const second = await run(first.indexKey);
+    assert.equal(second.index, undefined);
+    assert.equal(second.indexKey, first.indexKey);
+    assert.equal(loads, 1);
+    await saveCodexIndexAtomic(indexPath, createEmptyCodexIndex(request.timeZone));
+    const replaced = await run(first.indexKey);
+    assert.ok(replaced.index);
+    assert.notEqual(replaced.indexKey, first.indexKey);
+    assert.equal(loads, 2);
+    changed = true;
+    const written = await run(replaced.indexKey);
+    assert.ok(written.index);
+    assert.equal(written.indexKey, undefined);
+    assert.equal(loads, 2);
+    changed = false;
+    await run(replaced.indexKey);
+    assert.equal(loads, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the compiled kept-alive worker sends an unchanged index body once and it matches the disk index', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ccu-codex-worker-keepalive-'));
+  const client = new CodexIndexClient();
+  try {
+    await mkdir(path.join(root, 'sessions'), { recursive: true });
+    await writeFile(path.join(root, 'sessions', 'live.jsonl'), [
+      JSON.stringify({ timestamp: '2026-07-20T00:00:00.000Z', type: 'session_meta', payload: { id: 'keepalive-session' } }),
+      JSON.stringify({ timestamp: '2026-07-20T00:01:00.000Z', type: 'event_msg', payload: { type: 'token_count',
+        info: { total_token_usage: { input_tokens: 75, cached_input_tokens: 50, output_tokens: 25,
+          reasoning_output_tokens: 10, total_tokens: 100 } } } }),
+      '',
+    ].join('\n'));
+    const input = { codexHome: root, indexPath: path.join(root, 'cache', 'index.json'), salt: SALT, timeZone: 'UTC' };
+    let warm = await client.refresh(input);
+    for (let i = 0; warm.indexChanged && i < 6; i++) warm = await client.refresh(input);
+    assert.equal(warm.indexChanged, false);
+    const reused = await client.refresh(input);
+    assert.equal(reused.bodyReads, 0);
+    assert.strictEqual(reused.index, warm.index);
+    assert.deepEqual(reused.index, await loadCodexIndex(input.indexPath, input.timeZone));
+  } finally {
+    await client.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('dispose resolves only after actual worker termination settles', async () => {

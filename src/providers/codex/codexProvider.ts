@@ -16,6 +16,7 @@ import {
   CodexHourlyCoverage,
   CodexTodayCoverage,
   CodexIndexV1,
+  codexCoverageSettled,
   createEmptyCodexIndex,
   codexHourProofSnapshot,
   isReadableCodexPeriod,
@@ -557,7 +558,9 @@ export class CodexProvider {
       }
       this.snapshotGeneration += 1;
       const snapshot = snapshotFromIndex(result.index, sessionTitles, true);
-      if (result.failedFiles === 0 && this.options.allowAchievementHourProof !== false) {
+      const coverage = codexCoverageSettled(result.index.coverage);
+      const failedFiles = Math.max(0, result.failedFiles - (result.index.coverage.terminalFiles ?? 0));
+      if (failedFiles === 0 && this.options.allowAchievementHourProof !== false) {
         // Rebuild current census and witnesses above even on zero-body reads.
         // Only full equality against a detached frozen publication allows reuse;
         // indexChanged is persistence metadata, not an achievement revision.
@@ -566,25 +569,24 @@ export class CodexProvider {
       }
       this.currentSnapshot = snapshot;
       const outcome: ProviderSourceOutcome =
-        result.failedFiles > 0 ||
-          !result.index.coverage.complete ||
+        failedFiles > 0 ||
+          !coverage.complete ||
           !result.index.coverage.identity.complete ||
-          !result.index.coverage.period.last7Days.complete ||
-          !result.index.coverage.period.last30Days.complete ||
-          !result.index.coverage.period.allTime.complete ||
-          (result.index.coverage.hourly !== undefined &&
-            !result.index.coverage.hourly.complete)
+          !coverage.last7Days ||
+          !coverage.last30Days ||
+          !coverage.allTime ||
+          !coverage.hourly
           ? 'partial'
           : 'success';
       return {
         outcome,
         snapshot: this.currentSnapshot,
         progress: this.lastProgress,
-        achievementUsageDelta: result.failedFiles === 0 && result.index.coverage.complete
+        achievementUsageDelta: failedFiles === 0 && coverage.complete
           ? copyCodexUsageDelta(result.achievementUsageDelta, usageWindow) : undefined,
         diagnostic: {
           bodyReads: result.bodyReads,
-          failedFiles: result.failedFiles,
+          failedFiles,
           metadataMs: result.metadataMs,
           parseMs: result.parseMs,
           migrationPending: result.migration.pending,

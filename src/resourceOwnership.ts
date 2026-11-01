@@ -28,7 +28,6 @@ export const RESOURCE_STOP_CONDITIONS = [
   'window-blur',
   'feature-disabled',
   'extension-dispose',
-  'user-pause',
   'settings-change',
   'profile-change',
 ] as const;

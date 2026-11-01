@@ -7,44 +7,31 @@ import type {AchievementHistoryInput} from './achievementHistoryDates';
 import type { ProviderTokenCounts } from './providers/providerTypes';
 import type { AchievementActivity } from './achievementActivity';
 import { SAFE_EXPLORATION_FEATURES } from './achievementActivity';
-import { validAchievementBuckets, verifiedCodexAchievementFiles } from './codexAchievementProof';
+import { verifiedCodexAchievementFiles } from './codexAchievementProof';
 import type { AchievementCalendarSignals, AchievementDayEvidence, AchievementTokenEvidence } from './achievementCalendar';
 import { codexCollaborationEvidence, AchievementCollaborationEvidence } from './achievementCollaboration';
 import { RECALIBRATED_ACHIEVEMENT_IDS_V2, isLegacyAchievementId } from './achievementRuleVersions';
 import { LONG_TERM_ACHIEVEMENT_DEFINITIONS, type LongTermAchievementId } from './achievementLongTerm';
+import { mondayOf, parseDayKey } from './dateKeys';
 
 import { claudeAchievementFamily, codexModelFamily, normalizeCodexAchievementModel,
   type CodexModelFamily, type ClaudeModelFamily } from './achievementModels';
 export { claudeAchievementFamily, codexModelFamily } from './achievementModels';
 export type { CodexModelFamily, ClaudeModelFamily } from './achievementModels';
-type EffortTier = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
-const SPECTRUM_EFFORTS: readonly EffortTier[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 export interface CodexAchievementSignals {
   /** Produced only from independently validated canonical lineages. */
   verifiedSubset?: true;
-  modelCount: number;
-  efforts: string[];
-  familyRootCounts: Record<CodexModelFamily, number>;
   /** Reconciled input + output; cached input/reasoning are never added again. */
   familyProcessedTokens?: Record<CodexModelFamily, number>;
-  effortProcessedTokens?: Partial<Record<EffortTier, number>>;
   /** One reconciled, nonnegative file total per session; cumulative only. */
   processedLowerBound?: number;
   dayEvidence?: AchievementDayEvidence;
   /** Runtime numeric dating proof; never an award or persisted index field. */
   historyDayEvidence?: AchievementHistoryInput['codex'];
   tokenEvidence?: AchievementTokenEvidence;
-  /** Distinct, lineage-verified roots with actual usage at each effort tier. */
-  effortRootCounts?: Partial<Record<EffortTier, number>>;
-  /** Unique, evidenced child sessions under one verified root. */
-  maxVerifiedAgentsPerRoot?: number;
-  maxRealModelsPerRoot?: number;
-  multiAgentRootCount?: number;
   /** Unique lineage-verified root tasks with a real model and positive usage. */
   verifiedRootCount?: number;
-  verifiedChildCount?: number;
-  multiModelRootCount?: number;
   /** Versioned joint counters, never inferred from old marginal maxima. */
   collaboration?: AchievementCollaborationEvidence;
   money?: AchievementMoneyScopes;
@@ -158,10 +145,7 @@ export function fableAchievementSignals(input: {
     .filter(([model]) => claudeAchievementFamily(model) === 'fable')
     .reduce((sum, [, tokens]) => sum + processedClaudeTokens(tokens), 0);
   const activeDays = new Set(input.days
-    .filter(({ date, data }) => /^\d{4}-\d{2}-\d{2}$/.test(date) &&
-      Number.isFinite(Date.parse(`${date}T00:00:00.000Z`)) &&
-      new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10) === date &&
-      hasFableOutput(data.modelBreakdown))
+    .filter(({ date, data }) => Number.isFinite(parseDayKey(date)) && hasFableOutput(data.modelBreakdown))
     .map(({ date }) => date)).size;
   let mixedFamilySession = false;
   const outputSessionKeys = new Set<string>();
@@ -197,12 +181,9 @@ export function peakCalendarWeekProcessed(
   if (!coverageComplete) return 0;
   const weeks = new Map<string, number>();
   for (const { day, processed } of rows) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) ||
-        !Number.isSafeInteger(processed) || processed < 0) continue;
-    const timestamp = Date.parse(`${day}T00:00:00.000Z`);
-    if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== day) continue;
-    const weekday = new Date(timestamp).getUTCDay();
-    const monday = new Date(timestamp - ((weekday + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+    const timestamp = parseDayKey(day);
+    if (!Number.isFinite(timestamp) || !Number.isSafeInteger(processed) || processed < 0) continue;
+    const monday = new Date(mondayOf(timestamp)).toISOString().slice(0, 10);
     weeks.set(monday, (weeks.get(monday) ?? 0) + processed);
   }
   let peak = 0;
@@ -219,13 +200,7 @@ export function achievementActiveDayKeys(
   const days = new Set<string>();
   const add = (rows: Iterable<{ day: string; processed: number }>): void => {
     for (const { day, processed } of rows) {
-      const timestamp = /^\d{4}-\d{2}-\d{2}$/.test(day)
-        ? Date.parse(`${day}T00:00:00.000Z`) : NaN;
-      if (Number.isSafeInteger(processed) && processed > 0 &&
-          Number.isFinite(timestamp) &&
-          new Date(timestamp).toISOString().slice(0, 10) === day) {
-        days.add(day);
-      }
+      if (Number.isSafeInteger(processed) && processed > 0 && Number.isFinite(parseDayKey(day))) days.add(day);
     }
   };
   add(claudeDays);
@@ -498,20 +473,8 @@ export function codexModelSignals(files: readonly CodexFileAggregate[]): CodexAc
     processedBySession.set(key, Math.max(processedBySession.get(key) ?? 0, input + output));
   }
   const processedLowerBound = [...processedBySession.values()].reduce((sum, value) => sum + value, 0);
-  const models = new Set<string>();
-  const efforts = new Set<string>();
   const familyProcessedTokens: Record<CodexModelFamily, number> = { astra: 0, sol: 0, luna: 0 };
-  const effortProcessedTokens: Partial<Record<EffortTier, number>> = {};
-  const roots: Record<CodexModelFamily, Set<string>> = {
-    astra: new Set(), sol: new Set(), luna: new Set(),
-  };
-  const effortRoots: Record<EffortTier, Set<string>> = {
-    low: new Set(), medium: new Set(), high: new Set(),
-    xhigh: new Set(), max: new Set(), ultra: new Set(),
-  };
-  const childrenByRoot = new Map<string, Set<string>>();
-  const verifiedChildren = new Set<string>();
-  const modelsByRoot = new Map<string, Set<string>>();
+  const verifiedRoots = new Set<string>();
   const rootBySession = new Map<string, string | null>();
   const verifiedRoot = (file: CodexFileAggregate): string | null => {
     let current = file;
@@ -536,56 +499,20 @@ export function codexModelSignals(files: readonly CodexFileAggregate[]): CodexAc
     if (!root) continue;
     // The subset selector has already verified the complete model vector,
     // including cached/reasoning counters, before admitting this lineage.
-    let hasRealModelUsage = false;
     for (const [rawModel, tokens] of Object.entries(file.byModel)) {
       if (!positiveUsage(tokens)) continue;
       const model = normalizeCodexAchievementModel(rawModel);
       if (!model) continue;
-      hasRealModelUsage = true;
-      models.add(model);
-      let rootModels = modelsByRoot.get(root);
-      if (!rootModels) modelsByRoot.set(root, rootModels = new Set());
-      rootModels.add(model);
+      verifiedRoots.add(root);
       const family = codexModelFamily(model);
-      if (family) roots[family].add(root);
       if (family) familyProcessedTokens[family] += tokens.inputTotal + tokens.outputTotal;
-    }
-    if (!hasRealModelUsage) continue;
-    const key = file.session.sessionKey;
-    if (key !== root && key && positiveUsage(file.total) && file.session.role === 'subagent') {
-      let children = childrenByRoot.get(root);
-      if (!children) childrenByRoot.set(root, children = new Set());
-      children.add(key);
-      verifiedChildren.add(key);
-    }
-    if (!validAchievementBuckets(file.byEffort, file.total)) continue;
-    for (const [effort, tokens] of Object.entries(file.byEffort)) {
-      if (!positiveUsage(tokens) || !['none', 'minimal', ...SPECTRUM_EFFORTS].includes(effort)) continue;
-      efforts.add(effort);
-      if (SPECTRUM_EFFORTS.includes(effort as EffortTier)) effortRoots[effort as EffortTier].add(root);
-      if (SPECTRUM_EFFORTS.includes(effort as EffortTier)) {
-        const tier = effort as EffortTier;
-        effortProcessedTokens[tier] = (effortProcessedTokens[tier] ?? 0) + tokens.inputTotal + tokens.outputTotal;
-      }
     }
   }
   return {
     verifiedSubset: true,
-    modelCount: models.size,
-    efforts: [...efforts].sort(),
     familyProcessedTokens,
-    effortProcessedTokens,
     processedLowerBound: Number.isSafeInteger(processedLowerBound) ? processedLowerBound : 0,
-    familyRootCounts: {
-      astra: roots.astra.size, sol: roots.sol.size, luna: roots.luna.size,
-    },
-    effortRootCounts: Object.fromEntries(SPECTRUM_EFFORTS.map((tier) => [tier, effortRoots[tier].size])),
-    maxVerifiedAgentsPerRoot: [...childrenByRoot.values()].reduce((max, children) => Math.max(max, children.size), 0),
-    maxRealModelsPerRoot: [...modelsByRoot.values()].reduce((max, rootModels) => Math.max(max, rootModels.size), 0),
-    multiAgentRootCount: [...childrenByRoot.values()].filter((children) => children.size >= 3).length,
-    verifiedRootCount: modelsByRoot.size,
-    verifiedChildCount: verifiedChildren.size,
-    multiModelRootCount: [...modelsByRoot.values()].filter((rootModels) => rootModels.size >= 2).length,
+    verifiedRootCount: verifiedRoots.size,
     collaboration: codexCollaborationEvidence(files),
   };
 }
@@ -594,11 +521,8 @@ export function codexModelSignals(files: readonly CodexFileAggregate[]): CodexAc
 export function longestActiveDayStreak(days: Iterable<string>): number {
   const dates = new Set<number>();
   for (const day of days) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
-    const timestamp = Date.parse(`${day}T00:00:00.000Z`);
-    if (Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === day) {
-      dates.add(timestamp);
-    }
+    const timestamp = parseDayKey(day);
+    if (Number.isFinite(timestamp)) dates.add(timestamp);
   }
   let longest = 0;
   let current = 0;
@@ -763,8 +687,7 @@ export function newlyUnlockedPluginAchievements(
   before: AchievementActivity, after: AchievementActivity,
 ): AchievementId[] {
   const facts: AchievementFacts = {
-    claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [], codex: {},
   };
   // Reuse the actual catalog/evaluator so provenance cannot drift from targets.
   const previous = new Set(evaluateAchievements({ ...facts, activity: before })

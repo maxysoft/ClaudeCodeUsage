@@ -57,7 +57,7 @@ test('Claude output-session and cache-write series have rising, separately evide
     claudeCacheCreationTokens: currentTarget('claude-cache-creation-silver') - 1,
     claudeOutputSessions: currentTarget('claude-output-sessions-silver'),
     codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   let results = new Map(evaluateAchievements(facts).map((row) => [row.id, row]));
   assert.equal(results.get('claude-output-sessions-silver')?.unlocked, true);
@@ -82,11 +82,7 @@ test('collaboration series retain their IDs but legacy maxima and marginal bucke
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
     claudeFamilyTokens: { sonnet: 500_000, opus: 500_000, haiku: 500_000 },
     codex: {
-      modelCount: 4, efforts: [], familyRootCounts: { astra: 5, sol: 5, luna: 5 },
       familyProcessedTokens: { astra: 500_000, sol: 500_000, luna: 500_000 },
-      effortProcessedTokens: { low: 10_000_000, medium: 10_000_000, high: 10_000_000, xhigh: 10_000_000, max: 10_000_000, ultra: 10_000_000 },
-      maxVerifiedAgentsPerRoot: 10, maxRealModelsPerRoot: 4,
-      effortRootCounts: { low: 3, medium: 3, high: 3, xhigh: 3, max: 3, ultra: 3 },
     },
   };
   const results = new Map(evaluateAchievements(facts).map((row) => [row.id, row]));
@@ -138,7 +134,7 @@ test('every tiered family has unique known IDs, one evidence group, and rising t
 test('expanded model days, output, cache, weekly mean and single milestones have real rules', () => {
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const available = new Map<string, number>(ACHIEVEMENT_DEFINITIONS.map(row => [row.id, row.target]));
   assert.equal(available.size, ACHIEVEMENT_DEFINITIONS.length);
@@ -186,7 +182,7 @@ function effortTaskFiles(effort: string, processed: number, output: number, root
   ));
 }
 
-test('Codex model families count verified roots once, not children or orphan forks', () => {
+test('Codex verified roots count each tree once, not children or orphan forks', () => {
   const files = [
     file('root-1', 'root', 'gpt-6-astra'),
     file('child-1', 'subagent', 'gpt-6-astra', 'root-1'),
@@ -195,11 +191,7 @@ test('Codex model families count verified roots once, not children or orphan for
     file('auto', 'root', 'codex-auto-review'),
   ];
   const signals = codexModelSignals(files);
-  assert.equal(signals.familyRootCounts.astra, 2);
-  assert.equal(signals.modelCount, 1);
-  assert.deepEqual(signals.efforts, ['high']);
-  assert.equal(signals.effortRootCounts?.high, 2);
-  assert.equal(signals.maxVerifiedAgentsPerRoot, 1);
+  assert.equal(signals.verifiedRootCount, 2);
 });
 
 test('Codex model signals reject cycles, zero usage, and invented family aliases', () => {
@@ -209,8 +201,8 @@ test('Codex model signals reject cycles, zero usage, and invented family aliases
   zero.byModel = { 'gpt-6-luna': empty };
   const fake = file('fake', 'root', 'custom-sol-proxy');
   const signals = codexModelSignals([cycleA, cycleB, zero, fake]);
-  assert.deepEqual(signals.familyRootCounts, { astra: 0, sol: 0, luna: 0 });
-  assert.equal(signals.modelCount, 0);
+  assert.deepEqual(signals.familyProcessedTokens, { astra: 0, sol: 0, luna: 0 });
+  assert.equal(signals.verifiedRootCount, 0);
 });
 
 test('Codex cumulative lower bound takes one valid processed total per session', () => {
@@ -232,10 +224,7 @@ test('conflicting copies of one Codex session cannot manufacture model or agent 
   const child = file('child', 'subagent', 'gpt-6-luna', 'root');
   const signals = codexModelSignals([first, conflictingCopy, child]);
   assert.equal(signals.verifiedRootCount, 0);
-  assert.equal(signals.verifiedChildCount, 0);
-  assert.equal(signals.multiModelRootCount, 0);
-  assert.equal(signals.familyRootCounts.astra, 0);
-  assert.equal(signals.familyRootCounts.sol, 0);
+  assert.deepEqual(signals.familyProcessedTokens, { astra: 0, sol: 0, luna: 0 });
   assert.equal(signals.processedLowerBound, 24, 'cumulative lower bound still chooses one root copy');
 });
 
@@ -244,13 +233,7 @@ test('achievement evaluation requires sustained usage, not first encounters', ()
     claudeTokens: 6_000_000, codexTokens: 5_000_000, activeDays: 8,
     longestStreak: 2,
     claudeFamilies: ['sonnet'], claudeFamilyTokens: { sonnet: 1_999_999, opus: 0, haiku: 0 },
-    codex: {
-      modelCount: 2,
-      efforts: ['low', 'high'],
-      effortRootCounts: { low: 1, high: 1 },
-      maxVerifiedAgentsPerRoot: 2,
-      familyRootCounts: { astra: 24, sol: 1, luna: 0 },
-    },
+    codex: {},
   };
   const byId = new Map(evaluateAchievements(facts).map((result) => [result.id, result]));
   assert.equal(byId.get('astra-regular')?.unlocked, false);
@@ -261,9 +244,6 @@ test('achievement evaluation requires sustained usage, not first encounters', ()
   assert.equal(byId.get('effort-spectrum')?.unlocked, false);
   assert.equal(byId.get('billion-token-club')?.unlocked, false);
   assert.equal(byId.has('active-days-1' as never), false);
-  facts.codex.familyRootCounts.astra = 25;
-  assert.equal(evaluateAchievements(facts).find((result) => result.id === 'astra-regular')?.unlocked, false,
-    'root counts alone cannot prove processed volume');
   facts.claudeFamilyTokens!.sonnet = currentTarget('sonnet-main') - 1;
   facts.codex.familyProcessedTokens = { astra: currentTarget('astra-regular') - 1, sol: 0, luna: 0 };
   const below = new Map(evaluateAchievements(facts).map((result) => [result.id, result]));
@@ -280,11 +260,7 @@ test('model and cache series keep their IDs and require each calibrated Token bo
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
     claudeFamilyTokens: { sonnet: 0, opus: 0, haiku: 0 },
     claudeCacheReadTokens: 0,
-    codex: {
-      modelCount: 3, efforts: [],
-      familyRootCounts: { astra: 25, sol: 25, luna: 25 },
-      familyProcessedTokens: { astra: 0, sol: 0, luna: 0 },
-    },
+    codex: { familyProcessedTokens: { astra: 0, sol: 0, luna: 0 } },
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   const series: Array<[string, (tokens: number) => void]> = [
@@ -317,8 +293,7 @@ test('a high-volume local sample still has meaningful gold goals ahead', () => {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
     claudeFamilyTokens: { sonnet: 100_000_000, opus: 5_900_000_000, haiku: 4_000_000 },
     claudeCacheReadTokens: 5_900_000_000,
-    codex: { modelCount: 3, efforts: [], familyRootCounts: { astra: 500, sol: 500, luna: 10 },
-      familyProcessedTokens: { astra: 5_000_000_000, sol: 5_000_000_000, luna: 10_000_000 } },
+    codex: { familyProcessedTokens: { astra: 5_000_000_000, sol: 5_000_000_000, luna: 10_000_000 } },
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   assert.equal(get('sonnet-main')?.unlocked, true);
@@ -340,7 +315,7 @@ test('long active-day streak adds later tiers without treating scattered days as
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 365, claudeFamilies: [],
     longestStreak: 14,
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   assert.equal(get('active-day-streak')?.unlocked, true);
@@ -353,7 +328,7 @@ test('long active-day streak adds later tiers without treating scattered days as
 test('plugin achievements use deliberate local actions, not default settings or preview as export', () => {
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
     activity: emptyAchievementActivity(),
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
@@ -377,7 +352,7 @@ test('plugin achievements use deliberate local actions, not default settings or 
 test('hourly output tiers use proven UTC streak length and night portrait needs its own evidence', () => {
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
     outputHourStreak: 23,
     nightOutputPeak: false,
   };
@@ -404,7 +379,7 @@ test('all six effort tiers need their own 2B processed, 2M output and 30 output-
   const unknown = effortTaskFiles('unknown', 2_000_000_000, 2_000_000, 30);
   const base: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const evaluateUltra = (processed: number, output: number, roots: number) => {
     base.codex.collaboration = codexCollaborationEvidence([
@@ -430,7 +405,7 @@ test('streak means consecutive calendar dates, not cumulative days', () => {
   assert.equal(longestActiveDayStreak(['2026-09-01', '2026-09-01', 'invalid']), 1);
 });
 
-test('legacy breadth counts unique verified descendants but tiny output cannot qualify a team or model task', () => {
+test('tiny output cannot qualify a team or model task', () => {
   const files = [
     file('root-1', 'root', 'gpt-6-astra'),
     file('child-1', 'subagent', 'gpt-6-sol', 'root-1'),
@@ -439,8 +414,6 @@ test('legacy breadth counts unique verified descendants but tiny output cannot q
     file('orphan', 'subagent', 'gpt-6-sol', 'missing'),
   ];
   const signals = codexModelSignals(files);
-  assert.equal(signals.maxVerifiedAgentsPerRoot, 3);
-  assert.equal(signals.maxRealModelsPerRoot, 2);
   assert.deepEqual(signals.collaboration?.teamTaskCounts, [0, 0, 0]);
   assert.deepEqual(signals.collaboration?.modelTaskCounts, [0, 0, 0]);
   assert.equal(signals.collaboration?.qualifiedSubagentCount, 0);
@@ -450,7 +423,6 @@ test('one legacy multi-agent root with tiny child output is not a qualified orch
   const files = [file('root', 'root', 'gpt-6-astra')];
   for (let index = 0; index < 3; index++) files.push(file(`child-${index}`, 'subagent', 'gpt-6-sol', 'root'));
   const signals = codexModelSignals(files);
-  assert.equal(signals.multiAgentRootCount, 1);
   assert.equal(signals.collaboration?.orchestratedTasks, 0);
 });
 
@@ -461,7 +433,6 @@ test('verified root portfolio keeps its count semantics while legacy orchestrati
   files.push(file('fake', 'root', 'custom-model'));
   const signals = codexModelSignals(files);
   assert.equal(signals.verifiedRootCount, 2);
-  assert.equal(signals.multiAgentRootCount, 1);
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [], codex: signals,
   };
@@ -469,7 +440,6 @@ test('verified root portfolio keeps its count semantics while legacy orchestrati
   assert.equal(get('root-portfolio-bronze')?.unlocked, false);
   assert.equal(get('agent-conductor')?.unlocked, false);
   facts.codex.verifiedRootCount = 250;
-  facts.codex.multiAgentRootCount = currentTarget('agent-conductor-gold');
   assert.equal(get('root-portfolio-bronze')?.unlocked, true);
   assert.equal(get('root-portfolio-silver')?.unlocked, true);
   assert.equal(get('root-portfolio-gold')?.unlocked, false);
@@ -489,16 +459,12 @@ test('verified lineage counts without qualifying output cannot grant participati
     file('orphan', 'subagent', 'gpt-6-astra', 'missing'),
   ];
   const signals = codexModelSignals(files);
-  assert.equal(signals.verifiedChildCount, 3);
-  assert.equal(signals.multiModelRootCount, 2);
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [], codex: signals,
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   assert.equal(get('agent-participation-bronze')?.unlocked, false);
   assert.equal(get('model-relay-roots-bronze')?.unlocked, false);
-  facts.codex.verifiedChildCount = currentTarget('agent-participation-gold');
-  facts.codex.multiModelRootCount = currentTarget('model-relay-roots-gold');
   assert.equal(get('agent-participation-bronze')?.progress, 0);
   assert.equal(get('model-relay-roots-bronze')?.progress, 0);
   assert.equal(get('agent-participation-bronze')?.unlocked, false);
@@ -513,7 +479,7 @@ test('Claude output and combined distinct-day accumulation have long goals', () 
   const facts: AchievementFacts = {
     claudeTokens: 400_000_000, claudeOutputTokens: currentTarget('claude-output-bronze') - 1,
     codexTokens: 0, activeDays: 29, claudeFamilies: [],
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   assert.equal(get('claude-output-bronze')?.unlocked, false);
@@ -541,11 +507,6 @@ test('cache uses actual Token volume and ordinary effort needs each tier volume,
     claudeTokens: 200_000_000, claudeCacheReadTokens: currentTarget('cache-wizard') - 1,
     codexTokens: 100_000_000, activeDays: 7, claudeFamilies: [],
     codex: {
-      modelCount: 2, efforts: ['low', 'medium', 'high', 'xhigh'],
-      effortRootCounts: { low: 3, medium: 3, high: 3, xhigh: 2 },
-      effortProcessedTokens: { low: 10_000_000, medium: 10_000_000, high: 10_000_000, xhigh: 9_999_999 },
-      familyRootCounts: { astra: 0, sol: 0, luna: 0 }, maxRealModelsPerRoot: 2,
-      multiAgentRootCount: 1,
       collaboration: codexCollaborationEvidence([
         ...qualified, ...effortTaskFiles('xhigh', 99_999_999, 100_000, 5),
       ]),
@@ -589,8 +550,6 @@ test('model rainbow requires each recognized family to have 10M processed and 20
     claudeFamilyTokens: { sonnet: 10_000_000, opus: 10_000_000, haiku: 1 },
     claudeFamilyOutputTokens: { sonnet: 20_000, opus: 20_000, haiku: 1 },
     codex: {
-      modelCount: 3, efforts: [],
-      familyRootCounts: { astra: 5, sol: 5, luna: 1 },
       // Legacy marginals stay fixed: only the reducer's aligned joint proof
       // changes when luna crosses its processed/output conjunction below.
       familyProcessedTokens: { astra: 10_000_000, sol: 10_000_000, luna: 1 },
@@ -675,7 +634,7 @@ test('Fable evidence requires exact model IDs, output for days, and two real fam
     claudeTokens: 20_000_200, codexTokens: 0, activeDays: 1,
     claudeFamilies: ['fable'], claudeFamilyTokens: {},
     fable: signals,
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const read = () => new Map(evaluateAchievements(facts).map((result) => [result.id, result]));
   const results = read();
@@ -730,7 +689,7 @@ test('Fable session tiers count distinct output-bearing sessions only', () => {
   assert.equal(signals.outputSessions, 1);
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [], fable: signals,
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const get = (id: string) => new Map(evaluateAchievements(facts).map((row) => [row.id, row])).get(id as never);
   assert.equal(get('fable-sessions-bronze')?.unlocked, false);
@@ -770,7 +729,7 @@ test('calendar-week peak combines provider days once and rejects incomplete cove
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
     weeklyPeakProcessed: peakCalendarWeekProcessed(rows, true),
-    codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+    codex: {},
   };
   const grants = new Map(evaluateAchievements(facts).map((result) => [result.id, result]));
   assert.equal(grants.get('weekly-volume-bronze')?.unlocked, true);

@@ -12,6 +12,7 @@ import { achievementRuleVersion, isLegacyAchievementId } from './achievementRule
 import { isAchievementMoneyId, type AchievementMoneyId } from './achievementMoneyCatalog';
 import { getAchievementMoneyPricebook } from './achievementMoney';
 import {isPublishedAchievementReferencePricebook} from './achievementReferenceBooks';
+import { parseDayKey } from './dateKeys';
 
 // The joint-rule evaluator and canonical migration switch together.
 export const ACHIEVEMENT_RECORD_FILE = 'achievements-v2.json';
@@ -93,8 +94,7 @@ function object(value: unknown, fields: readonly string[]): Record<string, unkno
   return value as Record<string, unknown>;
 }
 function validDay(value: unknown): boolean {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-    Number.isFinite(Date.parse(value + 'T00:00:00Z')) && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value;
+  return Number.isFinite(parseDayKey(value));
 }
 function validZone(value: unknown): boolean {
   if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z0-9_+./-]+$/.test(value)) return false;

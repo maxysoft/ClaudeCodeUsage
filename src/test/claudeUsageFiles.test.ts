@@ -72,7 +72,7 @@ test('manifest scanning stats files concurrently and keeps discovery order', { t
       maxInFlight = Math.max(maxInFlight, inFlight);
       pending.push(() => {
         inFlight -= 1;
-        resolve(stat(filePath));
+        resolve(stat(filePath, { bigint: true }));
       });
       started += 1;
       admissions.get(started)?.();
@@ -121,7 +121,7 @@ test('a fatal stat stops scheduling files that have not started', async () => {
         throw Object.assign(new Error('denied'), { code: 'EACCES' });
       }
       await new Promise<void>((resolve) => blockers.push(resolve));
-      return stat(file);
+      return stat(file, { bigint: true });
     },
   });
   await assert.rejects(scan, (error: NodeJS.ErrnoException) => error.code === 'EACCES');
@@ -256,8 +256,8 @@ test('equal or invalid timestamps preserve v2.2.0 discovery order', async () => 
       size: fileStat.size,
       mtimeMs: fileStat.mtimeMs,
       discoveryIndex,
-      dev: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.dev : undefined,
-      ino: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.ino : undefined,
+      dev: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.dev) : undefined,
+      ino: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.ino) : undefined,
     };
   };
 
@@ -295,8 +295,8 @@ test('a single unprobeable file does not abort ordering the rest', async () => {
       size: fileStat.size,
       mtimeMs: fileStat.mtimeMs,
       discoveryIndex,
-      dev: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.dev : undefined,
-      ino: fileStat.dev > 0 && fileStat.ino > 0 ? fileStat.ino : undefined,
+      dev: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.dev) : undefined,
+      ino: fileStat.dev > 0 && fileStat.ino > 0 ? String(fileStat.ino) : undefined,
     };
   };
 
@@ -308,4 +308,25 @@ test('a single unprobeable file does not abort ordering the rest', async () => {
     await make(good, 1),
   ]);
   assert.deepEqual(sorted.files, [journal, good]);
+});
+
+test('file identity keeps every bit of 64-bit inode numbers and the exact mtime', async () => {
+  const { root, file } = await fixture();
+  const twin = path.join(path.dirname(file), 'b.jsonl');
+  await writeFile(file, '{}\n');
+  await writeFile(twin, '{}\n');
+  const inodes = new Map([[file, 2n ** 53n], [twin, 2n ** 53n + 1n]]);
+  const manifest = await scanUsageManifest([root], {
+    readdir: (dir: string) => readdir(dir, { withFileTypes: true }),
+    stat: async (filePath: string) =>
+      Object.assign(await stat(filePath, { bigint: true }), { dev: 7n, ino: inodes.get(filePath)! }),
+  });
+  const entry = manifest.entries.get(file)!;
+  const twinEntry = manifest.entries.get(twin)!;
+  assert.deepEqual([entry.dev, entry.ino, twinEntry.ino], ['7', '9007199254740992', '9007199254740993']);
+  assert.equal(entry.mtimeMs, (await stat(file)).mtimeMs);
+  assert.equal(diffUsageManifests(manifest, {
+    ...manifest,
+    entries: new Map([[file, { ...entry, ino: twinEntry.ino }], [twin, twinEntry]]),
+  }).changed.length, 1);
 });

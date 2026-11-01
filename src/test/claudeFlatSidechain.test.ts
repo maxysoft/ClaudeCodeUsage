@@ -4,6 +4,7 @@ import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promi
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ClaudeDataLoader, tagClaudeSessionEvidence } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { claudeUsageDashboardSnapshot, createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 
 // Entirely synthetic homes: never discover the user's provider directories.
@@ -42,9 +43,9 @@ test('flat sidechains cannot multiply output/Fable session evidence, while exact
   assert.equal(snapshot.sessions.length, 4, 'existing Sessions presentation remains intact');
   const expected = ClaudeDataLoader.calculateUsageData(Array.from({ length: 4 }, (_, i) => JSON.parse(line(`expected-${i}`))));
   assert.deepEqual(snapshot.allTime, expected, 'all token buckets, model pricing and totals are unchanged');
-  const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+  const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
   assert.deepEqual(cold.records, full.records, 'legacy and incremental parsers agree');
-  assert.deepEqual(snapshot.dailyForAllTime, ClaudeDataLoader.getDailyDataForAllTime(full.records));
+  assert.deepEqual(snapshot.dailyForAllTime, LegacyClaudeLoader.getDailyDataForAllTime(full.records));
   assert.deepEqual(snapshot.dailyForAllTime.map((day) => day.data), [expected]);
   const warm = await load(root, cold.index);
   assert.equal(warm.diagnostics.bodyReads, 0);

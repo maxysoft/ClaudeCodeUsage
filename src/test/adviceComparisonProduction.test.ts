@@ -156,58 +156,73 @@ function withWebview<T>(run: (provider: any) => T): T {
   }
 }
 
+function seedImprovedCodexComparison(provider: any): void {
+  const contract = codexAdvice(['effort-comparison']);
+  provider.adviceEffectivenessStates = {
+    codex: {
+      provider: 'codex',
+      contract,
+      remotePreviewEligible: false,
+      promptSamples: [],
+    },
+  };
+  const local = createClosedAdviceLocalState();
+  local.featureMode = 'enabled';
+  local.feedback.push({
+    adviceId: contract.adviceId,
+    recommendationId: contract.recommendations[0].id,
+    rating: 'helpful',
+    applied: 'applied',
+    appliedAtEpochMs: 1_000,
+    updatedAtEpochMs: 1_000,
+  });
+  provider.adviceLocalState = local;
+  provider.codexView = {
+    recentThreads: [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        rootTaskViewKey: `before-${index}`,
+        role: 'root',
+        observedAt: 100 + index,
+        total: { processed: 200, fresh: 100, input: 100, cachedInput: 0, output: 0, reasoning: 0 },
+        structural: { patchCalls: 1, toolCalls: 4, postPatchToolCalls: 2, compactCount: 0, taskCompleteCount: 1 },
+        models: ['gpt-5'],
+        efforts: ['high'],
+      })),
+      ...Array.from({ length: 5 }, (_, index) => ({
+        rootTaskViewKey: `after-${index}`,
+        role: 'root',
+        observedAt: 1_100 + index,
+        total: { processed: 160, fresh: 80, input: 80, cachedInput: 0, output: 0, reasoning: 0 },
+        structural: { patchCalls: 1, toolCalls: 4, postPatchToolCalls: 2, compactCount: 0, taskCompleteCount: 1 },
+        models: ['gpt-5'],
+        efforts: ['high'],
+      })),
+    ],
+    coverage: { complete: true, identity: { complete: true } },
+    qualityFlags: [],
+  };
+}
+
 test('webview materializes bounded pairs and a frozen result from the existing Codex view only', () => {
   withWebview((provider) => {
-    const contract = codexAdvice(['effort-comparison']);
-    provider.adviceEffectivenessStates = {
-      codex: {
-        provider: 'codex',
-        contract,
-        remotePreviewEligible: false,
-        promptSamples: [],
-      },
-    };
-    const local = createClosedAdviceLocalState();
-    local.featureMode = 'enabled';
-    local.feedback.push({
-      adviceId: contract.adviceId,
-      recommendationId: contract.recommendations[0].id,
-      rating: 'helpful',
-      applied: 'applied',
-      appliedAtEpochMs: 1_000,
-      updatedAtEpochMs: 1_000,
-    });
-    provider.adviceLocalState = local;
-    provider.codexView = {
-      recentThreads: [
-        ...Array.from({ length: 5 }, (_, index) => ({
-          rootTaskViewKey: `before-${index}`,
-          role: 'root',
-          observedAt: 100 + index,
-          total: { processed: 200, fresh: 100, input: 100, cachedInput: 0, output: 0, reasoning: 0 },
-          structural: { patchCalls: 1, toolCalls: 4, postPatchToolCalls: 2, compactCount: 0, taskCompleteCount: 1 },
-          models: ['gpt-5'],
-          efforts: ['high'],
-        })),
-        ...Array.from({ length: 5 }, (_, index) => ({
-          rootTaskViewKey: `after-${index}`,
-          role: 'root',
-          observedAt: 1_100 + index,
-          total: { processed: 160, fresh: 80, input: 80, cachedInput: 0, output: 0, reasoning: 0 },
-          structural: { patchCalls: 1, toolCalls: 4, postPatchToolCalls: 2, compactCount: 0, taskCompleteCount: 1 },
-          models: ['gpt-5'],
-          efforts: ['high'],
-        })),
-      ],
-      coverage: { complete: true, identity: { complete: true } },
-      qualityFlags: [],
-    };
-
+    seedImprovedCodexComparison(provider);
     const next = provider.materializeAdviceComparisonState(2_000);
     assert.equal(next.comparablePairs.length, 5);
     assert.equal(next.comparisonResults.length, 1);
     assert.equal(next.comparisonResults[0].result.status, 'improved');
     assert.doesNotMatch(JSON.stringify(next.comparablePairs), /before-|after-|gpt-5|prompt|session|path|body/i);
+  });
+});
+
+test('an improved comparison is labelled quality not measured and never claims a passed quality check', () => {
+  withWebview((provider) => {
+    seedImprovedCodexComparison(provider);
+    provider.adviceLocalState = provider.materializeAdviceComparisonState(2_000);
+    assert.equal(provider.adviceLocalState.comparisonResults[0].result.status, 'improved');
+    const html = provider.renderAdviceEffectivenessBody('codex');
+    assert.match(html, /Improvement met the pre-declared threshold/);
+    assert.match(html, /Quality not measured/);
+    assert.doesNotMatch(html, /guardrail held/i);
   });
 });
 

@@ -100,21 +100,6 @@ export interface QuotaObservationClearScope {
   accountFingerprint?: string;
 }
 
-export interface QuotaResetEventV2 {
-  schemaVersion: 2;
-  provider: UsageProvider;
-  periodType: QuotaPeriodType;
-  detectedAt: number;
-  boundaryAt: number;
-  previousAccountFingerprint: string;
-  nextAccountFingerprint: string;
-  previousWindowId: string;
-  nextWindowId: string;
-  evidence: QuotaResetEvidence;
-  confidence: QuotaEvidenceConfidence;
-  flags: QuotaObservationFlag[];
-}
-
 export interface QuotaObservationStoreV2 {
   schemaVersion: 2;
   fingerprintAlgorithm: 'hmac-sha256-v1';
@@ -131,7 +116,8 @@ export interface MergeQuotaCaptureOptions {
 
 export interface QuotaObservationLoadResult {
   store: QuotaObservationStoreV2;
-  disposition: 'missing' | 'valid' | 'quarantined';
+  /** 'unreadable': the file may still hold history; it must not be overwritten. */
+  disposition: 'missing' | 'valid' | 'quarantined' | 'unreadable';
   quarantinePath?: string;
 }
 
@@ -173,11 +159,6 @@ const FLAGS = new Set<QuotaObservationFlag>([
   'low-price-coverage',
   'account-ambiguous',
   'clock-anomaly',
-]);
-const RESET_EVIDENCE = new Set<QuotaResetEvidence>([
-  'reset-at-change',
-  'window-id-change',
-  'usage-drop',
 ]);
 
 function hmac(salt: string, value: string, prefix: string): string {
@@ -323,17 +304,6 @@ function boundaryEvidence(
     return 'usage-drop';
   }
   return null;
-}
-
-function confidenceRank(value: QuotaEvidenceConfidence): number {
-  return value === 'high' ? 3 : value === 'medium' ? 2 : 1;
-}
-
-function lowerConfidence(
-  left: QuotaEvidenceConfidence,
-  right: QuotaEvidenceConfidence,
-): QuotaEvidenceConfidence {
-  return confidenceRank(left) <= confidenceRank(right) ? left : right;
 }
 
 function normalizedObservation(
@@ -629,63 +599,6 @@ export function mergeQuotaCaptures(
   };
 }
 
-/** Reset events are a deterministic runtime projection, not a second persisted
- * fact table. Boundary observations carry the evidence needed to reconstruct
- * consecutive and same-day resets without duplicating sensitive identifiers. */
-export function deriveQuotaResetEvents(
-  store: QuotaObservationStoreV2,
-): QuotaResetEventV2[] {
-  const events: QuotaResetEventV2[] = [];
-  const ordered = [...store.observations].sort((left, right) =>
-    left.observedAt - right.observedAt || left.windowId.localeCompare(right.windowId),
-  );
-  const previousBySeries = new Map<string, QuotaObservationV2>();
-  for (let index = 0; index < ordered.length; index += 1) {
-    const current = ordered[index];
-    const seriesKey = `${current.provider}|${current.periodType}`;
-    const previous = previousBySeries.get(seriesKey);
-    previousBySeries.set(seriesKey, current);
-    if (!previous || previous.windowId === current.windowId) continue;
-    const inferred = persistedBoundaryEvidence(
-      previous,
-      current,
-      USAGE_DROP_THRESHOLD,
-    );
-    const evidence = inferred ?? (
-      RESET_EVIDENCE.has(current.captureReason as QuotaResetEvidence)
-        ? current.captureReason as QuotaResetEvidence
-        : null
-    );
-    if (!evidence) continue;
-    const crossesAccountEpoch =
-      previous.accountFingerprint !== current.accountFingerprint;
-    events.push({
-      schemaVersion: 2,
-      provider: current.provider,
-      periodType: current.periodType,
-      detectedAt: current.observedAt,
-      boundaryAt: evidence === 'usage-drop'
-        ? current.observedAt
-        : previous.resetAt ?? current.observedAt,
-      previousAccountFingerprint: previous.accountFingerprint,
-      nextAccountFingerprint: current.accountFingerprint,
-      previousWindowId: previous.windowId,
-      nextWindowId: current.windowId,
-      evidence,
-      confidence: crossesAccountEpoch
-        ? 'low'
-        : evidence === 'usage-drop'
-          ? lowerConfidence(current.confidence, 'medium')
-          : current.confidence,
-      flags: orderedUniqueFlags([
-        ...current.flags,
-        ...(crossesAccountEpoch ? ['account-ambiguous' as const] : []),
-      ]),
-    });
-  }
-  return events;
-}
-
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   const allowedSet = new Set(allowed);
   return Object.keys(value).every((key) => allowedSet.has(key));
@@ -822,29 +735,23 @@ export async function loadQuotaObservationStore(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return { store: createEmptyQuotaObservationStore(), disposition: 'missing' };
     }
-    return { store: createEmptyQuotaObservationStore(), disposition: 'quarantined' };
+    return { store: createEmptyQuotaObservationStore(), disposition: 'unreadable' };
   }
-  let parsed: unknown;
+  let store: QuotaObservationStoreV2 | null = null;
   try {
-    parsed = JSON.parse(body) as unknown;
+    store = parseStore(JSON.parse(body) as unknown, now);
   } catch {
-    const quarantinePath = await quarantine(filePath, now);
-    return {
-      store: createEmptyQuotaObservationStore(),
-      disposition: 'quarantined',
-      ...(quarantinePath ? { quarantinePath } : {}),
-    };
+    // Corrupt JSON is quarantined below.
   }
-  const store = parseStore(parsed, now);
-  if (!store) {
-    const quarantinePath = await quarantine(filePath, now);
-    return {
-      store: createEmptyQuotaObservationStore(),
-      disposition: 'quarantined',
-      ...(quarantinePath ? { quarantinePath } : {}),
-    };
-  }
-  return { store, disposition: 'valid' };
+  if (store) return { store, disposition: 'valid' };
+  const quarantinePath = await quarantine(filePath, now);
+  return quarantinePath
+    ? { store: createEmptyQuotaObservationStore(), disposition: 'quarantined', quarantinePath }
+    : { store: createEmptyQuotaObservationStore(), disposition: 'unreadable' };
+}
+
+function writableAfter(loaded: QuotaObservationLoadResult): boolean {
+  return loaded.disposition === 'valid' || loaded.disposition === 'missing';
 }
 
 export async function saveQuotaObservationStoreAtomic(
@@ -925,7 +832,6 @@ async function purgeQuotaObservationAuxiliaries(filePath: string): Promise<void>
 }
 
 export class QuotaObservationRepository {
-  private state: QuotaObservationStoreV2 | undefined;
   private pending: Promise<void> = Promise.resolve();
 
   constructor(
@@ -941,12 +847,9 @@ export class QuotaObservationRepository {
   }
 
   load(): Promise<QuotaObservationStoreV2> {
-    return this.serialized(async () => {
-      this.state = (await loadQuotaObservationStore(this.filePath, {
-        now: this.now(),
-      })).store;
-      return cloneStore(this.state);
-    });
+    return this.serialized(async () => (await loadQuotaObservationStore(this.filePath, {
+      now: this.now(),
+    })).store);
   }
 
   append(captures: readonly QuotaCapture[]): Promise<QuotaObservationStoreV2> {
@@ -955,9 +858,13 @@ export class QuotaObservationRepository {
       try {
         // Always re-read under the process-shared lease. A second VS Code
         // Extension Host may have committed observations since our last call.
-        const current = (await loadQuotaObservationStore(this.filePath, {
+        const loaded = await loadQuotaObservationStore(this.filePath, {
           now: this.now(),
-        })).store;
+        });
+        if (!writableAfter(loaded)) {
+          throw new Error(`quota-observation-store:${loaded.disposition}`);
+        }
+        const current = loaded.store;
         const next = mergeQuotaCaptures(current, captures, {
           salt: this.salt,
           now: this.now(),
@@ -965,7 +872,6 @@ export class QuotaObservationRepository {
         if (JSON.stringify(next) !== JSON.stringify(current)) {
           await saveQuotaObservationStoreAtomic(this.filePath, next);
         }
-        this.state = next;
         return cloneStore(next);
       } finally {
         await lease.release();
@@ -988,7 +894,7 @@ export class QuotaObservationRepository {
         const clearAll = scope.provider === undefined &&
           scope.accountFingerprint === undefined;
         const auxiliaries = await quotaObservationAuxiliaryNames(this.filePath);
-        if (!clearAll && (loaded.disposition === 'quarantined' || auxiliaries.length > 0)) {
+        if (!clearAll && (!writableAfter(loaded) || auxiliaries.length > 0)) {
           throw new QuotaObservationScopedClearBlockedError();
         }
         const current = loaded.store;
@@ -1013,7 +919,6 @@ export class QuotaObservationRepository {
           // of having its new write deleted by a second lease acquisition.
           await purgeQuotaObservationAuxiliaries(this.filePath);
         }
-        this.state = next;
         return cloneStore(next);
       } finally {
         await lease.release();

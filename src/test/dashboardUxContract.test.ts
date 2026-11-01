@@ -4,6 +4,8 @@ import Module = require('node:module');
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as vm from 'node:vm';
+import { getDashboardRefreshClientScript } from '../dashboardRefreshClient';
 
 const { freezeClock } = require(path.resolve(__dirname, '../../tests/ui/support/frozen-clock.cjs')) as {
   freezeClock: (now: number) => () => void;
@@ -13,6 +15,7 @@ let handler: (message: Record<string, unknown>) => Promise<void>;
 let saveDialogs = 0;
 const writes: string[] = [];
 const posted: Record<string, any>[] = [];
+let panelOptions: any;
 const vscode = {
   ColorThemeKind: { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 },
   ViewColumn: { One: 1 },
@@ -22,7 +25,7 @@ const vscode = {
   extensions: { getExtension: () => undefined },
   window: {
     activeColorTheme: { kind: 1 },
-    createWebviewPanel: () => ({
+    createWebviewPanel: (_type: string, _title: string, _column: number, options: unknown) => (panelOptions = options, {
       webview: {
         html: '',
         onDidReceiveMessage: (value: typeof handler) => { handler = value; return { dispose() {} }; },
@@ -53,6 +56,7 @@ const { ClaudeCodeUsageExtension } = require('../extension') as typeof import('.
 const { createClaudeUsageIndex } = require('../claudeIncrementalIndex') as typeof import('../claudeIncrementalIndex');
 const { RefreshSingleFlight } = require('../refreshPolicy') as typeof import('../refreshPolicy');
 const { ClaudeDataLoader } = require('../dataLoader') as typeof import('../dataLoader');
+const { ACHIEVEMENT_IMAGE_FILES, achievementImagePath } = require('../achievementIcons') as typeof import('../achievementIcons');
 (Module as any)._load = originalLoad;
 
 function provider(): any {
@@ -454,6 +458,35 @@ test('Today attribution survives minute ticks but expires with its day, timezone
   }
 });
 
+test('week, month and all-time attribution reuse unchanged inputs per scope', () => {
+  const p = provider();
+  p.panel = undefined;
+  const originalAttribution = ClaudeDataLoader.getUsageAttribution;
+  p.allRecords = [{ timestamp: '2026-09-01T12:00:00Z', _workflowId: 'synthetic-workflow',
+    message: { model: 'claude-opus-5-5', usage: { input_tokens: 200, output_tokens: 20 } } }];
+  let calculations = 0;
+  (ClaudeDataLoader as any).getUsageAttribution = (...args: Parameters<typeof originalAttribution>) => {
+    calculations++;
+    return originalAttribution.call(ClaudeDataLoader, ...args);
+  };
+  try {
+    const sinceTs = Date.parse('2026-08-30T00:00:00Z');
+    const scopes = [{ kind: 'week', sinceTs }, { kind: 'month', sinceTs }, { kind: 'all' }];
+    const first = scopes.map((scope) => p.renderUsageTracking(scope));
+    assert.ok(first[2].length > 0, 'the fixture must render real usage characteristics');
+    assert.deepEqual(scopes.map((scope) => p.renderUsageTracking(scope)), first);
+    assert.equal(calculations, 3, 'each scope is computed once while its inputs are unchanged');
+    p.renderUsageTracking({ kind: 'week', sinceTs: sinceTs + 1 });
+    assert.equal(calculations, 4, 'a new window start recomputes');
+    p.allRecords = [...p.allRecords]; p.renderUsageTracking({ kind: 'all' });
+    assert.equal(calculations, 5, 'new record identity invalidates attribution');
+    p.dispose();
+    assert.equal(p.usageAttributionCache.size, 0, 'disposal releases cached attributions');
+  } finally {
+    (ClaudeDataLoader as any).getUsageAttribution = originalAttribution;
+  }
+});
+
 test('production coordinator minute-spaced polls preserve accepted previews without rescanning unchanged attribution', async (t) => {
   const p = provider();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccu-production-preview-'));
@@ -467,7 +500,7 @@ test('production coordinator minute-spaced polls preserve accepted previews with
       model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 1 } } }) + '\n');
   const e = Object.create(ClaudeCodeUsageExtension.prototype) as any;
   Object.assign(e, {
-    configurationGeneration: 0, disposed: false, quotaColdRetryDone: true,
+    configurationGeneration: 0, disposed: false,
     settings: { get: () => false }, refreshGate: new RefreshSingleFlight(),
     providerRefreshStates: { claude: { failed: false }, codex: { failed: false } }, deliveredRefreshStates: {},
     cache: { records: [], contentAnalysis: null, manifest: null, claudeIndex: createClaudeUsageIndex(),
@@ -520,16 +553,11 @@ test('production coordinator minute-spaced polls preserve accepted previews with
   for (let minute = 0; minute < 2; minute++) {
     restoreClock(); now += 60_000; restoreClock = freezeClock(now);
     await e.refreshData(false, 'poll');
-    // Fork divergence: this fork renders the "Usage tracking" card on the
-    // This Week, This Month and All Time tabs as well, so an hour boundary
-    // recomputes one attribution per card scope. Upstream expects only its
-    // own week-scoped panel. Today still comes from the memo, never a scan.
-    assert.equal(attributionCalculations, 3, 'hourly Content expiration runs once per card scope, not on every minute');
-    assert.deepEqual(
-      [...attributionScopes].sort(),
-      ['all', 'month', 'week'],
-      'Today attribution survives the hour boundary; only the dated cards rescan',
-    );
+    // Fork divergence: the fork's This Week, This Month and All Time "Usage
+    // tracking" cards reuse their per-scope memo across the hour boundary, so
+    // only the rolling-week attribution panel rescans, as upstream expects.
+    assert.equal(attributionCalculations, 1, 'hourly Content expiration runs once, not on every minute');
+    assert.deepEqual(attributionScopes, ['week'], 'Today and the dated cards survive the hour boundary');
     assert.equal(renders, 6, 'only the first poll after the hour rebuilds hidden history');
     assert.equal(p.shareCardPreviewCache.previewId, preview.previewId);
   }
@@ -698,4 +726,173 @@ test('a failed replacement preview cannot expose a previous accepted export ID',
   p.buildShareCardSvgFor = () => { throw new Error('synthetic failure'); };
   assert.match(p.renderShareCardPanel('claudeShareCard'), /id="scPreview" data-preview-id=""/);
   assert.equal(p.shareCardPreviewCache, undefined);
+});
+
+const weekUsage = {
+  totalInputTokens: 1_200, totalOutputTokens: 300, totalCacheCreationTokens: 200, totalCacheReadTokens: 800,
+  totalCost: 1.25, costBreakdown: { input: 0.3, output: 0.4, cacheWrite: 0.25, cacheRead: 0.3 }, messageCount: 4,
+  modelBreakdown: { 'claude-sonnet-4-5': { inputTokens: 1_200, outputTokens: 300, cacheCreationTokens: 200,
+    cacheReadTokens: 800, cost: 1.25, count: 4 } },
+};
+
+test('the Claude week tab survives a live patch and a reload while Codex never keeps it', async () => {
+  const p = provider();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  p.providerAvailability = { claude: true, codex: true, codexData: false };
+  p.currentProvider = 'claude';
+  p.allRecords = [];
+  p.todayData = p.rolling30DayData = p.allTimeData = weekUsage;
+  p.updateWebview();
+  await handler({ command: 'localDataClientReady', provider: 'claude', activeTab: 'today', documentId: p.dashboardDocumentId });
+  await handler({ command: 'tabChanged', tab: 'week', documentId: p.dashboardDocumentId });
+  assert.equal(p.currentTab, 'week', 'selecting This Week reaches the host');
+  const livePatchTab = async (totalCost: number) => {
+    posted.length = 0;
+    p.todayData = { ...weekUsage, totalCost };
+    p.updateWebview();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    return posted.find((message) => message.command === 'dashboardDataPatch')?.tab;
+  };
+  assert.equal(await livePatchTab(2), 'week', 'a live refresh keeps the selected week tab');
+
+  p.webviewClientReady = false;
+  await handler({ command: 'localDataClientReady', provider: 'claude', activeTab: 'week', documentId: p.dashboardDocumentId });
+  assert.equal(p.webviewClientReady, true, 'a reload that restores week keeps live patching');
+  assert.equal(await livePatchTab(3), 'week');
+
+  await handler({ command: 'providerChanged', provider: 'codex', tab: 'week' });
+  assert.equal(p.currentProvider, 'codex');
+  assert.equal(p.currentTab, 'today', 'Codex has no week tab');
+  p.webviewClientReady = false;
+  for (const message of [
+    { command: 'tabChanged', tab: 'week' },
+    { command: 'localDataClientReady', provider: 'codex', activeTab: 'week' },
+  ]) await handler({ ...message, documentId: p.dashboardDocumentId });
+  assert.equal(p.currentTab, 'today');
+  assert.equal(p.webviewClientReady, false);
+  await handler({ command: 'providerChanged', provider: 'claude', tab: 'week' });
+  assert.equal(p.currentTab, 'week', 'switching back to Claude may request week');
+});
+
+test('client live patches and scroll keys accept the week tab for Claude only', () => {
+  const panel = { innerHTML: '' };
+  const sandbox: Record<string, any> = {
+    document: { getElementById: (id: string) => id === 'provider-panel' ? panel : null },
+    vscode: { postMessage() {} },
+    window: { addEventListener() {} },
+    providerName: 'claude',
+    restoredTabs: [] as string[],
+    __ccuScrollSaveTimer: 0,
+  };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(getDashboardRefreshClientScript() +
+    '\nfunction ccuProviderName() { return providerName; }' +
+    '\nccuCaptureRefreshContext = function() { return {}; };' +
+    '\nccuRestoreDashboardUiAfterPatch = function(context, panel, tab) { restoredTabs.push(tab); };', context);
+  const patch = (provider: string, revision: number): boolean => {
+    sandbox.providerName = provider;
+    return sandbox.ccuApplyDashboardDataPatch({ revision, provider, tab: 'week', html: '', claudeLast30HoursByDay: {} });
+  };
+  assert.equal(patch('claude', 1), true);
+  assert.equal(patch('codex', 2), false, 'Codex has no week panel');
+  assert.deepEqual([...sandbox.restoredTabs], ['week']);
+
+  const scope = { id: 'week', hasAttribute: () => false, parentElement: panel };
+  const scroller = {
+    matches: (selector: string) => selector === '.daily-table-container',
+    closest: () => scope, hasAttribute: () => false, parentElement: scope,
+  };
+  assert.equal(sandbox.ccuRefreshScrollerBaseKey(scroller, panel), 'week|table|');
+});
+
+test('Settings renders the local data panel and answers its inventory request', async () => {
+  const p = provider();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const html = p.renderSettingsPanel('claude');
+  assert.match(html, /<h3 id="localDataTitle">/);
+  assert.match(html, /<tbody id="localDataInventoryBody">/);
+  assert.match(html, /onclick="requestLocalDataInventory\(\)"/);
+  const inventory = { schemaVersion: 1, generatedAt: 1, rows: [], quotaScopes: [], exclusions: ['provider logs'] };
+  let summary: unknown;
+  p.onRequestLocalDataInventory = async (client: unknown) => { summary = client; return inventory; };
+  await handler({ command: 'requestLocalDataInventory',
+    clientSummary: { uiPreferenceKeys: 2, webviewStateFields: -1, sharingPreferenceKeys: 1.5 } });
+  assert.deepEqual(summary, { uiPreferenceKeys: 2, webviewStateFields: 0, sharingPreferenceKeys: 0 });
+  assert.deepEqual(posted[posted.length - 1], { command: 'localDataInventoryResult', ok: true, inventory });
+  p.onRequestLocalDataInventory = async () => { throw new Error('synthetic'); };
+  await handler({ command: 'requestLocalDataInventory' });
+  assert.deepEqual(posted[posted.length - 1], { command: 'localDataInventoryResult', ok: false });
+});
+
+test('an inventory refresh keeps the selected quota scope while it still exists', () => {
+  const script: string = provider().getScript();
+  const start = script.indexOf('function ccuRenderLocalDataInventory(inventory) {');
+  assert.ok(start >= 0);
+  const options: any[] = [];
+  const select = {
+    options,
+    get firstChild() { return options[0] ?? null; },
+    removeChild(option: any) { options.splice(options.indexOf(option), 1); },
+    appendChild(option: any) { options.push(option); },
+    get selectedOptions() { return options.filter((option) => option.selected).slice(-1).concat(options).slice(0, 1); },
+    get value() { return this.selectedOptions[0]?.value ?? ''; },
+    set value(token: string) { for (const option of options) option.selected = option.value === token; },
+  };
+  const sandbox: Record<string, any> = { document: {
+    getElementById: (id: string) => id === 'localDataQuotaScope' ? select
+      : id === 'localDataInventoryBody' ? { firstChild: null } : null,
+    createElement: () => ({ dataset: {}, selected: false }),
+  } };
+  vm.runInNewContext(script.slice(start, script.indexOf('\n}\n', start) + 2), sandbox);
+  const render = (suffix: string, epochs: number[], keys: string[] = epochs.map((_, index) => `claude:e${index}`)): void => {
+    sandbox.ccuRenderLocalDataInventory({ schemaVersion: 1, generatedAt: 1, rows: [], exclusions: [], quotaScopes: [
+      { token: 'all' + suffix, key: 'all', label: 'All', provider: 'all', itemCount: 3, oldestAt: 1, newestAt: 9 },
+      { token: 'claude' + suffix, key: 'claude', label: 'Claude', provider: 'claude', itemCount: 3, oldestAt: 1, newestAt: 9 },
+      ...epochs.map((oldestAt, index) => ({ token: `epoch${index}${suffix}`, key: keys[index], label: `Claude epoch ${index + 1}`,
+        provider: 'claude', itemCount: 1, oldestAt, newestAt: 9 })),
+    ] });
+  };
+  render('-a', [1, 5]);
+  select.value = 'epoch1-a';
+  render('-b', [1, 5]);
+  assert.equal(select.value, 'epoch1-b');
+  select.value = 'claude-b';
+  render('-c', [1, 5]);
+  assert.equal(select.value, 'claude-c', 'the provider scope is not confused with its oldest epoch');
+  select.value = 'epoch1-c';
+  render('-d', [1]);
+  assert.equal(select.value, 'all-d', 'a vanished scope falls back to all observations');
+  render('-e', [1, 5]);
+  select.value = 'epoch1-e';
+  render('-f', [1, 99]);
+  assert.equal(select.value, 'epoch1-f', 'an epoch whose oldestAt moved keeps its stable key');
+});
+
+test('the local data panel has its own copy in every UI locale', () => {
+  const p = provider();
+  const language = I18n.getCurrentLanguage();
+  const panels = new Map<string, string>();
+  try {
+    for (const locale of ['en', 'de-DE', 'zh-TW', 'zh-CN', 'ja', 'ko', 'pt-BR', 'id'] as const) {
+      I18n.setLanguage(locale);
+      panels.set(locale, p.renderLocalDataControls());
+    }
+  } finally { I18n.setLanguage(language); }
+  const titles = [...panels.values()].map((html) => /<h3 id="localDataTitle">([^<]*)<\/h3>/.exec(html)?.[1]);
+  assert.equal(new Set(titles).size, 8, titles.join(' | '));
+  for (const [locale, html] of panels) {
+    if (locale === 'en') continue;
+    for (const english of ['Refresh inventory', 'Clear advice data', 'Reset UI state', 'Safe clearing and rebuild']) {
+      assert.ok(!html.includes(english), `${locale} still shows "${english}"`);
+    }
+  }
+});
+
+test('the dashboard panel may load local resources only from the bundled badge directory', () => {
+  provider();
+  const roots = panelOptions.localResourceRoots.map((uri: { fsPath: string }) => uri.fsPath);
+  assert.deepEqual(roots, [path.resolve(__dirname, '../../assets/achievements')]);
+  for (const id of Object.keys(ACHIEVEMENT_IMAGE_FILES)) {
+    assert.equal(path.dirname(achievementImagePath(id as keyof typeof ACHIEVEMENT_IMAGE_FILES)), roots[0], id);
+  }
 });

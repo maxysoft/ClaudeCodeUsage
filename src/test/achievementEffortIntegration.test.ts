@@ -350,7 +350,7 @@ test('actual configuration replacement revokes old-view effort DTO before provid
   extension.windowActivity = { focused: false };
   extension.codexProvider = { cancel: () => undefined };
   // Run the real configuration owner, isolating its unrelated lifecycle I/O.
-  for (const method of ['cancelAdviceNetworks', 'cancelQuotaNetworks', 'stopQuotaColdRetry',
+  for (const method of ['cancelAdviceNetworks', 'cancelQuotaNetworks',
     'startAutoRefresh', 'stopFileWatching', 'stopCodexWatching', 'stopCredentialsWatching',
     'selectClaudeProfile', 'applyFormattingConfiguration', 'trackCodexProviderRetirement']) {
     extension[method] = () => undefined;

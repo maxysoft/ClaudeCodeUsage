@@ -8,15 +8,14 @@ const ready = () => Object.fromEntries(proof.ACHIEVEMENT_EVIDENCE_DOMAINS.map((d
 const usageFacts = (volume: number): AchievementFacts => ({
   claudeTokens: volume, codexTokens: 0, activeDays: 0, claudeFamilies: ['sonnet'],
   claudeFamilyTokens: { sonnet: volume }, claudeOutputTokens: 0, claudeCacheReadTokens: 0,
-  codex: { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 } },
+  codex: {},
 });
 const usageDelta = (processed: number) => ({ provider: 'claude', after: 100, through: 200,
   processed, output: 0, cacheRead: 0, cacheCreation: 0, families: { sonnet: processed, opus: 0, haiku: 0, fable: 0 } });
 
 const codexFacts = (volume: number): AchievementFacts => ({ ...usageFacts(0), codexTokens: volume,
   codexOutputTokens: 0, codexCachedInputTokens: 0,
-  codex: { modelCount: 1, efforts: [], familyRootCounts: { astra: 1, sol: 0, luna: 0 },
-    familyProcessedTokens: { astra: volume, sol: 0, luna: 0 } } });
+  codex: { familyProcessedTokens: { astra: volume, sol: 0, luna: 0 } } });
 const codexDelta = (processed: number) => ({ provider: 'codex', after: 100, through: 200,
   processed, output: 0, cacheRead: 0, families: { astra: processed, sol: 0, luna: 0 } });
 
@@ -53,8 +52,6 @@ test('Codex tail crossings support output/cache without inventing calendar, effo
   after.codexOutputTokens = 1_000_000_000;
   after.codexCachedInputTokens = 2_000_000_000;
   after.activeDays = 365;
-  after.codex.maxVerifiedAgentsPerRoot = 100;
-  after.codex.effortProcessedTokens = { low: 1e8, medium: 1e8, high: 1e8, xhigh: 1e8, max: 1e8, ultra: 1e8 };
   const ids = proof.codexTailAchievementCrossings(evaluateAchievements(before), evaluateAchievements(after),
     { ...codexDelta(5_000_000_000), output: 1_000_000_000, cacheRead: 2_000_000_000 });
   assert.ok(ids.includes('codex-output-bronze'));

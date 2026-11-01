@@ -11,6 +11,15 @@ const evidence = (days: unknown[], complete = true) => ({ days, complete, timeZo
 const signals = (claude: unknown[], codex: unknown[], extra = {}) => calendar.achievementCalendarSignals({
   claude: evidence(claude), codex: evidence(codex), asOfDay: '2026-09-28', ...extra,
 });
+// Production day proof with a matching runtime witness, so period validation is what decides.
+const witnessedDayProof = (files: any[], timeZone: string, complete: boolean) => {
+  const withWitness = files.map(file => file?.period ? { ...file, achievementPeriodWitness: {
+    size: file.period.indexedThrough, offset: file.period.indexedThrough, timeZone,
+    expectedPrefixEvents: file.period.lineagePrefixEvents } } : file);
+  const { sourceRevision: _revision, ...proof } =
+    calendar.codexAchievementCalendarProjection(withWitness, timeZone, complete).evidence;
+  return proof;
+};
 
 test('model output days need reconciled daily volume, output and exact family IDs', () => {
   const value = signals([], [day('2026-09-01'),
@@ -108,7 +117,7 @@ test('Codex day proof rejects fallback UTC dates, wrong zones and malformed mode
     byEffort: {}, session: { sessionKey: 'one', role: 'root' }, structural: {},
     period: { timeZone: 'Europe/Istanbul', indexedThrough: 1, lineageVersion: 1, lineagePrefixEvents: 0,
       days: { '2026-09-01': slice } } };
-  const read = (files: any[], complete = true) => calendar.codexAchievementDayEvidence(files, 'Europe/Istanbul', complete);
+  const read = (files: any[], complete = true) => witnessedDayProof(files, 'Europe/Istanbul', complete);
   assert.equal(read([file]).complete, true);
   assert.equal(read([file]).days[0].models['gpt-6-astra'].processed, 1_000_000);
   assert.equal(read([file], false).complete, false);
@@ -127,8 +136,7 @@ const file = (sessionKey = 'root', total: any = tokens()): any => ({
   period: { timeZone: zone, indexedThrough: 1, lineageVersion: CODEX_PERIOD_LINEAGE_VERSION,
     lineagePrefixEvents: 0, days: { '2026-09-01': { total, byModel: { 'gpt-6-astra': total }, byEffort: {}, structural: {} } } },
 });
-const dayProof = (files: any[], complete = true, timeZone = zone) =>
-  calendar.codexAchievementDayEvidence(files, timeZone, complete);
+const dayProof = (files: any[], complete = true, timeZone = zone) => witnessedDayProof(files, timeZone, complete);
 const tokenProof = (files: any[], complete = true) => calendar.codexAchievementTokenEvidence(files, complete);
 const fourWeeks = () => ['2026-08-31', '2026-09-07', '2026-09-14', '2026-09-21'].map(date => day(date, 2_000_000_000));
 const claudeRow = (date = '2026-09-01'): any => ({

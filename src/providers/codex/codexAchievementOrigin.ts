@@ -89,11 +89,17 @@ function stableContribution(row: CodexFileContribution): boolean {
       'invalid-event-timestamp', 'counter-regression', 'component-delta-clamped', 'invalid-token-count',
       'invalid-session-meta', 'identity-conflict'].includes(flag));
 }
-/** Full base coverage, independent of globally incomplete calendar/identity proof. */
+/** Full base coverage, independent of globally incomplete calendar/identity proof.
+ * Settled terminal compression failures are excused, never counted as usage. */
 export function codexOriginBaselineReady(index: CodexIndexV3): boolean {
-  return index.coverage.complete && index.coverage.indexedFiles === index.coverage.totalFiles &&
-    Object.keys(index.files).length === index.coverage.totalFiles &&
-    Object.values(index.files).every(row => (row.compression !== 'zstd' || row.compressionVerified === true) &&
+  const terminal = index.coverage.terminalFiles ?? 0;
+  const rows = Object.values(index.files);
+  return (index.coverage.complete || terminal > 0) &&
+    index.coverage.indexedFiles + terminal === index.coverage.totalFiles &&
+    rows.length === index.coverage.totalFiles &&
+    rows.filter(row => row.compressionFailure).length === terminal &&
+    rows.every(row => row.compressionFailure !== undefined ||
+      (row.compression !== 'zstd' || row.compressionVerified === true) &&
       row.offset === row.size && !row.discardingOversizedLine);
 }
 function trustedContributions(index: CodexIndexV3): Set<CodexFileContribution> {

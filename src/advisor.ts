@@ -3,7 +3,7 @@
 // configured BYOK endpoint. Anthropic Messages and OpenAI-compatible chat are
 // wire formats; neither implies subscription/OAuth credential reuse.
 
-import { HttpResponse, requestViaCurl, requestViaFetch } from './httpClient';
+import { HttpResponse, requestViaFetch } from './httpClient';
 import {
   PreparedAiInvocation,
   PreparedAiTransportRequest,
@@ -36,7 +36,20 @@ function normalizeAnthropicUrl(url: string): string {
   return u.endsWith('/v1/messages') ? u : `${u}/v1/messages`;
 }
 
-/** Send a request with the Phase-0 timeout / retry / curl-fallback policy. */
+const CONNECT_PHASE_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+function failedBeforeSending(error: unknown): boolean {
+  const code = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+  return typeof code === 'string' && CONNECT_PHASE_ERROR_CODES.has(code);
+}
+
+/** BYOK sends use fetch only (curl would expose the API key on its command
+ * line) and retry the paid POST only when no byte can have reached the model. */
 async function send(
   url: string,
   headers: Record<string, string>,
@@ -44,25 +57,19 @@ async function send(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<HttpResponse> {
-  const reqOpts = { method: 'POST', headers, body, ...(signal ? { signal } : {}) };
-  const curl = (): Promise<HttpResponse> =>
-    requestViaCurl(url, { ...reqOpts, timeoutSec: Math.ceil(timeoutMs / 1000) });
+  const request = (): Promise<HttpResponse> => requestViaFetch(url, {
+    method: 'POST',
+    headers,
+    body,
+    timeoutMs,
+    redirect: 'error',
+    ...(signal ? { signal } : {}),
+  });
   try {
-    const r = await requestViaFetch(url, { ...reqOpts, timeoutMs });
-    // Anthropic's edge fingerprints Node's TLS ClientHello and answers 403
-    // "Request not allowed"; curl gets through (same gate the quota client hits).
-    if (r.status === 403 && r.body.includes('Request not allowed')) {
-      return curl();
-    }
-    return r;
-  } catch {
-    if (signal?.aborted) throw new Error('Request cancelled');
-    try {
-      return await requestViaFetch(url, { ...reqOpts, timeoutMs });
-    } catch {
-      if (signal?.aborted) throw new Error('Request cancelled');
-      return curl();
-    }
+    return await request();
+  } catch (error) {
+    if (signal?.aborted || !failedBeforeSending(error)) throw error;
+    return request();
   }
 }
 
@@ -84,11 +91,14 @@ function parsePreparedModelResponse(
   }
   let text = '';
   if (prepared.apiFormat === 'anthropic') {
-    const blocks = (data as { content?: { type?: string; text?: string }[] }).content;
-    text = (blocks ?? [])
-      .filter((block) => block.type === 'text' && typeof block.text === 'string')
-      .map((block) => block.text as string)
-      .join('');
+    const blocks = (data as { content?: { type?: string; text?: string; input?: unknown }[] }).content ?? [];
+    const toolUse = blocks.find((block) => block.type === 'tool_use');
+    text = toolUse
+      ? JSON.stringify(toolUse.input ?? null)
+      : blocks
+          .filter((block) => block.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text as string)
+          .join('');
   } else {
     text = (data as { choices?: { message?: { content?: string } }[] })
       .choices?.[0]?.message?.content ?? '';
@@ -98,9 +108,9 @@ function parsePreparedModelResponse(
 }
 
 /**
- * Production transport for an already-previewed invocation. The full wire
- * body is the original canonical byte object on every fetch retry/curl
- * fallback; this function never calls JSON.stringify.
+ * Production transport for an already-previewed invocation. The wire body is
+ * the original canonical byte object, or once, after HTTP 400/422, its prepared
+ * variant without response_format; this function never reserializes a request.
  */
 export async function sendPreparedModelRequest(
   prepared: PreparedAiInvocation,
@@ -112,6 +122,13 @@ export async function sendPreparedModelRequest(
     transport?: (request: PreparedAiTransportRequest) => Promise<HttpResponse>;
   } = {},
 ): Promise<string> {
+  const transport = options.transport ?? ((request: PreparedAiTransportRequest) => send(
+    request.endpoint,
+    request.headers,
+    request.canonicalBytes,
+    request.timeoutMs,
+    request.signal,
+  ));
   const response = await sendPreparedAiInvocation(
     prepared,
     {
@@ -125,13 +142,14 @@ export async function sendPreparedModelRequest(
         : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     },
-    options.transport ?? ((request) => send(
-      request.endpoint,
-      request.headers,
-      request.canonicalBytes,
-      request.timeoutMs,
-      request.signal,
-    )),
+    async (request) => {
+      const response = await transport(request);
+      if ((response.status !== 400 && response.status !== 422) || !request.fallbackCanonicalBytes) {
+        return response;
+      }
+      const { fallbackCanonicalBytes, ...retry } = request;
+      return transport({ ...retry, canonicalBytes: fallbackCanonicalBytes });
+    },
   );
   return parsePreparedModelResponse(prepared, response);
 }

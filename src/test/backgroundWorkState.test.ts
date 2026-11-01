@@ -6,7 +6,6 @@ import {
   canStartBackgroundWork,
   createBackgroundWorkState,
   interruptBackgroundWork,
-  pauseBackgroundWork,
   recordBackgroundWorkFailure,
   recordBackgroundWorkProgress,
   restoreBackgroundWorkState,
@@ -111,29 +110,6 @@ test('an attempt with no progress cools down instead of hot-looping', () => {
   assert.equal(noProgress.failStreak, 0, 'no-progress is distinct from an execution failure');
   assert.equal(canStartBackgroundWork(noProgress, { trigger: 'automatic', now: 269 }), false);
   assert.equal(canStartBackgroundWork(noProgress, { trigger: 'manual', now: 21 }), true);
-});
-
-test('a user pause can only be resumed by a manual trigger', () => {
-  const initial = createBackgroundWorkState({
-    measurementVersion: 1,
-    reason: 'period-migration',
-    now: 1,
-  });
-  const paused = pauseBackgroundWork(initial, { now: 2 });
-
-  assert.equal(paused.status, 'paused');
-  assert.equal(paused.pausedReason, 'user');
-  assert.equal(canStartBackgroundWork(paused, { trigger: 'automatic', now: 10_000 }), false);
-
-  const automatic = beginBackgroundWork(paused, { trigger: 'automatic', now: 10_000 });
-  assert.equal(automatic.started, false);
-  assert.equal(automatic.state, paused);
-
-  const manual = beginBackgroundWork(paused, { trigger: 'manual', now: 3, reason: 'resume' });
-  assert.equal(manual.started, true);
-  assert.equal(manual.state.status, 'running');
-  assert.equal(manual.state.pausedReason, null);
-  assert.equal(manual.state.reason, 'resume');
 });
 
 test('an interrupted running attempt resumes without counting as a failure', () => {

@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-const base:any = {claudeTokens:0,codexTokens:0,activeDays:0,claudeFamilies:[],codex:{modelCount:0,efforts:[],familyRootCounts:{astra:0,sol:0,luna:0}}};
+const base:any = {claudeTokens:0,codexTokens:0,activeDays:0,claudeFamilies:[],codex: {}};
 const amount = (microUsd:number,provider='claude') => ({provider,backend:provider==='codex' ? 'openai' : 'anthropic',
   pricebookVersion:getAchievementMoneyPricebook(provider==='codex' ? 'openai' : 'anthropic').version,
   cumulative:{microUsd,status:'complete'},completedMondayWeekPeak:microUsd,maxSessionTask:microUsd,

@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import { ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 
 function line(id: string, timestamp: string, model = 'claude-opus-5-5'): string {
   return `${JSON.stringify({
@@ -67,7 +68,7 @@ test('already-expired analysis payloads stay reference-stable across busy-sessio
       now += 60_000;
       await appendFile(active, line(`tail-${index}`, new Date(now).toISOString()));
       result = await updateClaudeUsageIndex(result.index, root, { windowDays: 30 });
-      const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: true, windowDays: 30 });
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: true, windowDays: 30 });
       assert.deepEqual(result.contentAnalysis, full.contentAnalysis);
       assert.equal(result.diagnostics.bodyReads, 1);
       const current = [...result.index.files.values()].find(file => file.path === expired)?.analysis;

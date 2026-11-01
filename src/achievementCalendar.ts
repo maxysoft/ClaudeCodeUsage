@@ -6,6 +6,7 @@ import type { ProviderTokenCounts } from './providers/providerTypes';
 import type { UsageData } from './types';
 import { verifiedCodexAchievementFiles } from './codexAchievementProof';
 import { codexAchievementProofRevision, isImmutableCodexAchievementFiles } from './codexAchievementRevision';
+import { mondayOf, parseDayKey } from './dateKeys';
 
 /** Numeric, already-materialized calendar evidence; no source-log I/O. */
 export interface AchievementDay {
@@ -89,13 +90,6 @@ function validTimeZone(timeZone: string): boolean {
   if (typeof timeZone !== 'string' || !timeZone) return false;
   try { new Intl.DateTimeFormat('en-GB', { timeZone }); return true; } catch { return false; }
 }
-function dayTimestamp(day: string): number {
-  const time = /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(day + 'T00:00:00.000Z') : NaN;
-  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === day ? time : NaN;
-}
-function monday(time: number): number {
-  return time - ((new Date(time).getUTCDay() + 6) % 7) * DAY_MS;
-}
 /** Undefined is invalid/incomplete; an empty Map is verified empty evidence. */
 function validatedDays(evidence: AchievementDayEvidence, asOf: number, additiveContributions = false): Map<string, AchievementDay> | undefined {
   const rows = new Map<string, AchievementDay>();
@@ -104,7 +98,7 @@ function validatedDays(evidence: AchievementDayEvidence, asOf: number, additiveC
   for (const row of evidence.days) {
     if (!object(row) || typeof row.day !== 'string' || !object(row.models)) return undefined;
     if (!additiveContributions && rows.has(row.day)) return undefined;
-    const time = dayTimestamp(row.day);
+    const time = parseDayKey(row.day);
     if (!Number.isFinite(time) || !count(row.processed) || !count(row.output) || row.output > row.processed) return undefined;
     const target = rows.get(row.day) ?? { day: row.day, processed: 0, output: 0, models: {} };
     target.processed += row.processed;
@@ -128,7 +122,7 @@ function validatedDays(evidence: AchievementDayEvidence, asOf: number, additiveC
   }
   // Civil dates are already bucketed in the provider's zone. UTC arithmetic is
   // only an ordinal for those labels, so DST never changes a week or its divisor.
-  for (const date of rows.keys()) if (dayTimestamp(date) >= asOf) rows.delete(date);
+  for (const date of rows.keys()) if (parseDayKey(date) >= asOf) rows.delete(date);
   return rows;
 }
 
@@ -138,7 +132,7 @@ export function achievementCalendarSignals(input: {
   const result: AchievementCalendarSignals = { familyDays: Object.fromEntries(FAMILIES.map(f => [f, 0])), dualProviderDays: 0, activeWeeks: 0,
     threeFamilyDay: false, dualProviderDay: false, peakFourWeekAverage: 0, peakEvidenceComplete: false,
     claudeEvidenceComplete: false, codexEvidenceComplete: false };
-  const asOf = dayTimestamp(input.asOfDay);
+  const asOf = parseDayKey(input.asOfDay);
   if (!Number.isFinite(asOf)) return result;
   if (!input.claude.timeZone || !validTimeZone(input.claude.timeZone) ||
       input.claude.timeZone !== input.codex.timeZone) return result;
@@ -186,9 +180,9 @@ export function achievementCalendarSignals(input: {
   let first = Infinity;
   for (const rows of [claude, codex]) for (const [date, row] of rows) {
     if (row.processed === 0) continue;
-    const time = dayTimestamp(date);
+    const time = parseDayKey(date);
     first = Math.min(first, time);
-    const week = monday(time);
+    const week = mondayOf(time);
     const total = (weekTotals.get(week) ?? 0) + row.processed;
     if (!count(total)) return { ...result, activeWeeks: 0, peakFourWeekAverage: 0 };
     weekTotals.set(week, total);
@@ -198,14 +192,14 @@ export function achievementCalendarSignals(input: {
       weekOutputDays.set(week, dates);
     }
   }
-  const currentWeek = monday(asOf);
+  const currentWeek = mondayOf(asOf);
   result.activeWeeks = [...weekOutputDays].filter(([week, days]) => week < currentWeek && days.size >= 4).length;
   // Both present providers must be complete. A missing provider is an explicit
   // complete-empty input; incomplete evidence never supplies a combined mean.
   if (!result.claudeEvidenceComplete || !result.codexEvidenceComplete) return result;
   result.peakEvidenceComplete = true;
   if (!Number.isFinite(first)) return result;
-  const firstWeek = monday(first) + (first === monday(first) ? 0 : 7 * DAY_MS);
+  const firstWeek = mondayOf(first) + (first === mondayOf(first) ? 0 : 7 * DAY_MS);
   // Examine only windows containing an observed week: O(number of data weeks),
   // not an unbounded walk across empty years. Zero weeks remain in the divisor.
   const starts = new Set<number>();
@@ -251,33 +245,6 @@ function validBuckets(buckets: unknown, total: ProviderTokenCounts): buckets is 
   return !!sum && tokensFit(sum, total);
 }
 
-/** Callers supply only canonical, reconciled files and their host completeness fence. */
-function validCanonicalFiles(files: readonly CodexFileAggregate[]): boolean {
-  if (!Array.isArray(files)) return false;
-  const parents = new Map<string, string | undefined>();
-  for (const file of files) {
-    if (!object(file) || !object(file.session) || !validTokens(file.total) || !validBuckets(file.byModel, file.total)) return false;
-    const { sessionKey, parentSessionKey, role } = file.session;
-    if (typeof sessionKey !== 'string' || !sessionKey.trim() || parents.has(sessionKey) ||
-        (parentSessionKey !== undefined && (typeof parentSessionKey !== 'string' || !parentSessionKey.trim())) ||
-        ((role === 'subagent' || role === 'approval-reviewer') && parentSessionKey === undefined)) return false;
-    parents.set(sessionKey, parentSessionKey);
-  }
-  // Iterative graph walk handles deep ancestry without recursion or O(n²) walks.
-  const verified = new Set<string>();
-  for (const session of parents.keys()) {
-    const path = new Set<string>();
-    let current: string | undefined = session;
-    while (current !== undefined && !verified.has(current)) {
-      if (!parents.has(current) || path.has(current)) return false;
-      path.add(current);
-      current = parents.get(current);
-    }
-    for (const key of path) verified.add(key);
-  }
-  return true;
-}
-
 /** No date projection is required for all-time output/cache proof. */
 export function codexAchievementTokenEvidence(files: readonly CodexFileAggregate[], complete: boolean): AchievementTokenEvidence {
   const fail = (): AchievementTokenEvidence => ({ complete: false, output: 0, cachedInput: 0 });
@@ -299,7 +266,7 @@ function codexFileDays(file: CodexFileAggregate, timeZone: string): AchievementD
   const periodTotals: ProviderTokenCounts[] = [];
   const periodModels = new Map<string, ProviderTokenCounts>();
   for (const [date, slice] of Object.entries(period.days)) {
-    if (!Number.isFinite(dayTimestamp(date)) || !object(slice) || !validTokens(slice.total) ||
+    if (!Number.isFinite(parseDayKey(date)) || !object(slice) || !validTokens(slice.total) ||
         !validBuckets(slice.byModel, slice.total) || !validBuckets(slice.byEffort, slice.total)) return undefined;
     periodTotals.push(slice.total);
     for (const [model, tokens] of Object.entries(slice.byModel)) {
@@ -320,22 +287,6 @@ function codexFileDays(file: CodexFileAggregate, timeZone: string): AchievementD
     equal(periodModels.get(model) ?? { inputTotal: 0, outputTotal: 0 }, tokens));
   return { complete, days, timeZone, ...(!complete ? { scope: 'verified-subset' as const } : {}) };
 }
-/** Period proof is independent of byDay's legacy UTC projection. The caller
- * supplies its complete-census/provenance fence; host snapshots use the stricter
- * runtime-witness projection below. */
-export function codexAchievementDayEvidence(files: readonly CodexFileAggregate[], timeZone: string, complete: boolean): AchievementDayEvidence {
-  const fail = (): AchievementDayEvidence => ({ complete: false, days: [], timeZone });
-  if (complete !== true || !validTimeZone(timeZone) || !validCanonicalFiles(files)) return fail();
-  const proofs = files.map(file => codexFileDays(file,timeZone));
-  if (proofs.some(proof => !proof)) return fail();
-  const days = proofs.flatMap(proof => proof!.days);
-  const combined = validatedDays({ complete: true, days }, Infinity, true);
-  if (!combined) return fail();
-  const whole = proofs.every(proof => proof!.complete);
-  return { complete:whole, days:[...combined.values()], timeZone,
-    ...(!whole && [...combined.values()].some(day=>day.processed>0) ? {scope:'verified-subset' as const} : {}) };
-}
-
 export interface CodexAchievementCalendarProjection {
   evidence: AchievementDayEvidence;
   /** Fully dated files selected AFTER full-census ancestry validation. Money
@@ -404,7 +355,7 @@ export function claudeAchievementDayEvidence(
   const days = new Map<string, AchievementDay>();
   const signatures = new Map<string, string>();
   for (const row of rows) {
-    if (!object(row) || typeof row.date !== 'string' || !Number.isFinite(dayTimestamp(row.date)) ||
+    if (!object(row) || typeof row.date !== 'string' || !Number.isFinite(parseDayKey(row.date)) ||
         !object(row.data) || !object(row.data.modelBreakdown)) return fail();
     const total = [row.data.totalInputTokens, row.data.totalOutputTokens, row.data.totalCacheCreationTokens, row.data.totalCacheReadTokens];
     if (!total.every(count) || !count(total.reduce((a, b) => a + b, 0))) return fail();

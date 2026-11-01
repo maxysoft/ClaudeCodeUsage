@@ -5,7 +5,11 @@ import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 
 const require = createRequire(import.meta.url);
-const { calculateCostFromTokens, calculateCostBreakdown, getModelPricing } = require('../../out/pricing.js');
+const { calculateCostBreakdown, getModelPricing } = require('../../out/pricing.js');
+const calculateCostFromTokens = (tokens, model) => {
+  const parts = calculateCostBreakdown(tokens, model);
+  return parts.input + parts.output + parts.cacheWrite + parts.cacheRead;
+};
 const originalWarn = console.warn;
 let warnings = 0;
 let maxWarningChars = 0;

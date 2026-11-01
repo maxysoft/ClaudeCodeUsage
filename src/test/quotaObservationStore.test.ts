@@ -6,7 +6,6 @@ import * as path from 'node:path';
 
 import {
   createEmptyQuotaObservationStore,
-  deriveQuotaResetEvents,
   fingerprintForStableIdentity,
   loadQuotaObservationStore,
   mergeQuotaCaptures,
@@ -122,8 +121,6 @@ test('reset projections remain deterministic when the post-reset fact arrives fi
   reversed = mergeQuotaCaptures(reversed, [before], { salt: SALT, now: NOW });
 
   assert.deepEqual(reversed, ordered);
-  assert.deepEqual(deriveQuotaResetEvents(reversed), deriveQuotaResetEvents(ordered));
-  assert.equal(deriveQuotaResetEvents(reversed)[0].evidence, 'reset-at-change');
 });
 
 test('resetAt changes retain consecutive and same-day reset events', () => {
@@ -136,12 +133,6 @@ test('resetAt changes retain consecutive and same-day reset events', () => {
     capture({ observedAt: NOW + HOUR, resetAt: thirdReset, usedFraction: 0.02 }),
   ], { salt: SALT, now: NOW + 2 * HOUR });
 
-  const resetEvents = deriveQuotaResetEvents(store);
-  assert.equal(resetEvents.length, 2);
-  assert.deepEqual(resetEvents.map((event) => event.evidence), [
-    'reset-at-change',
-    'reset-at-change',
-  ]);
   assert.equal(new Set(store.observations.map((item) => item.windowId)).size, 3);
   assert.equal(new Set(store.observations.map((item) => item.accountFingerprint)).size, 1);
 });
@@ -165,10 +156,6 @@ test('unattributed reset epochs retain low-confidence account ambiguity at a res
   assert.equal(new Set(store.observations.map((item) => item.accountFingerprint)).size, 2);
   assert.equal(new Set(store.observations.map((item) => item.windowId)).size, 2);
   assert.equal(store.observations[1].flags.includes('account-ambiguous'), true);
-  const events = deriveQuotaResetEvents(store);
-  assert.equal(events.length, 1);
-  assert.equal(events[0].evidence, 'reset-at-change');
-  assert.notEqual(events[0].previousAccountFingerprint, events[0].nextAccountFingerprint);
 });
 
 test('a legacy account-ambiguous flag survives a coherent reset boundary', () => {
@@ -213,15 +200,11 @@ test('small percentage rollback is noise but a significant rollback creates a ne
     capture({ observedAt: NOW - 2 * HOUR, usedFraction: 0.5 }),
     capture({ observedAt: NOW - HOUR, usedFraction: 0.48 }),
   ], { salt: SALT, now: NOW });
-  assert.equal(deriveQuotaResetEvents(noisy).length, 0);
   assert.equal(new Set(noisy.observations.map((item) => item.windowId)).size, 1);
 
   const reset = mergeQuotaCaptures(noisy, [
     capture({ observedAt: NOW, usedFraction: 0.08 }),
   ], { salt: SALT, now: NOW });
-  const resetEvents = deriveQuotaResetEvents(reset);
-  assert.equal(resetEvents.length, 1);
-  assert.equal(resetEvents[0].evidence, 'usage-drop');
   assert.notEqual(reset.observations[1].windowId, reset.observations[2].windowId);
 });
 
@@ -268,7 +251,6 @@ test('an account epoch change alone does not invent an official reset event', ()
   assert.equal(new Set(store.observations.map((item) => item.accountFingerprint)).size, 2);
   assert.equal(new Set(store.observations.map((item) => item.windowId)).size, 2);
   assert.ok(store.observations[1].flags.includes('account-ambiguous'));
-  assert.deepEqual(deriveQuotaResetEvents(store), []);
 });
 
 test('invalid and far-future captures are rejected without manufacturing values', () => {
@@ -540,4 +522,53 @@ test('scoped clear refuses to strand quarantined quota data', async () => {
   );
   assert.equal((await repository.load()).observations.length, 1);
   await access(quarantine);
+});
+
+test('a transient read error never lets append or scoped clear overwrite the store', async () => {
+  const root = path.join(os.tmpdir(), `ccu-quota-unreadable-${process.pid}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(root, { recursive: true });
+  const file = path.join(root, 'quota-observations-v2.json');
+  const repository = new QuotaObservationRepository(file, SALT, () => NOW);
+  await repository.append([capture({ observedAt: NOW - HOUR, usedFraction: 0.2 })]);
+  const original = await readFile(file, 'utf8');
+  const fsPromises = require('node:fs/promises');
+  const realReadFile = fsPromises.readFile;
+  fsPromises.readFile = async (target: unknown, ...rest: unknown[]) => {
+    if (target === file) throw Object.assign(new Error('synthetic lock'), { code: 'EBUSY' });
+    return realReadFile(target, ...rest);
+  };
+  try {
+    assert.equal((await loadQuotaObservationStore(file, { now: NOW })).disposition, 'unreadable');
+    await assert.rejects(() => repository.append([capture({ observedAt: NOW, usedFraction: 0.3 })]));
+    await assert.rejects(
+      () => repository.clear({ provider: 'codex' }),
+      QuotaObservationScopedClearBlockedError,
+    );
+  } finally {
+    fsPromises.readFile = realReadFile;
+  }
+  assert.equal(await readFile(file, 'utf8'), original);
+});
+
+test('a corrupt store whose quarantine rename fails is never overwritten', async () => {
+  const root = path.join(os.tmpdir(), `ccu-quota-quarantine-fail-${process.pid}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(root, { recursive: true });
+  const file = path.join(root, 'quota-observations-v2.json');
+  await writeFile(file, '{corrupt', 'utf8');
+  const repository = new QuotaObservationRepository(file, SALT, () => NOW);
+  const fsPromises = require('node:fs/promises');
+  const realRename = fsPromises.rename;
+  fsPromises.rename = async (source: unknown, target: unknown) => {
+    if (source === file) throw Object.assign(new Error('synthetic lock'), { code: 'EPERM' });
+    return realRename(source, target);
+  };
+  try {
+    const loaded = await loadQuotaObservationStore(file, { now: NOW });
+    assert.equal(loaded.disposition, 'unreadable');
+    assert.equal(loaded.quarantinePath, undefined);
+    await assert.rejects(() => repository.append([capture()]));
+  } finally {
+    fsPromises.rename = realRename;
+  }
+  assert.equal(await readFile(file, 'utf8'), '{corrupt');
 });

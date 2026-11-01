@@ -85,8 +85,7 @@ Resume 重放 decoded 前缀，计入工作量并允许取消。Codec 只接受�
 ## 绝不缓存什么
 
 - 插件自有派生存储中不会缓存 OAuth access/refresh token、cookie、authorization
-  header 或 GitHub 凭据。为查询 Claude 额度而刷新 OAuth token 时，Claude
-  自有的凭证文件或 macOS 钥匙串项目可能会被更新。
+  header 或 GitHub 凭据。插件从不写入 Claude 自有的凭证文件或 macOS 钥匙串项目。
 - VS Code SecretStorage 之外的 API key。
 - 完整账号标识、邮箱、显示名或订阅名称。账号连续性只用本机 HMAC
   fingerprint 或隔离的未归属 epoch。
@@ -94,9 +93,8 @@ Resume 重放 decoded 前缀，计入工作量并允许取消。Codec 只接受�
   仓库 remote 或持久化线程标题。
 
 启用 Claude 额度跟踪后，插件用所选 Claude 资料的现有 access token 查询
-`api.anthropic.com/api/oauth/usage`。如该 token 过期，会把现有 refresh token
-发送到 `console.anthropic.com/v1/oauth/token`，并将新 access token 写回该资料的
-凭证文件或 macOS 钥匙串项目。这与可选的自备密钥 AI 建议分开；后者不会使用
+`api.anthropic.com/api/oauth/usage`。插件从不刷新该 token：token 过期时额度
+暂不可用，直到 Claude Code 自行刷新其凭证。这与可选的自备密钥 AI 建议分开；后者不会使用
 Claude 订阅凭据。
 
 不同匿名账号 fingerprint 不会合并为账号级事实。账号归属不明时，当前周期的总额／
@@ -463,8 +461,8 @@ URL 或跟踪参数，预览／导出不获取该地址，不新增自动网络�
 ## 清除与迁移
 
 命令面板提供独立维护动作：重建 Codex 派生索引、清除额度历史、清除建议数据、重置
-UI 或分享偏好、移除 BYOK 密钥。“清除全部扩展派生数据”会先列出精确目标。这些动作
-不进入仪表盘设置页，以保持插件设置简洁；同时均不删除 Claude/Codex 源日志或供应商
+UI 或分享偏好、移除 BYOK 密钥。“清除全部扩展派生数据”会先列出精确目标。仪表盘设置页
+也显示本地数据清单和同样的动作。这些动作均不删除 Claude/Codex 源日志或供应商
 拥有的凭据。
 
 Codex 索引按日志目录、配置内本地盐和数据时区隔离，即使 VS Code 配置共用扩展存储。

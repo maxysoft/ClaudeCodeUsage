@@ -41,6 +41,42 @@ export function collectClaudeOutputHours(
   return [...hours].sort((a, b) => a - b);
 }
 
+export interface IndexedOutputHours {
+  /** UTC hour -> records with output tokens in it. */
+  counts: ReadonlyMap<number, number>;
+  /** Exact output timestamps at or after detailFromMs. */
+  recent: ReadonlyMap<number, number>;
+  detailFromMs: number;
+}
+
+const indexedOutputHours = new WeakMap<object, IndexedOutputHours>();
+
+/** Registers the index's hours for the exact records array it published. */
+export function attachClaudeOutputHours(records: object, hours: IndexedOutputHours): void {
+  indexedOutputHours.set(records, hours);
+}
+
+/** collectClaudeOutputHours, without a corpus pass for an index-published array. */
+export function claudeOutputHours(
+  records: readonly Pick<ClaudeUsageRecord, 'timestamp' | 'message'>[],
+  nowMs = Date.now(),
+): number[] {
+  const indexed = indexedOutputHours.get(records);
+  if (!indexed || !(nowMs >= indexed.detailFromMs)) return collectClaudeOutputHours(records, nowMs);
+  const current = Math.floor(nowMs / HOUR_MS);
+  const hours: number[] = [];
+  for (const hour of indexed.counts.keys()) {
+    if (hour < current) hours.push(hour);
+  }
+  for (const time of indexed.recent.keys()) {
+    if (time >= current * HOUR_MS && time <= nowMs) {
+      hours.push(current);
+      break;
+    }
+  }
+  return hours.sort((a, b) => a - b);
+}
+
 interface CodexOutputHour {
   hour: string;
   output: number;

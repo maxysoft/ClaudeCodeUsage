@@ -4,6 +4,41 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.5.0 / `7c3389d`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [Unreleased]
+
+### Fixed
+
+- **This Week tab** — it stays selected through live refreshes and reloads, and live updates keep running after a reload.
+- **Sonnet 5 weekly value** — weekly API-equivalent value prices Sonnet 5 at $3/$15 from 2026-09-01, and a fetched LiteLLM price can no longer override the dated Sonnet 5 rates. Vertex (`claude-sonnet-5@…`), Bedrock (`us.anthropic.claude-sonnet-5-v1:0`) and proxy (`openrouter/anthropic/claude-sonnet-5`) labels get the same dated rates.
+- **Claude credentials are read-only** — the extension no longer refreshes or writes Claude Code's OAuth credentials. An expired token leaves the quota unavailable until Claude Code refreshes it, and the quota returns on the next refresh after that, without a failure backoff.
+- **Missing Claude credentials** — API-key, Bedrock and Vertex users: the extension looks for Claude credentials at most once a minute instead of on every refresh.
+- **Logout** — after logout or removal of the credentials, the previous account's cached token is no longer used for the quota.
+- **Credential logging** — the output channel no longer shows parts of a credentials file or Keychain error output.
+- **Quota history** — a transient read error (permission, file lock) can no longer overwrite the stored quota history.
+- **Quota fetch** — concurrent refreshes share one request with a 15-second timeout, and Keychain reads no longer block the editor. Aborting or clearing quota history no longer waits on an open macOS Keychain prompt, and a Keychain prompt that takes focus from VS Code is no longer dismissed. The cold-start retry, which never fetched, is removed.
+- **OpenRouter key** — an advice-key migration error no longer hides the OpenRouter key for the session.
+- **Unreadable transcripts** — one unreadable Claude transcript (for example root-owned) no longer stops Claude refreshes; it is skipped.
+- **Workspace cost** — the `$(folder)` cost no longer counts sibling folders that share a name prefix (`/code/api` vs `/code/api-gateway`).
+- **Workflow rows** — workflow rows include orchestration cost.
+- **Secrets on the command line** — API keys and OAuth tokens no longer appear in the curl command line. AI advice and optimizer requests no longer fall back to curl.
+- **Paid AI requests** — a failed request is retried only when the connection never opened, so a slow model is billed once. Advice endpoints must use HTTPS except on localhost, and redirects are refused.
+- **Get AI Advice** — structured advice now works: the model receives the response schema and Anthropic/OpenAI-compatible structured output is used. If an endpoint rejects the structured-output parameter, the single resend without it is shown, with its SHA-256, in the request preview you approve.
+- **Advice comparison** — results say quality was not measured instead of claiming a passed quality check.
+- **Codex** — a manual refresh no longer fails with the error of a background scan it waited behind, and one corrupt `.jsonl.zst` no longer keeps Codex in backfill, partial or refresh-failed state. A cancelled scan that finishes late no longer starts a queued refresh, and an index worker that exits silently no longer hangs the next refresh. An idle index worker that crashed no longer fails the next refresh. Known usage still counts toward volume achievements as a lower bound; calendar, money and calibration checks stay pending while a file cannot be read, because its days and tokens are unknown.
+- **Local data and privacy** — the Settings panel shows the local data inventory, and its rows, confirmation dialogs, results and scope labels follow the UI language in all 8 languages. The exact target list in a confirmation dialog stays in English. The selected quota-history scope stays selected through dashboard refreshes.
+
+### Performance
+
+- **Claude refreshes** — unchanged refreshes, appends, cold builds and the This Week tab do proportional work instead of re-reading or re-pricing the whole corpus, with lower memory use. This Week is no longer computed while the dashboard is closed. Its daily breakdown and weekly value no longer reprocess the whole Claude history on every refresh while it is open.
+- **Codex refreshes** — the index worker stays alive between refreshes, so unchanged Codex refreshes are about 3× faster.
+- **Usage tracking cards** — the week, month and all-time cards no longer re-attribute every record on each re-render (about 40% faster with 50k records).
+- **Settings changes** — presentation, advice, OpenRouter, interval and watch settings no longer rebuild providers or restart the Codex backfill.
+- **Achievement badges** — the dashboard loads local resources only from the bundled badge folder, and badge images are inlined only into exported share cards instead of being kept in memory.
+
+### Removed (fork-specific)
+
+- **Production-dead upstream code** — unused advice modules, the incremental-index prototype and its benchmarks, the unused Claude provider snapshot, dead achievement, heatmap, weekly-value and quota helpers. The legacy Claude loader now lives in test helpers as the equivalence oracle. No behaviour change; upstream merges touching these files need the deletion re-applied.
+
 ## [2.17.0] — 2026-10-18
 
 ### Added (merged from upstream v2.5.0)

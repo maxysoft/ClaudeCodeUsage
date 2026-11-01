@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ClaudeDataLoader } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { scanUsageManifest } from '../claudeUsageFiles';
 
 test('50k malformed transcript lines produce anonymous summary diagnostics, not console RPC floods', async () => {
@@ -17,7 +17,7 @@ test('50k malformed transcript lines produce anonymous summary diagnostics, not 
   try {
     await mkdir(project, { recursive: true });
     await writeFile(path.join(project, 'session.jsonl'), 'private-fixture invalid JSON\n'.repeat(50_000));
-    const result = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false, log: line => messages.push(line) });
+    const result = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false, log: line => messages.push(line) });
     assert.equal(result.records.length, 0);
     assert.equal(result.diagnostics.linesParsed, 50_000);
     assert.equal(consoleCalls, 0);
@@ -44,7 +44,7 @@ test('many missing files remain detectable without per-file console errors or pa
     await Promise.all(Array.from({ length: 128 }, (_, index) => writeFile(path.join(project, `session-${index}.jsonl`), '{}\n')));
     const manifest = await scanUsageManifest([root]);
     await rm(project, { recursive: true, force: true });
-    const result = await ClaudeDataLoader.loadUsageRecords(root, { manifest, analyzeContent: false, log: line => messages.push(line) });
+    const result = await LegacyClaudeLoader.loadUsageRecords(root, { manifest, analyzeContent: false, log: line => messages.push(line) });
     assert.equal(result.diagnostics.filesFailed, 128);
     assert.equal(consoleCalls, 0);
     assert.ok(messages.some(line => line.includes('files-failed=128')));
@@ -68,7 +68,7 @@ test('diagnostic model-name churn is bounded and arbitrary labels are not echoed
       type: 'assistant', timestamp: new Date().toISOString(), uuid: `uuid-${index}`, requestId: `request-${index}`,
       message: { id: `message-${index}`, role: 'assistant', model, usage: { input_tokens: 100, output_tokens: 10 } },
     })).join('\n'));
-    const result = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false, log: line => messages.push(line) });
+    const result = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false, log: line => messages.push(line) });
     assert.equal(result.records.length, labels.length, 'diagnostic limits must not drop usage');
     assert.equal(messages.length, 2);
     assert.ok(messages.every(line => line.length < 3_000));

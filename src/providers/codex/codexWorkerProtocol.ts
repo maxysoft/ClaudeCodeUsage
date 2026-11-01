@@ -30,7 +30,7 @@ export interface CodexWorkerRefreshInput {
 }
 
 export type CodexWorkerRequest =
-  | ({ type: 'refresh'; requestId: string } & CodexWorkerRefreshInput)
+  | ({ type: 'refresh'; requestId: string; knownIndexKey?: string } & CodexWorkerRefreshInput)
   | { type: 'cancel'; requestId: string };
 
 export interface CodexWorkerResult {
@@ -45,13 +45,20 @@ export interface CodexWorkerResult {
   migration: CodexIndexUpdateResult['migration'];
 }
 
+/** `index` is omitted only when `indexKey` equals the request's `knownIndexKey`. */
+export type CodexWorkerWireResult = Omit<CodexWorkerResult, 'index'> & {
+  index?: CodexIndexV1;
+  /** Identity of the unchanged on-disk index file this result was loaded from. */
+  indexKey?: string;
+};
+
 export type CodexWorkerMessage =
   | {
       type: 'progress';
       requestId: string;
       progress: CodexIndexProgress;
     }
-  | { type: 'result'; requestId: string; result: CodexWorkerResult }
+  | { type: 'result'; requestId: string; result: CodexWorkerWireResult }
   | {
       type: 'error';
       requestId: string;

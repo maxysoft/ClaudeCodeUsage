@@ -8,7 +8,7 @@ import {getAchievementMoneyPricebook,type AchievementMoneyEvidence,type Achievem
 import {API_ACHIEVEMENT_DEFINITIONS} from './achievementMoneyCatalog';
 import type {CodexFileAggregate} from './providers/codex/codexIndex';
 import type {UsageData,ClaudeUsageRecord} from './types';
-import {dayKeyInZone} from './dateKeys';
+import {dayKeyInZone,mondayOf,parseDayKey} from './dateKeys';
 import {historyRegistrationAllows,ACHIEVEMENT_HISTORY_CATALOG_SIGNATURE} from './achievementHistoryRegistry';
 import {ClaudeDataLoader} from './dataLoader';
 
@@ -31,12 +31,7 @@ export interface AchievementHistoryDate {
 }
 const DAY=86400000;
 const count=(n:unknown):n is number=>typeof n==='number'&&Number.isSafeInteger(n)&&n>=0;
-const ordinal=(day:string):number=>{
- const n=typeof day==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(day)?Date.parse(day+'T00:00:00Z'):NaN;
- return Number.isFinite(n)&&new Date(n).toISOString().slice(0,10)===day?n:NaN;
-};
 const label=(time:number)=>new Date(time).toISOString().slice(0,10);
-const monday=(n:number)=>n-((new Date(n).getUTCDay()+6)%7)*DAY;
 const rules=new Map<string,typeof ACHIEVEMENT_DEFINITIONS[number]>(ACHIEVEMENT_DEFINITIONS.map(r=>[r.id,r]));
 const SCALE=10n**18n;
 /** All-session provenance stays within this reducer; the output carries counts only.
@@ -126,7 +121,7 @@ function validated(proof:AchievementHistoryInput['claude'],zone:string,asOf:numb
  const days:AchievementHistoryDay[]=[],seen=new Set<string>();
  let total=0,output=0;
  for(const row of proof.days){
-  if(!row||!Number.isFinite(ordinal(row.day))||seen.has(row.day)||!count(row.processed)||!count(row.output)||
+  if(!row||!Number.isFinite(parseDayKey(row.day))||seen.has(row.day)||!count(row.processed)||!count(row.output)||
    row.output>row.processed||!row.models||typeof row.models!=='object'||Array.isArray(row.models))return;
   seen.add(row.day);
   let p=0,o=0;
@@ -135,7 +130,7 @@ function validated(proof:AchievementHistoryInput['claude'],zone:string,asOf:numb
    p+=vector.processed;o+=vector.output;
   }
   if(!count(p)||!count(o)||p>row.processed||o>row.output)return;
-  if(ordinal(row.day)>asOf)continue;
+  if(parseDayKey(row.day)>asOf)continue;
   total+=row.processed;output+=row.output;
   if(!count(total)||!count(output))return;
   days.push(row);
@@ -149,7 +144,7 @@ const families:Family[]=['sonnet','opus','haiku','fable','astra','sol','luna'];
  * All returned labels expressly mean the earliest date this retained proof establishes. */
 export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<Partial<Record<AchievementId,AchievementHistoryDate>>>{
  const result:Partial<Record<AchievementId,AchievementHistoryDate>>={};
- const asOf=ordinal(input.asOfDay);
+ const asOf=parseDayKey(input.asOfDay);
  try {if(!Number.isFinite(asOf)||!input.timeZone)return Object.freeze(result);
   new Intl.DateTimeFormat('en',{timeZone:input.timeZone});
  }catch{return Object.freeze(result);}
@@ -192,8 +187,8 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
  const weeks=new Map<number,{total:number;qualifiedDays:number}>();
  let active=0,run=0,previous=-Infinity,dual=0;
  for(const [day,bucket]of [...byDay].sort(([a],[b])=>a.localeCompare(b))){
-  const time=ordinal(day),closed=time<asOf,dailyFamilies=new Map<Family,{processed:number;output:number}>();
-  const week=weeks.get(monday(time))??{total:0,qualifiedDays:0};
+  const time=parseDayKey(day),closed=time<asOf,dailyFamilies=new Map<Family,{processed:number;output:number}>();
+  const week=weeks.get(mondayOf(time))??{total:0,qualifiedDays:0};
   let dayVolume=0,qualified=false;
   for(const provider of ['claude','codex'] as const){
    const row=bucket[provider];if(!row)continue;
@@ -227,7 +222,7 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
     moneyBooks[provider]=m.pricebookVersion;moneyBounds[provider] ||= m.status==='partial'||m.totalTokens<row.processed;
     const units=BigInt(m.exactMicroUsdUnits);
     moneyTotals[provider]+=units;
-    const w=monday(time);moneyWeeks[provider].set(w,(moneyWeeks[provider].get(w)??0n)+units);
+    const w=mondayOf(time);moneyWeeks[provider].set(w,(moneyWeeks[provider].get(w)??0n)+units);
     markMoney(provider,'cumulative',moneyTotals[provider],time);
    }else if(row.processed>0){
     moneyBounds[provider]=true;
@@ -253,7 +248,7 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
   // Existing weekly-volume rule includes the current observed week.
   series('weekly-volume',week.total,time,'combined');
   if(closed&&qualified)week.qualifiedDays++;
-  weeks.set(monday(time),week);
+  weeks.set(mondayOf(time),week);
   if(dayVolume>0){
    active++;run=time===previous+DAY?run+1:1;previous=time;
    series('active-days',active,time,'combined');
@@ -280,10 +275,10 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
  if(input.enabled.claude&&claude&&Array.isArray(input.claudeSessions)){
   let outputs=0,fable=0,mixed=0;const seen=new Set<string>();
   const rows=[...input.claudeSessions].sort((a,b)=>a.day.localeCompare(b.day));
-  if(rows.every(r=>Number.isFinite(ordinal(r.day))&&!seen.has(r.day)&&seen.add(r.day)&&
+  if(rows.every(r=>Number.isFinite(parseDayKey(r.day))&&!seen.has(r.day)&&seen.add(r.day)&&
    count(r.outputSessions)&&count(r.fableSessions)&&count(r.mixedSessions))){
    for(const r of rows){
-    const time=ordinal(r.day);if(time>asOf)continue;
+    const time=parseDayKey(r.day);if(time>asOf)continue;
     outputs+=r.outputSessions;fable+=r.fableSessions;mixed+=r.mixedSessions;
     series('claude-output-sessions',outputs,time,'claude');series('fable-sessions',fable,time,'claude');
     mark(['fable-relay'],mixed,time,'claude','fable-relay');
@@ -293,9 +288,9 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
  // Completion events, including quiet empty weeks, do not depend on a log on Monday.
  let activeWeeks=0;
  let firstTime=Infinity;for(const [day,rows]of byDay)if((rows.claude?.processed??0)+(rows.codex?.processed??0)>0){
-  firstTime=Math.min(firstTime,ordinal(day));
+  firstTime=Math.min(firstTime,parseDayKey(day));
  }
- const firstWeek=monday(firstTime)+(firstTime===monday(firstTime)?0:7*DAY);
+ const firstWeek=mondayOf(firstTime)+(firstTime===mondayOf(firstTime)?0:7*DAY);
  const completed=[...weeks].filter(([w])=>w+7*DAY<=asOf).sort(([a],[b])=>a-b);
  for(const [w,week]of completed){
   if(week.qualifiedDays>=4)activeWeeks++;
@@ -306,7 +301,7 @@ export function achievementHistoryDates(input:AchievementHistoryInput):Readonly<
   for(const w of weeks.keys())for(let back=0;back<4;back++)starts.add(w-back*7*DAY);
   for(const start of [...starts].sort((a,b)=>a-b)){
    const end=start+28*DAY;
-   if(start<firstWeek||end>monday(asOf))continue;
+   if(start<firstWeek||end>mondayOf(asOf))continue;
    let sum=0;for(let n=0;n<4;n++)sum+=weeks.get(start+n*7*DAY)?.total??0;
    if(count(sum))series('weekly-average',Math.floor(sum/4),end,'combined');
   }

@@ -1,5 +1,6 @@
 import {
   ADVICE_CONTRACT_VERSION,
+  ADVICE_ID_PATTERN,
   AdviceConditionalAction,
   AdviceExplanation,
   AdviceQualityGuardrail,
@@ -36,15 +37,91 @@ const MAX_ACTIONS = 4;
 const MAX_CRITERIA = 4;
 const MAX_REFERENCES = 12;
 const MAX_LIMITATIONS = 8;
+const MIN_COMPARABLE_TASKS = 2;
+const MAX_COMPARABLE_TASKS = 10_000;
+const DIRECTIONS = ['increase', 'decrease', 'maintain'] as const;
+const TARGET_KINDS = ['relative-change', 'absolute'] as const;
+
+type JsonSchema = Record<string, unknown>;
+type ObjectSchema = {
+  type: 'object';
+  properties: Record<string, JsonSchema>;
+  required: string[];
+  additionalProperties: false;
+};
+
+function objectSchema<T>(properties: { [K in keyof Required<T>]: JsonSchema }): ObjectSchema {
+  return { type: 'object', properties, required: Object.keys(properties), additionalProperties: false };
+}
+
+const ID_SCHEMA = { type: 'string', pattern: ADVICE_ID_PATTERN.source };
+const TEXT_SCHEMA = { type: 'string' };
+const SCORE_SCHEMA = { type: 'number', minimum: 0, maximum: 1 };
+
+function idListSchema(minItems: number): JsonSchema {
+  return { type: 'array', items: ID_SCHEMA, minItems, maxItems: MAX_REFERENCES };
+}
+
+const EXPLANATION_SCHEMA = objectSchema<AdviceExplanation>({
+  summary: TEXT_SCHEMA,
+  proxyMetricObservationIds: idListSchema(0),
+  limitations: { type: 'array', items: TEXT_SCHEMA, maxItems: MAX_LIMITATIONS },
+});
+const ACTION_SCHEMA = objectSchema<AdviceConditionalAction>({
+  when: TEXT_SCHEMA,
+  action: TEXT_SCHEMA,
+  evidenceIds: idListSchema(1),
+  stopCondition: { type: ['string', 'null'] },
+});
+const GUARDRAIL_SCHEMA = objectSchema<AdviceQualityGuardrail>({
+  rubricId: ID_SCHEMA,
+  minimumScore: SCORE_SCHEMA,
+  maximumRegression: SCORE_SCHEMA,
+});
+const TARGET_SCHEMA = objectSchema<AdviceSuccessCriterion['target']>({
+  kind: { type: 'string', enum: [...TARGET_KINDS] },
+  value: { type: 'number', minimum: 0 },
+});
+const CRITERION_SCHEMA = objectSchema<AdviceSuccessCriterion>({
+  metricObservationId: ID_SCHEMA,
+  direction: { type: 'string', enum: [...DIRECTIONS] },
+  target: TARGET_SCHEMA,
+  minimumComparableTasks: { type: 'integer', minimum: MIN_COMPARABLE_TASKS, maximum: MAX_COMPARABLE_TASKS },
+  qualityGuardrail: GUARDRAIL_SCHEMA,
+});
+const RECOMMENDATION_SCHEMA = objectSchema<AdviceRecommendation>({
+  id: ID_SCHEMA,
+  title: TEXT_SCHEMA,
+  evidenceIds: idListSchema(1),
+  explanation: EXPLANATION_SCHEMA,
+  conditionalActions: { type: 'array', items: ACTION_SCHEMA, minItems: 1, maxItems: MAX_ACTIONS },
+  successCriteria: { type: 'array', items: CRITERION_SCHEMA, minItems: 1, maxItems: MAX_CRITERIA },
+});
+
+/** Sent to providers as the structured-output schema; the parser below checks keys against it. */
+export const STRUCTURED_ADVICE_JSON_SCHEMA = objectSchema<StructuredAdviceOutput>({
+  schemaVersion: { type: 'integer', enum: [ADVICE_CONTRACT_VERSION] },
+  recommendations: { type: 'array', items: RECOMMENDATION_SCHEMA, maxItems: MAX_RECOMMENDATIONS },
+});
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function exactKeys(value: Record<string, unknown>, required: string[], optional: string[] = []): boolean {
+function hasShape(value: Record<string, unknown>, schema: ObjectSchema): boolean {
   const actual = Object.keys(value);
-  const allowed = new Set([...required, ...optional]);
-  return required.every((key) => actual.includes(key)) && actual.every((key) => allowed.has(key));
+  return (
+    actual.every((key) => Object.prototype.hasOwnProperty.call(schema.properties, key)) &&
+    schema.required.every((key) => actual.includes(key) || isNullable(schema.properties[key]))
+  );
+}
+
+function isNullable(schema: JsonSchema): boolean {
+  return Array.isArray(schema.type) && schema.type.includes('null');
+}
+
+function oneOf<T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === 'string' && (values as readonly string[]).includes(value);
 }
 
 function boundedText(value: unknown, max: number): string | undefined {
@@ -105,7 +182,7 @@ function parseExplanation(
   path: string,
   issues: string[]
 ): AdviceExplanation | undefined {
-  if (!isObject(value) || !exactKeys(value, ['limitations', 'proxyMetricObservationIds', 'summary'])) {
+  if (!isObject(value) || !hasShape(value, EXPLANATION_SCHEMA)) {
     issues.push(`${path} has an invalid shape`);
     return undefined;
   }
@@ -136,15 +213,15 @@ function parseAction(
   path: string,
   issues: string[]
 ): AdviceConditionalAction | undefined {
-  if (!isObject(value) || !exactKeys(value, ['action', 'evidenceIds', 'when'], ['stopCondition'])) {
+  if (!isObject(value) || !hasShape(value, ACTION_SCHEMA)) {
     issues.push(`${path} has an invalid shape`);
     return undefined;
   }
   const when = boundedText(value.when, 600);
   const action = boundedText(value.action, 800);
   const references = idArray(value.evidenceIds, MAX_REFERENCES, evidenceIds, `${path}.evidenceIds`, issues);
-  const stopCondition = value.stopCondition === undefined ? undefined : boundedText(value.stopCondition, 600);
-  if (!when || !action || !references || (value.stopCondition !== undefined && !stopCondition)) {
+  const stopCondition = value.stopCondition == null ? undefined : boundedText(value.stopCondition, 600);
+  if (!when || !action || !references || (value.stopCondition != null && !stopCondition)) {
     issues.push(`${path} has empty or oversized text`);
     return undefined;
   }
@@ -156,7 +233,7 @@ function finiteRange(value: unknown, min: number, max: number): value is number 
 }
 
 function parseGuardrail(value: unknown, path: string, issues: string[]): AdviceQualityGuardrail | undefined {
-  if (!isObject(value) || !exactKeys(value, ['maximumRegression', 'minimumScore', 'rubricId'])) {
+  if (!isObject(value) || !hasShape(value, GUARDRAIL_SCHEMA)) {
     issues.push(`${path} has an invalid shape`);
     return undefined;
   }
@@ -182,36 +259,27 @@ function parseCriterion(
   path: string,
   issues: string[]
 ): AdviceSuccessCriterion | undefined {
-  if (
-    !isObject(value) ||
-    !exactKeys(value, [
-      'direction',
-      'metricObservationId',
-      'minimumComparableTasks',
-      'qualityGuardrail',
-      'target',
-    ])
-  ) {
+  if (!isObject(value) || !hasShape(value, CRITERION_SCHEMA)) {
     issues.push(`${path} has an invalid shape`);
     return undefined;
   }
   if (
     typeof value.metricObservationId !== 'string' ||
     !observationIds.has(value.metricObservationId) ||
-    (value.direction !== 'increase' && value.direction !== 'decrease' && value.direction !== 'maintain') ||
+    !oneOf(value.direction, DIRECTIONS) ||
     !Number.isInteger(value.minimumComparableTasks) ||
-    (value.minimumComparableTasks as number) < 2 ||
-    (value.minimumComparableTasks as number) > 10_000
+    (value.minimumComparableTasks as number) < MIN_COMPARABLE_TASKS ||
+    (value.minimumComparableTasks as number) > MAX_COMPARABLE_TASKS
   ) {
     issues.push(`${path} has an invalid metric reference, direction, or sample size`);
     return undefined;
   }
-  if (!isObject(value.target) || !exactKeys(value.target, ['kind', 'value'])) {
+  if (!isObject(value.target) || !hasShape(value.target, TARGET_SCHEMA)) {
     issues.push(`${path}.target has an invalid shape`);
     return undefined;
   }
   if (
-    (value.target.kind !== 'relative-change' && value.target.kind !== 'absolute') ||
+    !oneOf(value.target.kind, TARGET_KINDS) ||
     !finiteRange(value.target.value, 0, Number.MAX_SAFE_INTEGER)
   ) {
     issues.push(`${path}.target has an invalid kind or value`);
@@ -234,17 +302,7 @@ function parseRecommendation(
   path: string,
   issues: string[]
 ): AdviceRecommendation | undefined {
-  if (
-    !isObject(value) ||
-    !exactKeys(value, [
-      'conditionalActions',
-      'evidenceIds',
-      'explanation',
-      'id',
-      'successCriteria',
-      'title',
-    ])
-  ) {
+  if (!isObject(value) || !hasShape(value, RECOMMENDATION_SCHEMA)) {
     issues.push(`${path} has an invalid shape`);
     return undefined;
   }
@@ -308,7 +366,7 @@ export function parseStructuredAdviceOutput(
   } catch {
     return { ok: false, code: 'invalid-json', issues: ['model output was not one strict JSON value'] };
   }
-  if (!isObject(parsed) || !exactKeys(parsed, ['recommendations', 'schemaVersion'])) {
+  if (!isObject(parsed) || !hasShape(parsed, STRUCTURED_ADVICE_JSON_SCHEMA)) {
     return { ok: false, code: 'invalid-schema', issues: ['top-level response shape is invalid'] };
   }
   if (parsed.schemaVersion !== ADVICE_CONTRACT_VERSION || !Array.isArray(parsed.recommendations)) {

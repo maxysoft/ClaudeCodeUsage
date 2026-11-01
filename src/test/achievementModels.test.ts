@@ -21,9 +21,7 @@ test('family signals admit native OpenAI aliases and merge their model identity'
       [model]: { inputTotal: 10_000, outputTotal: 5_000 },
       [`openai/${model}`]: { inputTotal: 20_000, outputTotal: 5_000 },
     })]);
-    assert.equal(signals.modelCount, 1, model);
-    assert.equal(signals.maxRealModelsPerRoot, 1, model);
-    assert.equal(signals.familyRootCounts[family], 1, model);
+    assert.equal(signals.verifiedRootCount, 1, model);
     assert.equal(signals.familyProcessedTokens?.[family], 40_000, model);
     assert.deepEqual(signals.collaboration?.rainbowFamilies[family], { processed: 40_000, output: 10_000 });
   }
@@ -33,9 +31,7 @@ test('family signals reject custom and dangling named labels without discarding 
   for (const model of ['gpt-6-sol-custom', 'gpt-6-sol-', 'gpt-6-sol-2026-09-01-custom',
     'openai/gpt-6-sol-custom', 'proxy/gpt-6-sol', 'gpt-6-custom']) {
     const signals = codexModelSignals([modelFile({ [model]: { inputTotal: 10_000_000, outputTotal: 20_000 } })]);
-    assert.equal(signals.modelCount, 0, model);
     assert.equal(signals.verifiedRootCount, 0, model);
-    assert.deepEqual(signals.familyRootCounts, { astra: 0, sol: 0, luna: 0 }, model);
     assert.deepEqual(signals.familyProcessedTokens, { astra: 0, sol: 0, luna: 0 }, model);
     assert.equal(signals.processedLowerBound, 10_020_000, 'unclassified tokens still belong to total volume');
   }
@@ -46,7 +42,7 @@ test('all existing OpenAI money aliases retain their original collaboration iden
   for (const [alias, model] of Object.entries(book.aliases)) {
     if (!Object.prototype.hasOwnProperty.call(book.prices, model)) continue;
     assert.equal(normalizeCodexAchievementModel(alias), normalizeAchievementMoneyModel(alias), alias);
-    assert.equal(codexModelSignals([modelFile({ [alias]: { inputTotal: 10, outputTotal: 1 } })]).modelCount, 1, alias);
+    assert.equal(codexModelSignals([modelFile({ [alias]: { inputTotal: 10, outputTotal: 1 } })]).verifiedRootCount, 1, alias);
   }
 });
 

@@ -107,9 +107,8 @@ Legacy Codex calendar proof recovery reuses existing numeric migration cursors a
 lineage markers after bounded body revalidation, not another store or scanner.
 
 - OAuth access or refresh tokens, cookies, authorization headers, or GitHub
-  credentials in extension-owned derived storage. Claude's provider-owned
-  credential file or macOS Keychain item may be updated when its OAuth token
-  needs refreshing for a quota lookup.
+  credentials in extension-owned derived storage. The extension never writes
+  Claude's provider-owned credential file or macOS Keychain item.
 - API keys outside VS Code SecretStorage.
 - Full account identifiers, email addresses, display names, or subscription
   names. Account continuity uses a machine-local HMAC fingerprint or an
@@ -119,9 +118,8 @@ lineage markers after bounded body revalidation, not another store or scanner.
 
 When Claude quota tracking is enabled, the extension uses the selected Claude
 profile's existing access token to query `api.anthropic.com/api/oauth/usage`.
-If it is expired, the existing refresh token is sent to
-`console.anthropic.com/v1/oauth/token`; the replacement access token is written
-back to that profile's credential file or macOS Keychain item. This is separate
+The extension never refreshes that token: an expired token leaves the quota
+unavailable until Claude Code refreshes its own credentials. This is separate
 from optional BYOK AI advice, which never uses Claude subscription credentials.
 
 Different anonymous account fingerprints are not merged into an account-level
@@ -660,9 +658,9 @@ and accept a local preview before export; no automatic export, sign-in or upload
 
 Separate Command Palette actions rebuild the Codex derived index, clear quota
 history, clear advice data, reset UI or sharing preferences, and remove the BYOK
-secret. “Clear all extension-derived data” first lists its targets. These
-maintenance actions stay out of the dashboard Settings tab so it remains
-concise. None of them deletes Claude or Codex source logs or provider-owned
+secret. “Clear all extension-derived data” first lists its targets. The
+dashboard Settings tab also shows the local data inventory and the same
+actions. None of them deletes Claude or Codex source logs or provider-owned
 credentials.
 
 Codex indexes are isolated by log directory, profile-local salt, and data

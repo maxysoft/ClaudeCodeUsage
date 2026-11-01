@@ -140,19 +140,21 @@ export const ACHIEVEMENT_IMAGE_FILES: Record<AchievementId,string> = {
   ...BASE_ACHIEVEMENT_IMAGE_FILES,
   ...Object.fromEntries(LONG_TERM_ACHIEVEMENT_DEFINITIONS.map(rule=>[rule.id,BASE_ACHIEVEMENT_IMAGE_FILES[rule.baseId]])),
 } as Record<AchievementId,string>;
+export const ACHIEVEMENT_ASSET_DIR = path.join(__dirname, '..', 'assets', 'achievements');
+const DATA_URL_CACHE_ENTRIES = 12;
 const encoded = new Map<string, string>();
 
 export function achievementImagePath(id: AchievementId): string {
-  return path.join(__dirname, '..', 'assets', 'achievements', ACHIEVEMENT_IMAGE_FILES[id]);
+  return path.join(ACHIEVEMENT_ASSET_DIR, ACHIEVEMENT_IMAGE_FILES[id]);
 }
 
 export function achievementImageDataUrl(id: AchievementId): string {
   const filename = ACHIEVEMENT_IMAGE_FILES[id];
-  let url = encoded.get(filename);
-  if (!url) {
-    url = 'data:image/png;base64,' + readFileSync(achievementImagePath(id)).toString('base64');
-    encoded.set(filename, url);
-  }
+  const url = encoded.get(filename) ??
+    'data:image/png;base64,' + readFileSync(achievementImagePath(id)).toString('base64');
+  encoded.delete(filename);
+  encoded.set(filename, url);
+  if (encoded.size > DATA_URL_CACHE_ENTRIES) encoded.delete(encoded.keys().next().value!);
   return url;
 }
 

@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import { scanUsageManifest } from '../claudeUsageFiles';
 import { ClaudeDataLoader, compactUsageRecord } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { I18n } from '../i18n';
 import { ClaudeUsageRecord, ContentAnalysis } from '../types';
 
@@ -333,7 +334,7 @@ test('an injected manifest is authoritative and returns anonymous load counters'
   await writeFile(path.join(project, 'session.jsonl'), line);
   const manifest = await scanUsageManifest([manifestRoot]);
 
-  const loaded = await ClaudeDataLoader.loadUsageRecords(emptyArgumentRoot, {
+  const loaded = await LegacyClaudeLoader.loadUsageRecords(emptyArgumentRoot, {
     analyzeContent: false,
     manifest,
   });
@@ -354,7 +355,7 @@ test('a file that disappears after manifest scan marks the load incomplete', asy
   await writeFile(file, '{"timestamp":"2026-07-17T00:00:00.000Z"}\n');
   const manifest = await scanUsageManifest([manifestRoot]);
   await rm(file);
-  const loaded = await ClaudeDataLoader.loadUsageRecords(manifestRoot, {
+  const loaded = await LegacyClaudeLoader.loadUsageRecords(manifestRoot, {
     analyzeContent: false,
     manifest,
   });
@@ -403,7 +404,7 @@ async function loadDedupFixture(files: Record<string, UsageFixture[]>): Promise<
       'utf8',
     ),
   ));
-  return (await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false })).records;
+  return (await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false })).records;
 }
 
 function recordTokenTotal(value: ClaudeUsageRecord): number {
@@ -607,7 +608,7 @@ test('content analysis keeps framework injection out of user prompt samples and 
   await writeFile(path.join(project, 'session.jsonl'), body);
   const manifest = await scanUsageManifest([root]);
 
-  const loaded = await ClaudeDataLoader.loadUsageRecords(root, {
+  const loaded = await LegacyClaudeLoader.loadUsageRecords(root, {
     analyzeContent: true,
     windowDays: 30,
     manifest,

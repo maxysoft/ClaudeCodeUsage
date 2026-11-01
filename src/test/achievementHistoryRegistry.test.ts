@@ -1,29 +1,164 @@
 import {test} from 'node:test';
 import * as assert from 'node:assert/strict';
 import {HISTORY_DATE_REGISTRATIONS,HISTORY_REGISTRY_VERSION,historyRegistrationAllows,
- matchesAchievementHistoryRegistration,ACHIEVEMENT_HISTORY_CATALOG_SIGNATURE} from '../achievementHistoryRegistry';
-test('date registration is an explicit frozen manifest, not future catalog membership',()=>{
+ ACHIEVEMENT_HISTORY_CATALOG_SIGNATURE} from '../achievementHistoryRegistry';
+
+// Reviewed snapshot. Update it deliberately when a dated rule's historical interpretation changes.
+const REVIEWED_REGISTRATIONS=[
+ {"id":"sonnet-main","counter":"sonnet-main","target":100000000,"group":"claude","ruleVersion":1,"series":"sonnet-main","baseId":null,"scope":null},
+ {"id":"sonnet-main-silver","counter":"sonnet-main","target":1000000000,"group":"claude","ruleVersion":1,"series":"sonnet-main","baseId":null,"scope":null},
+ {"id":"sonnet-main-gold","counter":"sonnet-main","target":10000000000,"group":"claude","ruleVersion":1,"series":"sonnet-main","baseId":null,"scope":null},
+ {"id":"opus-cannon","counter":"opus-cannon","target":100000000,"group":"claude","ruleVersion":1,"series":"opus-cannon","baseId":null,"scope":null},
+ {"id":"opus-cannon-silver","counter":"opus-cannon","target":1000000000,"group":"claude","ruleVersion":1,"series":"opus-cannon","baseId":null,"scope":null},
+ {"id":"opus-cannon-gold","counter":"opus-cannon","target":10000000000,"group":"claude","ruleVersion":1,"series":"opus-cannon","baseId":null,"scope":null},
+ {"id":"haiku-worker","counter":"haiku-worker","target":10000000,"group":"claude","ruleVersion":1,"series":"haiku-worker","baseId":null,"scope":null},
+ {"id":"haiku-worker-silver","counter":"haiku-worker","target":100000000,"group":"claude","ruleVersion":1,"series":"haiku-worker","baseId":null,"scope":null},
+ {"id":"haiku-worker-gold","counter":"haiku-worker","target":1000000000,"group":"claude","ruleVersion":1,"series":"haiku-worker","baseId":null,"scope":null},
+ {"id":"cache-wizard","counter":"cache-wizard","target":100000000,"group":"claude","ruleVersion":1,"series":"cache-wizard","baseId":null,"scope":null},
+ {"id":"cache-wizard-silver","counter":"cache-wizard","target":1000000000,"group":"claude","ruleVersion":1,"series":"cache-wizard","baseId":null,"scope":null},
+ {"id":"cache-wizard-gold","counter":"cache-wizard","target":10000000000,"group":"claude","ruleVersion":1,"series":"cache-wizard","baseId":null,"scope":null},
+ {"id":"claude-output-bronze","counter":"claude-output","target":2000000,"group":"claude","ruleVersion":1,"series":"claude-output","baseId":null,"scope":null},
+ {"id":"claude-output-silver","counter":"claude-output","target":20000000,"group":"claude","ruleVersion":1,"series":"claude-output","baseId":null,"scope":null},
+ {"id":"claude-output-gold","counter":"claude-output","target":200000000,"group":"claude","ruleVersion":1,"series":"claude-output","baseId":null,"scope":null},
+ {"id":"claude-output-sessions-bronze","counter":"claude-output-sessions","target":10,"group":"claude","ruleVersion":1,"series":"claude-output-sessions","baseId":null,"scope":null},
+ {"id":"claude-output-sessions-silver","counter":"claude-output-sessions","target":100,"group":"claude","ruleVersion":1,"series":"claude-output-sessions","baseId":null,"scope":null},
+ {"id":"claude-output-sessions-gold","counter":"claude-output-sessions","target":1000,"group":"claude","ruleVersion":1,"series":"claude-output-sessions","baseId":null,"scope":null},
+ {"id":"claude-cache-creation-bronze","counter":"claude-cache-creation","target":10000000,"group":"claude","ruleVersion":1,"series":"claude-cache-creation","baseId":null,"scope":null},
+ {"id":"claude-cache-creation-silver","counter":"claude-cache-creation","target":100000000,"group":"claude","ruleVersion":1,"series":"claude-cache-creation","baseId":null,"scope":null},
+ {"id":"claude-cache-creation-gold","counter":"claude-cache-creation","target":1000000000,"group":"claude","ruleVersion":1,"series":"claude-cache-creation","baseId":null,"scope":null},
+ {"id":"fable-volume-bronze","counter":"fable-volume","target":50000000,"group":"claude","ruleVersion":1,"series":"fable-volume","baseId":null,"scope":null},
+ {"id":"fable-volume-silver","counter":"fable-volume","target":500000000,"group":"claude","ruleVersion":1,"series":"fable-volume","baseId":null,"scope":null},
+ {"id":"fable-volume-gold","counter":"fable-volume","target":5000000000,"group":"claude","ruleVersion":1,"series":"fable-volume","baseId":null,"scope":null},
+ {"id":"fable-days-bronze","counter":"fable-days","target":7,"group":"claude","ruleVersion":1,"series":"fable-days","baseId":null,"scope":null},
+ {"id":"fable-days-silver","counter":"fable-days","target":30,"group":"claude","ruleVersion":1,"series":"fable-days","baseId":null,"scope":null},
+ {"id":"fable-days-gold","counter":"fable-days","target":120,"group":"claude","ruleVersion":1,"series":"fable-days","baseId":null,"scope":null},
+ {"id":"fable-relay","counter":"fable-relay","target":1,"group":"claude","ruleVersion":1,"series":null,"baseId":null,"scope":null},
+ {"id":"fable-sessions-bronze","counter":"fable-sessions","target":10,"group":"claude","ruleVersion":1,"series":"fable-sessions","baseId":null,"scope":null},
+ {"id":"fable-sessions-silver","counter":"fable-sessions","target":100,"group":"claude","ruleVersion":1,"series":"fable-sessions","baseId":null,"scope":null},
+ {"id":"fable-sessions-gold","counter":"fable-sessions","target":1000,"group":"claude","ruleVersion":1,"series":"fable-sessions","baseId":null,"scope":null},
+ {"id":"weekly-volume-bronze","counter":"weekly-volume","target":500000000,"group":"combined","ruleVersion":1,"series":"weekly-volume","baseId":null,"scope":null},
+ {"id":"weekly-volume-silver","counter":"weekly-volume","target":2000000000,"group":"combined","ruleVersion":1,"series":"weekly-volume","baseId":null,"scope":null},
+ {"id":"weekly-volume-gold","counter":"weekly-volume","target":10000000000,"group":"combined","ruleVersion":1,"series":"weekly-volume","baseId":null,"scope":null},
+ {"id":"astra-regular","counter":"astra-regular","target":500000000,"group":"codex","ruleVersion":1,"series":"astra-regular","baseId":null,"scope":null},
+ {"id":"astra-regular-silver","counter":"astra-regular","target":5000000000,"group":"codex","ruleVersion":1,"series":"astra-regular","baseId":null,"scope":null},
+ {"id":"astra-regular-gold","counter":"astra-regular","target":50000000000,"group":"codex","ruleVersion":1,"series":"astra-regular","baseId":null,"scope":null},
+ {"id":"sol-regular","counter":"sol-regular","target":1000000000,"group":"codex","ruleVersion":1,"series":"sol-regular","baseId":null,"scope":null},
+ {"id":"sol-regular-silver","counter":"sol-regular","target":10000000000,"group":"codex","ruleVersion":1,"series":"sol-regular","baseId":null,"scope":null},
+ {"id":"sol-regular-gold","counter":"sol-regular","target":100000000000,"group":"codex","ruleVersion":1,"series":"sol-regular","baseId":null,"scope":null},
+ {"id":"luna-regular","counter":"luna-regular","target":100000000,"group":"codex","ruleVersion":1,"series":"luna-regular","baseId":null,"scope":null},
+ {"id":"luna-regular-silver","counter":"luna-regular","target":1000000000,"group":"codex","ruleVersion":1,"series":"luna-regular","baseId":null,"scope":null},
+ {"id":"luna-regular-gold","counter":"luna-regular","target":10000000000,"group":"codex","ruleVersion":1,"series":"luna-regular","baseId":null,"scope":null},
+ {"id":"active-day-streak","counter":"active-day-streak","target":7,"group":"combined","ruleVersion":1,"series":"active-day-streak","baseId":null,"scope":null},
+ {"id":"active-day-streak-silver","counter":"active-day-streak","target":30,"group":"combined","ruleVersion":1,"series":"active-day-streak","baseId":null,"scope":null},
+ {"id":"active-day-streak-gold","counter":"active-day-streak","target":100,"group":"combined","ruleVersion":1,"series":"active-day-streak","baseId":null,"scope":null},
+ {"id":"active-days-bronze","counter":"active-days","target":30,"group":"combined","ruleVersion":1,"series":"active-days","baseId":null,"scope":null},
+ {"id":"active-days-silver","counter":"active-days","target":180,"group":"combined","ruleVersion":1,"series":"active-days","baseId":null,"scope":null},
+ {"id":"active-days-gold","counter":"active-days","target":365,"group":"combined","ruleVersion":1,"series":"active-days","baseId":null,"scope":null},
+ {"id":"streak-machine","counter":"active-day-streak","target":14,"group":"combined","ruleVersion":1,"series":null,"baseId":null,"scope":null},
+ {"id":"hundred-million-club","counter":"cumulative-volume","target":100000000,"group":"combined","ruleVersion":1,"series":"cumulative-volume","baseId":null,"scope":null},
+ {"id":"billion-token-club","counter":"cumulative-volume","target":1000000000,"group":"combined","ruleVersion":1,"series":"cumulative-volume","baseId":null,"scope":null},
+ {"id":"ten-billion-token-club","counter":"cumulative-volume","target":10000000000,"group":"combined","ruleVersion":1,"series":"cumulative-volume","baseId":null,"scope":null},
+ {"id":"hundred-billion-token-club","counter":"cumulative-volume","target":100000000000,"group":"combined","ruleVersion":1,"series":"cumulative-volume","baseId":null,"scope":null},
+ {"id":"trillion-token-club","counter":"cumulative-volume","target":1000000000000,"group":"combined","ruleVersion":1,"series":"cumulative-volume","baseId":null,"scope":null},
+ {"id":"codex-output-bronze","counter":"codex-output","target":5000000,"group":"codex","ruleVersion":1,"series":"codex-output","baseId":null,"scope":null},
+ {"id":"codex-output-silver","counter":"codex-output","target":50000000,"group":"codex","ruleVersion":1,"series":"codex-output","baseId":null,"scope":null},
+ {"id":"codex-output-gold","counter":"codex-output","target":500000000,"group":"codex","ruleVersion":1,"series":"codex-output","baseId":null,"scope":null},
+ {"id":"codex-cache-read-bronze","counter":"codex-cache-read","target":1000000000,"group":"codex","ruleVersion":1,"series":"codex-cache-read","baseId":null,"scope":null},
+ {"id":"codex-cache-read-silver","counter":"codex-cache-read","target":10000000000,"group":"codex","ruleVersion":1,"series":"codex-cache-read","baseId":null,"scope":null},
+ {"id":"codex-cache-read-gold","counter":"codex-cache-read","target":100000000000,"group":"codex","ruleVersion":1,"series":"codex-cache-read","baseId":null,"scope":null},
+ {"id":"astra-days-bronze","counter":"astra-days","target":7,"group":"codex","ruleVersion":1,"series":"astra-days","baseId":null,"scope":null},
+ {"id":"astra-days-silver","counter":"astra-days","target":30,"group":"codex","ruleVersion":1,"series":"astra-days","baseId":null,"scope":null},
+ {"id":"astra-days-gold","counter":"astra-days","target":120,"group":"codex","ruleVersion":1,"series":"astra-days","baseId":null,"scope":null},
+ {"id":"sol-days-bronze","counter":"sol-days","target":7,"group":"codex","ruleVersion":1,"series":"sol-days","baseId":null,"scope":null},
+ {"id":"sol-days-silver","counter":"sol-days","target":30,"group":"codex","ruleVersion":1,"series":"sol-days","baseId":null,"scope":null},
+ {"id":"sol-days-gold","counter":"sol-days","target":120,"group":"codex","ruleVersion":1,"series":"sol-days","baseId":null,"scope":null},
+ {"id":"luna-days-bronze","counter":"luna-days","target":7,"group":"codex","ruleVersion":1,"series":"luna-days","baseId":null,"scope":null},
+ {"id":"luna-days-silver","counter":"luna-days","target":30,"group":"codex","ruleVersion":1,"series":"luna-days","baseId":null,"scope":null},
+ {"id":"luna-days-gold","counter":"luna-days","target":120,"group":"codex","ruleVersion":1,"series":"luna-days","baseId":null,"scope":null},
+ {"id":"sonnet-days-bronze","counter":"sonnet-days","target":7,"group":"claude","ruleVersion":1,"series":"sonnet-days","baseId":null,"scope":null},
+ {"id":"sonnet-days-silver","counter":"sonnet-days","target":30,"group":"claude","ruleVersion":1,"series":"sonnet-days","baseId":null,"scope":null},
+ {"id":"sonnet-days-gold","counter":"sonnet-days","target":120,"group":"claude","ruleVersion":1,"series":"sonnet-days","baseId":null,"scope":null},
+ {"id":"opus-days-bronze","counter":"opus-days","target":7,"group":"claude","ruleVersion":1,"series":"opus-days","baseId":null,"scope":null},
+ {"id":"opus-days-silver","counter":"opus-days","target":30,"group":"claude","ruleVersion":1,"series":"opus-days","baseId":null,"scope":null},
+ {"id":"opus-days-gold","counter":"opus-days","target":120,"group":"claude","ruleVersion":1,"series":"opus-days","baseId":null,"scope":null},
+ {"id":"haiku-days-bronze","counter":"haiku-days","target":7,"group":"claude","ruleVersion":1,"series":"haiku-days","baseId":null,"scope":null},
+ {"id":"haiku-days-silver","counter":"haiku-days","target":30,"group":"claude","ruleVersion":1,"series":"haiku-days","baseId":null,"scope":null},
+ {"id":"haiku-days-gold","counter":"haiku-days","target":120,"group":"claude","ruleVersion":1,"series":"haiku-days","baseId":null,"scope":null},
+ {"id":"dual-provider-days-bronze","counter":"dual-provider-days","target":7,"group":"combined","ruleVersion":1,"series":"dual-provider-days","baseId":null,"scope":null},
+ {"id":"dual-provider-days-silver","counter":"dual-provider-days","target":30,"group":"combined","ruleVersion":1,"series":"dual-provider-days","baseId":null,"scope":null},
+ {"id":"dual-provider-days-gold","counter":"dual-provider-days","target":100,"group":"combined","ruleVersion":1,"series":"dual-provider-days","baseId":null,"scope":null},
+ {"id":"active-weeks-bronze","counter":"active-weeks","target":4,"group":"combined","ruleVersion":1,"series":"active-weeks","baseId":null,"scope":null},
+ {"id":"active-weeks-silver","counter":"active-weeks","target":12,"group":"combined","ruleVersion":1,"series":"active-weeks","baseId":null,"scope":null},
+ {"id":"active-weeks-gold","counter":"active-weeks","target":26,"group":"combined","ruleVersion":1,"series":"active-weeks","baseId":null,"scope":null},
+ {"id":"weekly-average-bronze","counter":"weekly-average","target":500000000,"group":"combined","ruleVersion":1,"series":"weekly-average","baseId":null,"scope":null},
+ {"id":"weekly-average-silver","counter":"weekly-average","target":2000000000,"group":"combined","ruleVersion":1,"series":"weekly-average","baseId":null,"scope":null},
+ {"id":"weekly-average-gold","counter":"weekly-average","target":5000000000,"group":"combined","ruleVersion":1,"series":"weekly-average","baseId":null,"scope":null},
+ {"id":"three-family-day","counter":"three-family-day","target":1,"group":"combined","ruleVersion":1,"series":null,"baseId":null,"scope":null},
+ {"id":"dual-provider-day","counter":"dual-provider-days","target":1,"group":"combined","ruleVersion":1,"series":null,"baseId":null,"scope":null},
+ {"id":"sonnet-main-platinum","counter":"sonnet-main","target":20000000000,"group":"claude","ruleVersion":1,"series":"sonnet-main","baseId":"sonnet-main-gold","scope":null},
+ {"id":"sonnet-main-legendary","counter":"sonnet-main","target":50000000000,"group":"claude","ruleVersion":1,"series":"sonnet-main","baseId":"sonnet-main-gold","scope":null},
+ {"id":"opus-cannon-platinum","counter":"opus-cannon","target":20000000000,"group":"claude","ruleVersion":1,"series":"opus-cannon","baseId":"opus-cannon-gold","scope":null},
+ {"id":"opus-cannon-legendary","counter":"opus-cannon","target":50000000000,"group":"claude","ruleVersion":1,"series":"opus-cannon","baseId":"opus-cannon-gold","scope":null},
+ {"id":"haiku-worker-platinum","counter":"haiku-worker","target":2000000000,"group":"claude","ruleVersion":1,"series":"haiku-worker","baseId":"haiku-worker-gold","scope":null},
+ {"id":"haiku-worker-legendary","counter":"haiku-worker","target":5000000000,"group":"claude","ruleVersion":1,"series":"haiku-worker","baseId":"haiku-worker-gold","scope":null},
+ {"id":"fable-volume-platinum","counter":"fable-volume","target":10000000000,"group":"claude","ruleVersion":1,"series":"fable-volume","baseId":"fable-volume-gold","scope":null},
+ {"id":"fable-volume-legendary","counter":"fable-volume","target":25000000000,"group":"claude","ruleVersion":1,"series":"fable-volume","baseId":"fable-volume-gold","scope":null},
+ {"id":"cache-wizard-platinum","counter":"cache-wizard","target":20000000000,"group":"claude","ruleVersion":1,"series":"cache-wizard","baseId":"cache-wizard-gold","scope":null},
+ {"id":"cache-wizard-legendary","counter":"cache-wizard","target":50000000000,"group":"claude","ruleVersion":1,"series":"cache-wizard","baseId":"cache-wizard-gold","scope":null},
+ {"id":"claude-output-platinum","counter":"claude-output","target":500000000,"group":"claude","ruleVersion":1,"series":"claude-output","baseId":"claude-output-gold","scope":null},
+ {"id":"claude-output-legendary","counter":"claude-output","target":1000000000,"group":"claude","ruleVersion":1,"series":"claude-output","baseId":"claude-output-gold","scope":null},
+ {"id":"claude-cache-creation-platinum","counter":"claude-cache-creation","target":2000000000,"group":"claude","ruleVersion":1,"series":"claude-cache-creation","baseId":"claude-cache-creation-gold","scope":null},
+ {"id":"claude-cache-creation-legendary","counter":"claude-cache-creation","target":5000000000,"group":"claude","ruleVersion":1,"series":"claude-cache-creation","baseId":"claude-cache-creation-gold","scope":null},
+ {"id":"claude-output-sessions-platinum","counter":"claude-output-sessions","target":2500,"group":"claude","ruleVersion":1,"series":"claude-output-sessions","baseId":"claude-output-sessions-gold","scope":null},
+ {"id":"claude-output-sessions-legendary","counter":"claude-output-sessions","target":5000,"group":"claude","ruleVersion":1,"series":"claude-output-sessions","baseId":"claude-output-sessions-gold","scope":null},
+ {"id":"fable-sessions-platinum","counter":"fable-sessions","target":2500,"group":"claude","ruleVersion":1,"series":"fable-sessions","baseId":"fable-sessions-gold","scope":null},
+ {"id":"fable-sessions-legendary","counter":"fable-sessions","target":5000,"group":"claude","ruleVersion":1,"series":"fable-sessions","baseId":"fable-sessions-gold","scope":null},
+ {"id":"sonnet-days-platinum","counter":"sonnet-days","target":520,"group":"claude","ruleVersion":1,"series":"sonnet-days","baseId":"sonnet-days-gold","scope":null},
+ {"id":"sonnet-days-legendary","counter":"sonnet-days","target":1000,"group":"claude","ruleVersion":1,"series":"sonnet-days","baseId":"sonnet-days-gold","scope":null},
+ {"id":"opus-days-platinum","counter":"opus-days","target":520,"group":"claude","ruleVersion":1,"series":"opus-days","baseId":"opus-days-gold","scope":null},
+ {"id":"opus-days-legendary","counter":"opus-days","target":1000,"group":"claude","ruleVersion":1,"series":"opus-days","baseId":"opus-days-gold","scope":null},
+ {"id":"haiku-days-platinum","counter":"haiku-days","target":520,"group":"claude","ruleVersion":1,"series":"haiku-days","baseId":"haiku-days-gold","scope":null},
+ {"id":"haiku-days-legendary","counter":"haiku-days","target":1000,"group":"claude","ruleVersion":1,"series":"haiku-days","baseId":"haiku-days-gold","scope":null},
+ {"id":"fable-days-platinum","counter":"fable-days","target":520,"group":"claude","ruleVersion":1,"series":"fable-days","baseId":"fable-days-gold","scope":null},
+ {"id":"fable-days-legendary","counter":"fable-days","target":1000,"group":"claude","ruleVersion":1,"series":"fable-days","baseId":"fable-days-gold","scope":null},
+ {"id":"active-days-platinum","counter":"active-days","target":750,"group":"combined","ruleVersion":1,"series":"active-days","baseId":"active-days-gold","scope":null},
+ {"id":"active-days-legendary","counter":"active-days","target":1500,"group":"combined","ruleVersion":1,"series":"active-days","baseId":"active-days-gold","scope":null},
+ {"id":"active-weeks-platinum","counter":"active-weeks","target":52,"group":"combined","ruleVersion":1,"series":"active-weeks","baseId":"active-weeks-gold","scope":null},
+ {"id":"active-weeks-legendary","counter":"active-weeks","target":104,"group":"combined","ruleVersion":1,"series":"active-weeks","baseId":"active-weeks-gold","scope":null},
+ {"id":"claude-api-total-bronze","counter":"claude-api-total","target":100000000,"group":"claude","ruleVersion":1,"series":"claude-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"claude-api-total-silver","counter":"claude-api-total","target":1000000000,"group":"claude","ruleVersion":1,"series":"claude-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"claude-api-total-gold","counter":"claude-api-total","target":10000000000,"group":"claude","ruleVersion":1,"series":"claude-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"claude-api-total-platinum","counter":"claude-api-total","target":100000000000,"group":"claude","ruleVersion":1,"series":"claude-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"claude-api-week-bronze","counter":"claude-api-week","target":100000000,"group":"claude","ruleVersion":1,"series":"claude-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"claude-api-week-silver","counter":"claude-api-week","target":500000000,"group":"claude","ruleVersion":1,"series":"claude-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"claude-api-week-gold","counter":"claude-api-week","target":2500000000,"group":"claude","ruleVersion":1,"series":"claude-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"claude-api-week-platinum","counter":"claude-api-week","target":10000000000,"group":"claude","ruleVersion":1,"series":"claude-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"claude-api-week-legendary","counter":"claude-api-week","target":25000000000,"group":"claude","ruleVersion":1,"series":"claude-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"codex-api-total-bronze","counter":"codex-api-total","target":100000000,"group":"codex","ruleVersion":1,"series":"codex-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"codex-api-total-silver","counter":"codex-api-total","target":1000000000,"group":"codex","ruleVersion":1,"series":"codex-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"codex-api-total-gold","counter":"codex-api-total","target":10000000000,"group":"codex","ruleVersion":1,"series":"codex-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"codex-api-total-platinum","counter":"codex-api-total","target":100000000000,"group":"codex","ruleVersion":1,"series":"codex-api-total","baseId":null,"scope":"cumulative"},
+ {"id":"codex-api-week-bronze","counter":"codex-api-week","target":100000000,"group":"codex","ruleVersion":1,"series":"codex-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"codex-api-week-silver","counter":"codex-api-week","target":500000000,"group":"codex","ruleVersion":1,"series":"codex-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"codex-api-week-gold","counter":"codex-api-week","target":2500000000,"group":"codex","ruleVersion":1,"series":"codex-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"codex-api-week-platinum","counter":"codex-api-week","target":10000000000,"group":"codex","ruleVersion":1,"series":"codex-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+ {"id":"codex-api-week-legendary","counter":"codex-api-week","target":25000000000,"group":"codex","ruleVersion":1,"series":"codex-api-week","baseId":null,"scope":"completedMondayWeekPeak"},
+];
+
+test('date registration derived from the catalog matches the reviewed snapshot',()=>{
  assert.equal(HISTORY_REGISTRY_VERSION,1);
- assert.equal(HISTORY_DATE_REGISTRATIONS.length,138);
+ assert.deepEqual(HISTORY_DATE_REGISTRATIONS,REVIEWED_REGISTRATIONS);
  assert.ok(Object.isFrozen(HISTORY_DATE_REGISTRATIONS));
- assert.equal(new Set(HISTORY_DATE_REGISTRATIONS.map(r=>r.id)).size,138);
- for(const row of HISTORY_DATE_REGISTRATIONS){assert.ok(Object.isFrozen(row));assert.equal(historyRegistrationAllows(row.id,row.counter),true,row.id);}
+ for(const row of HISTORY_DATE_REGISTRATIONS){
+  assert.ok(Object.isFrozen(row));
+  assert.equal(historyRegistrationAllows(row.id,row.counter),true,row.id);
+  assert.equal(historyRegistrationAllows(row.id,row.counter+'-different'),false,row.id);
+  assert.equal(historyRegistrationAllows(row.id+'-future',row.counter),false,row.id);
+ }
  assert.equal(historyRegistrationAllows('sonnet-main-future','sonnet-main'),false);
  assert.equal(historyRegistrationAllows('codex-api-month-bronze','codex-api-total'),false);
  assert.equal(historyRegistrationAllows('agent-standup','agent-team'),false);
  const sig=JSON.parse(ACHIEVEMENT_HISTORY_CATALOG_SIGNATURE);
- assert.equal(sig.registry,1);assert.equal(sig.registered.length,138);
+ assert.equal(sig.registry,1);assert.deepEqual(sig.registered,REVIEWED_REGISTRATIONS);
  assert.ok(sig.actual.some(([id,shape]:any)=>id==='sonnet-main-platinum'&&shape.baseId==='sonnet-main-gold'));
-});
-test('each date rule rejects changed counter, target, group, rule version, ownership, base and scope',()=>{
- for(const row of HISTORY_DATE_REGISTRATIONS){
-  const {id,counter,...shape}=row;
-  assert.equal(matchesAchievementHistoryRegistration(id,counter,shape),true);
-  assert.equal(matchesAchievementHistoryRegistration(id,counter+'-different',shape),false);
-  for(const patch of [{target:shape.target+1},{group:'future-provider'},{ruleVersion:shape.ruleVersion+1},
-    {series:'different-series'},{baseId:'different-base'},{scope:'different-scope'}]){
-   assert.equal(matchesAchievementHistoryRegistration(id,counter,{...shape,...patch}),false,id+': '+JSON.stringify(patch));
-  }
-  assert.equal(matchesAchievementHistoryRegistration(id+'-future',counter,shape),false);
- }
 });

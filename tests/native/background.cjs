@@ -79,6 +79,7 @@ async function run(plan, rawOptions) {
     await instance.settings.set('fileWatchSeconds', '1');
     await instance.settings.set('codex.fileWatchSeconds', '10');
     instance.onSettingsChangedFromPanel('fileWatchSeconds');
+    instance.onSettingsChangedFromPanel('codex.fileWatchSeconds');
     await bounded(settle(instance), 65000);
     for (const enabled of [false, true]) {
       const mode = enabled ? 'on' : 'off';

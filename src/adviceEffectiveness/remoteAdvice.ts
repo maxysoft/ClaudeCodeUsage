@@ -5,7 +5,7 @@ import type {
 import { prepareAiInvocation } from './preparedRequest';
 import type { PreparedAdvicePayload } from './payload';
 import { previewAdvicePayload } from './payload';
-import { parseStructuredAdviceOutput } from './structuredOutput';
+import { parseStructuredAdviceOutput, STRUCTURED_ADVICE_JSON_SCHEMA } from './structuredOutput';
 import type {
   StructuredAdviceOutput,
   StructuredAdviceParseErrorCode,
@@ -14,10 +14,60 @@ import type {
 import type { HttpResponse } from '../httpClient';
 import { sendPreparedModelRequest } from '../advisor';
 
-export const STRUCTURED_ADVICE_SYSTEM_PROMPT =
-  'Return exactly one strict JSON object matching the response contract in the user payload. ' +
-  'Do not use Markdown fences, prose outside JSON, unknown fields, or evidence IDs absent ' +
-  'from that payload. Return an empty recommendations array when the evidence is insufficient.';
+const STRUCTURED_ADVICE_SCHEMA_NAME = 'structured_advice';
+
+export const STRUCTURED_ADVICE_EXAMPLE: StructuredAdviceOutput = {
+  schemaVersion: 1,
+  recommendations: [
+    {
+      id: 'recommendation-split-long-sessions',
+      title: 'Split long sessions before context reuse grows',
+      evidenceIds: ['evidence-example-cache-share'],
+      explanation: {
+        summary: 'Most input tokens are cache reads, which suggests very long sessions.',
+        proxyMetricObservationIds: ['observation-example-cache-share'],
+        limitations: ['Cache share is a proxy for session length, not proof of waste.'],
+      },
+      conditionalActions: [
+        {
+          when: 'When a session continues after its task is finished',
+          action: 'Start a new session for the next unrelated task.',
+          evidenceIds: ['evidence-example-cache-share'],
+          stopCondition: 'Stop if task quality drops on the rubric.',
+        },
+      ],
+      successCriteria: [
+        {
+          metricObservationId: 'observation-example-cache-share',
+          direction: 'decrease',
+          target: { kind: 'relative-change', value: 0.1 },
+          minimumComparableTasks: 5,
+          qualityGuardrail: {
+            rubricId: 'task-quality-rubric-v1',
+            minimumScore: 0.8,
+            maximumRegression: 0.05,
+          },
+        },
+      ],
+    },
+  ],
+};
+
+export const STRUCTURED_ADVICE_SYSTEM_PROMPT = [
+  'Return exactly one JSON object that validates against this JSON Schema:',
+  JSON.stringify(STRUCTURED_ADVICE_JSON_SCHEMA),
+  'Example of a complete valid response:',
+  JSON.stringify(STRUCTURED_ADVICE_EXAMPLE),
+  'The IDs in the example are placeholders. Reference only observation and evidence IDs ' +
+    'present in the user payload. Do not add Markdown fences, prose outside the JSON object, ' +
+    'or unknown fields. Return an empty recommendations array when the evidence is insufficient.',
+].join('\n');
+
+function outermostJsonObject(raw: string): string {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  return start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
+}
 
 export interface StructuredAdviceInvocationConfig {
   apiFormat: 'anthropic' | 'openai';
@@ -66,6 +116,7 @@ export function prepareStructuredAdviceInvocation(
     ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
     systemPrompt: STRUCTURED_ADVICE_SYSTEM_PROMPT,
     userContent: evidence.serializedBody,
+    responseSchema: { name: STRUCTURED_ADVICE_SCHEMA_NAME, schema: STRUCTURED_ADVICE_JSON_SCHEMA },
     dataMode: evidence.dataMode,
     sourceRevision: config.sourceRevision,
     consentGeneration: config.consentGeneration,
@@ -76,7 +127,8 @@ export function prepareStructuredAdviceInvocation(
 
 /**
  * Strict advice send boundary. Only an already-prepared advice invocation may
- * cross it; malformed output is rejected without prose repair or fallback.
+ * cross it. The outermost JSON object is taken from surrounding prose or
+ * fences; malformed output is rejected without repair.
  */
 export async function requestStructuredAdvice(
   prepared: PreparedAiInvocation,
@@ -109,5 +161,5 @@ export async function requestStructuredAdvice(
       issues: ['configured BYOK transport failed'],
     };
   }
-  return parseStructuredAdviceOutput(raw, references);
+  return parseStructuredAdviceOutput(outermostJsonObject(raw), references);
 }

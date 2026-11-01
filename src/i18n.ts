@@ -1978,6 +1978,7 @@ export interface AdviceEffectivenessTranslations {
   aggregatesWithPersonalization: string;
   aggregatesWithPromptSamples: string;
   payloadBytes: string;
+  fallbackBodyLabel: string;
   promptSamplesIncluded: string;
   previewPayload: string;
   noNetworkTransport: string;
@@ -2005,6 +2006,7 @@ export interface AdviceEffectivenessTranslations {
   qualityGuardrailFailed: string;
   improved: string;
   noDemonstratedImprovement: string;
+  qualityNotMeasured: string;
   clearLocalData: string;
   clearLocalDataConfirm: string;
   strictOutputRejected: string;
@@ -2221,7 +2223,6 @@ export interface Translations {
     adviceScopeOverall: string;
     adviceScopePrompt: string;
     adviceDemoButton: string;
-    adviceDemoNotice: string;
     costComposition: string;
     date: string;
     yesterday: string;
@@ -3173,6 +3174,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: 'Aggregates + explicitly allowed personal context',
         aggregatesWithPromptSamples: 'Aggregates + explicitly allowed prompt samples',
         payloadBytes: '{bytes} UTF-8 bytes',
+        fallbackBodyLabel: 'Fallback body, resent once without response_format if the provider answers HTTP 400 or 422:',
         promptSamplesIncluded: '{count} prompt samples included',
         previewPayload: 'Preview sealed snapshot',
         noNetworkTransport: 'Previewing sends nothing. Sending requires a separate click.',
@@ -3198,8 +3200,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: 'At least {minimum} comparable task pairs are required before drawing a conclusion.',
         insufficientEvidence: 'Not enough evidence to draw a conclusion.',
         qualityGuardrailFailed: 'The quality guardrail did not hold, so no effectiveness claim is made.',
-        improved: 'Improvement met the pre-declared threshold while the quality guardrail held.',
+        improved: 'Improvement met the pre-declared threshold.',
         noDemonstratedImprovement: 'No improvement was demonstrated; this does not establish harm or causation.',
+        qualityNotMeasured: 'Quality not measured',
         clearLocalData: 'Clear local advice data',
         clearLocalDataConfirm: 'Clear advice consent, feedback, comparable pairs, and comparison results stored on this device?',
         strictOutputRejected: 'The structured model output was rejected. No advice was created.',
@@ -3386,18 +3389,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: 'Overall (all projects)',
       adviceScopePrompt: 'Choose what the advice should focus on',
       adviceDemoButton: 'Preview demo',
-      adviceDemoNotice:
-        '# DEMO — AI Usage Advice preview\n\n' +
-        '> **This file is a static demo, not real advice.**\n' +
-        '> The text below was hand-written to show what kind of output the\n' +
-        '> feature produces. It is **not** based on your actual Claude Code\n' +
-        '> usage data — nothing was sent to any API to generate this.\n\n' +
-        '### To get real, personalised advice based on YOUR usage:\n\n' +
-        '1. Run **`Claude Code Usage: Show Usage Details`**\n' +
-        '2. Open the dashboard **Settings → Advice** section\n' +
-        '3. Paste an OpenAI-compatible API key — it is kept in VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. Re-run **`Claude Code Usage: Get AI Usage Advice`**',
       costComposition: 'Cost Composition',
       date: 'Date',
       yesterday: 'Yesterday',
@@ -3488,6 +3479,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: 'Aggregate + ausdrücklich erlaubter persönlicher Kontext',
         aggregatesWithPromptSamples: 'Aggregate + ausdrücklich erlaubte Prompt-Beispiele',
         payloadBytes: '{bytes} UTF-8-Bytes',
+        fallbackBodyLabel: 'Fallback-Body, einmalig ohne response_format erneut gesendet, falls der Anbieter mit HTTP 400 oder 422 antwortet:',
         promptSamplesIncluded: '{count} Prompt-Beispiele enthalten',
         previewPayload: 'Versiegelte Momentaufnahme anzeigen',
         noNetworkTransport: 'Die Vorschau sendet nichts. Das Senden erfordert einen separaten Klick.',
@@ -3513,8 +3505,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: 'Mindestens {minimum} vergleichbare Aufgabenpaare sind nötig, bevor eine Schlussfolgerung gezogen wird.',
         insufficientEvidence: 'Nicht genügend Evidenz für eine Schlussfolgerung.',
         qualityGuardrailFailed: 'Die Qualitätsleitplanke hielt nicht; deshalb wird keine Wirksamkeit behauptet.',
-        improved: 'Die Verbesserung erreichte den vorab festgelegten Schwellenwert, während die Qualitätsleitplanke hielt.',
+        improved: 'Die Verbesserung erreichte den vorab festgelegten Schwellenwert.',
         noDemonstratedImprovement: 'Es wurde keine Verbesserung nachgewiesen; daraus folgen weder Schaden noch Kausalität.',
+        qualityNotMeasured: 'Qualität nicht gemessen',
         clearLocalData: 'Lokale Empfehlungsdaten löschen',
         clearLocalDataConfirm: 'Einwilligungen, Feedback, vergleichbare Paare und Vergleichsergebnisse auf diesem Gerät löschen?',
         strictOutputRejected: 'Die strukturierte Modellausgabe wurde abgelehnt. Es wurde keine Empfehlung erstellt.',
@@ -3701,19 +3694,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: "Gesamt (alle Projekte)",
       adviceScopePrompt: "Worauf soll sich der Rat konzentrieren?",
       adviceDemoButton: "Demo ansehen",
-      adviceDemoNotice:
-        '# DEMO — KI-Nutzungsrat-Vorschau\n\n' +
-        '> **Diese Datei ist eine statische Demo, kein echter Rat.**\n' +
-        '> Der untenstehende Text wurde handgeschrieben, um zu zeigen, welche\n' +
-        '> Art von Output die Funktion erzeugt. Er basiert **nicht** auf\n' +
-        '> Ihren tatsächlichen Nutzungsdaten — es wurde nichts an eine API\n' +
-        '> gesendet, um diesen Text zu generieren.\n\n' +
-        '### Für echten, personalisierten Rat basierend auf IHRER Nutzung:\n\n' +
-        '1. **`Claude Code Usage: Show Usage Details`** ausführen\n' +
-        '2. Im Dashboard **Einstellungen → Beratung** öffnen\n' +
-        '3. Einen OpenAI-kompatiblen API-Key einfügen — er bleibt in VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. **`Claude Code Usage: Get AI Usage Advice`** erneut ausführen',
       costComposition: "Kostenzusammensetzung",
       date: "Datum",
       yesterday: "Gestern",
@@ -3806,6 +3786,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: '彙總資料 + 明確允許的個人上下文',
         aggregatesWithPromptSamples: '彙總資料 + 明確允許的 prompt 樣本',
         payloadBytes: '{bytes} 個 UTF-8 位元組',
+        fallbackBodyLabel: '備用內容：若服務商回應 HTTP 400 或 422，將不含 response_format 重送一次：',
         promptSamplesIncluded: '包含 {count} 個 prompt 樣本',
         previewPayload: '預覽密封快照',
         noNetworkTransport: '預覽不會傳送任何內容；傳送需要另行點擊。',
@@ -3831,8 +3812,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: '至少需要 {minimum} 組可比任務，才能下結論。',
         insufficientEvidence: '證據不足，無法下結論。',
         qualityGuardrailFailed: '品質護欄未通過，因此不聲稱建議有效。',
-        improved: '改善達到預先聲明的門檻，且品質護欄維持通過。',
+        improved: '改善達到預先聲明的門檻。',
         noDemonstratedImprovement: '尚未證明有改善；這不代表造成傷害，也不建立因果關係。',
+        qualityNotMeasured: '未測量品質',
         clearLocalData: '清除本機建議資料',
         clearLocalDataConfirm: '要清除此裝置上的建議同意、回饋、可比配對與比較結果嗎？',
         strictOutputRejected: '結構化模型輸出遭拒絕，因此未建立任何建議。',
@@ -4015,18 +3997,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: '整體(所有專案)',
       adviceScopePrompt: '選擇建議要聚焦的範圍',
       adviceDemoButton: '查看示範',
-      adviceDemoNotice:
-        '# 示範 — AI 用量建議預覽\n\n' +
-        '> **本檔案是靜態示範,不是真實建議。**\n' +
-        '> 下面的內容是手寫的範例,用來展示此功能的輸出風格。\n' +
-        '> 它**不是**基於你實際的 Claude Code 用量資料 ——\n' +
-        '> 沒有任何資料被送往 API 來產生本內容。\n\n' +
-        '### 要取得基於你實際用量的個人化建議:\n\n' +
-        '1. 執行 **`Claude Code Usage: Show Usage Details`**\n' +
-        '2. 開啟儀表板的 **設定 → 建議** 區段\n' +
-        '3. 貼入 OpenAI 相容 API key —— 金鑰只會存於 VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. 重新執行 **`Claude Code Usage: Get AI Usage Advice`**',
       costComposition: '成本構成',
       date: '日期',
       yesterday: '昨日',
@@ -4117,6 +4087,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: '汇总数据 + 明确允许的个人上下文',
         aggregatesWithPromptSamples: '汇总数据 + 明确允许的 prompt 样本',
         payloadBytes: '{bytes} 个 UTF-8 字节',
+        fallbackBodyLabel: '备用内容：若服务商返回 HTTP 400 或 422，将不含 response_format 重发一次：',
         promptSamplesIncluded: '包含 {count} 个 prompt 样本',
         previewPayload: '预览密封快照',
         noNetworkTransport: '预览不会发送任何内容；发送需要另行点击。',
@@ -4142,8 +4113,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: '至少需要 {minimum} 组可比任务，才能下结论。',
         insufficientEvidence: '证据不足，无法下结论。',
         qualityGuardrailFailed: '质量护栏未通过，因此不声称建议有效。',
-        improved: '改善达到预先声明的门槛，且质量护栏保持通过。',
+        improved: '改善达到预先声明的门槛。',
         noDemonstratedImprovement: '尚未证明有改善；这不代表造成伤害，也不建立因果关系。',
+        qualityNotMeasured: '未测量质量',
         clearLocalData: '清除本地建议数据',
         clearLocalDataConfirm: '要清除此设备上保存的建议同意、反馈、可比配对和比较结果吗？',
         strictOutputRejected: '结构化模型输出被拒绝，因此未创建任何建议。',
@@ -4326,18 +4298,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: '整体(所有项目)',
       adviceScopePrompt: '选择建议要聚焦的范围',
       adviceDemoButton: '查看示例',
-      adviceDemoNotice:
-        '# 示例 — AI 用量建议预览\n\n' +
-        '> **本文件是静态示例,不是真实建议。**\n' +
-        '> 下面的内容是手写的样例,用来展示此功能的输出风格。\n' +
-        '> 它**不是**基于你实际的 Claude Code 用量数据 ——\n' +
-        '> 没有任何数据被发往 API 来生成本内容。\n\n' +
-        '### 要获得基于你实际用量的个性化建议:\n\n' +
-        '1. 运行 **`Claude Code Usage: Show Usage Details`**\n' +
-        '2. 打开仪表板的 **设置 → 建议** 区域\n' +
-        '3. 填入 OpenAI 兼容 API key —— 密钥只存入 VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. 重新运行 **`Claude Code Usage: Get AI Usage Advice`**',
       costComposition: '成本构成',
       date: '日期',
       yesterday: '昨日',
@@ -4428,6 +4388,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: '集計データ + 明示的に許可した個人コンテキスト',
         aggregatesWithPromptSamples: '集計データ + 明示的に許可したプロンプト例',
         payloadBytes: '{bytes} UTF-8 バイト',
+        fallbackBodyLabel: 'フォールバック本文：プロバイダーが HTTP 400 または 422 を返した場合、response_format なしで 1 回だけ再送します：',
         promptSamplesIncluded: '{count} 件のプロンプト例を含む',
         previewPayload: '封印済みスナップショットをプレビュー',
         noNetworkTransport: 'プレビューでは何も送信されません。送信には別のクリックが必要です。',
@@ -4453,8 +4414,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: '結論を出す前に、少なくとも {minimum} 組の比較可能なタスクが必要です。',
         insufficientEvidence: '結論を出すには根拠が不足しています。',
         qualityGuardrailFailed: '品質ガードレールを満たさなかったため、有効性を主張しません。',
-        improved: '品質ガードレールを保ったまま、事前に定めた改善基準に達しました。',
+        improved: '事前に定めた改善基準に達しました。',
         noDemonstratedImprovement: '改善は実証されていません。これは害や因果関係を示すものではありません。',
+        qualityNotMeasured: '品質は未測定',
         clearLocalData: 'ローカルのアドバイスデータを消去',
         clearLocalDataConfirm: 'この端末に保存された同意、フィードバック、比較可能ペア、比較結果を消去しますか？',
         strictOutputRejected: '構造化されたモデル出力を拒否しました。アドバイスは作成されていません。',
@@ -4641,19 +4603,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: '全体(全プロジェクト)',
       adviceScopePrompt: 'アドバイスの対象範囲を選択',
       adviceDemoButton: 'デモを見る',
-      adviceDemoNotice:
-        '# デモ — AI 使用アドバイス プレビュー\n\n' +
-        '> **このファイルは静的デモであり、実際のアドバイスではありません。**\n' +
-        '> 以下の内容は、この機能がどのような出力を生成するかを示すために\n' +
-        '> 手書きされたサンプルです。あなたの実際の Claude Code 使用データ\n' +
-        '> に基づくものでは**ありません** —— この内容を生成するために\n' +
-        '> API にデータは送信されていません。\n\n' +
-        '### あなたの実際の使用量に基づくパーソナライズされたアドバイスを取得するには:\n\n' +
-        '1. **`Claude Code Usage: Show Usage Details`** を実行\n' +
-        '2. ダッシュボードの **設定 → アドバイス** を開く\n' +
-        '3. OpenAI 互換 API キーを貼り付け —— VS Code SecretStorage のみに保存されます\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. **`Claude Code Usage: Get AI Usage Advice`** を再実行',
       costComposition: 'コスト構成',
       date: '日付',
       yesterday: '昨日',
@@ -4744,6 +4693,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: '집계 데이터 + 명시적으로 허용한 개인 컨텍스트',
         aggregatesWithPromptSamples: '집계 데이터 + 명시적으로 허용한 프롬프트 샘플',
         payloadBytes: '{bytes} UTF-8바이트',
+        fallbackBodyLabel: '대체 본문: 제공자가 HTTP 400 또는 422를 반환하면 response_format 없이 한 번만 다시 전송합니다:',
         promptSamplesIncluded: '프롬프트 샘플 {count}개 포함',
         previewPayload: '봉인된 스냅샷 미리보기',
         noNetworkTransport: '미리보기는 아무것도 보내지 않습니다. 전송하려면 별도로 클릭해야 합니다.',
@@ -4769,8 +4719,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: '결론을 내리기 전에 비교 가능한 작업 쌍이 최소 {minimum}개 필요합니다.',
         insufficientEvidence: '결론을 내리기에 근거가 부족합니다.',
         qualityGuardrailFailed: '품질 가드레일을 충족하지 못했으므로 효과성을 주장하지 않습니다.',
-        improved: '품질 가드레일을 유지하면서 사전에 정한 개선 기준을 충족했습니다.',
+        improved: '사전에 정한 개선 기준을 충족했습니다.',
         noDemonstratedImprovement: '개선이 입증되지 않았습니다. 이는 피해나 인과관계를 뜻하지 않습니다.',
+        qualityNotMeasured: '품질 미측정',
         clearLocalData: '로컬 조언 데이터 지우기',
         clearLocalDataConfirm: '이 기기에 저장된 조언 동의, 피드백, 비교 쌍 및 비교 결과를 지우시겠습니까?',
         strictOutputRejected: '구조화된 모델 출력을 거부했습니다. 조언이 생성되지 않았습니다.',
@@ -4957,19 +4908,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: '전체(모든 프로젝트)',
       adviceScopePrompt: '조언 범위를 선택하세요',
       adviceDemoButton: '데모 보기',
-      adviceDemoNotice:
-        '# 데모 — AI 사용 조언 미리보기\n\n' +
-        '> **이 파일은 정적 데모이며, 실제 조언이 아닙니다.**\n' +
-        '> 아래 내용은 이 기능이 어떤 종류의 출력을 생성하는지 보여주기\n' +
-        '> 위해 직접 작성된 샘플입니다. 실제 Claude Code 사용 데이터에\n' +
-        '> 기반하지 **않으며**, 이 내용을 생성하기 위해 API에 데이터가\n' +
-        '> 전송된 적이 없습니다.\n\n' +
-        '### 실제 사용량 기반의 맞춤형 조언을 받으려면:\n\n' +
-        '1. **`Claude Code Usage: Show Usage Details`** 실행\n' +
-        '2. 대시보드의 **설정 → 조언** 섹션 열기\n' +
-        '3. OpenAI 호환 API 키 붙여넣기 — VS Code SecretStorage에만 저장됩니다\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. **`Claude Code Usage: Get AI Usage Advice`** 다시 실행',
       costComposition: '비용 구성',
       date: '날짜',
       yesterday: '어제',
@@ -5060,6 +4998,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: 'Agregados + contexto pessoal permitido explicitamente',
         aggregatesWithPromptSamples: 'Agregados + amostras de prompt permitidas explicitamente',
         payloadBytes: '{bytes} bytes UTF-8',
+        fallbackBodyLabel: 'Corpo alternativo, reenviado uma vez sem response_format se o provedor responder HTTP 400 ou 422:',
         promptSamplesIncluded: '{count} amostras de prompt incluídas',
         previewPayload: 'Visualizar snapshot selado',
         noNetworkTransport: 'A prévia não envia nada. O envio exige um clique separado.',
@@ -5085,8 +5024,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: 'São necessários pelo menos {minimum} pares de tarefas comparáveis antes de chegar a uma conclusão.',
         insufficientEvidence: 'Não há evidências suficientes para chegar a uma conclusão.',
         qualityGuardrailFailed: 'A proteção de qualidade não foi mantida, portanto nenhuma eficácia é afirmada.',
-        improved: 'A melhoria atingiu o limite pré-declarado enquanto a proteção de qualidade foi mantida.',
+        improved: 'A melhoria atingiu o limite pré-declarado.',
         noDemonstratedImprovement: 'Nenhuma melhoria foi demonstrada; isso não estabelece dano nem causalidade.',
+        qualityNotMeasured: 'Qualidade não medida',
         clearLocalData: 'Limpar dados locais de conselho',
         clearLocalDataConfirm: 'Limpar consentimentos, feedback, pares comparáveis e resultados de comparação armazenados neste dispositivo?',
         strictOutputRejected: 'A saída estruturada do modelo foi rejeitada. Nenhum conselho foi criado.',
@@ -5273,18 +5213,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: 'Geral (todos os projetos)',
       adviceScopePrompt: 'Escolha o foco do conselho',
       adviceDemoButton: 'Ver demonstração',
-      adviceDemoNotice:
-        '# DEMO — Prévia do conselho de uso de IA\n\n' +
-        '> **Este arquivo é uma demo estática, não um conselho real.**\n' +
-        '> O texto abaixo foi escrito manualmente para ilustrar o tipo de saída\n' +
-        '> que o recurso produz. Ele **não** é baseado nos seus dados reais de uso\n' +
-        '> do Claude Code — nada foi enviado a nenhuma API para gerar isso.\n\n' +
-        '### Para obter um conselho real e personalizado com base no SEU uso:\n\n' +
-        '1. Execute **`Claude Code Usage: Show Usage Details`**\n' +
-        '2. Abra **Configurações → Conselho** no painel\n' +
-        '3. Cole uma chave compatível com OpenAI — ela fica apenas no VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. Execute novamente **`Claude Code Usage: Get AI Usage Advice`**',
       costComposition: 'Composição de custos',
       date: 'Data',
       yesterday: 'Ontem',
@@ -5375,6 +5303,7 @@ const translations: Record<SupportedLanguage, Translations> = {
         aggregatesWithPersonalization: 'Agregat + konteks pribadi yang diizinkan secara eksplisit',
         aggregatesWithPromptSamples: 'Agregat + sampel prompt yang diizinkan secara eksplisit',
         payloadBytes: '{bytes} byte UTF-8',
+        fallbackBodyLabel: 'Isi cadangan, dikirim ulang sekali tanpa response_format jika penyedia membalas HTTP 400 atau 422:',
         promptSamplesIncluded: '{count} sampel prompt disertakan',
         previewPayload: 'Pratinjau snapshot tersegel',
         noNetworkTransport: 'Pratinjau tidak mengirim apa pun. Pengiriman memerlukan klik terpisah.',
@@ -5400,8 +5329,9 @@ const translations: Record<SupportedLanguage, Translations> = {
         minimumComparablePairs: 'Setidaknya {minimum} pasangan tugas yang sebanding diperlukan sebelum menarik kesimpulan.',
         insufficientEvidence: 'Bukti belum cukup untuk menarik kesimpulan.',
         qualityGuardrailFailed: 'Pagar pengaman kualitas tidak terpenuhi, sehingga tidak ada klaim efektivitas.',
-        improved: 'Peningkatan mencapai ambang yang ditetapkan sebelumnya sambil mempertahankan pagar pengaman kualitas.',
+        improved: 'Peningkatan mencapai ambang yang ditetapkan sebelumnya.',
         noDemonstratedImprovement: 'Belum ada peningkatan yang terbukti; ini tidak membuktikan kerugian atau hubungan sebab-akibat.',
+        qualityNotMeasured: 'Kualitas tidak diukur',
         clearLocalData: 'Hapus data saran lokal',
         clearLocalDataConfirm: 'Hapus persetujuan saran, umpan balik, pasangan sebanding, dan hasil perbandingan yang tersimpan di perangkat ini?',
         strictOutputRejected: 'Output model terstruktur ditolak. Tidak ada saran yang dibuat.',
@@ -5589,18 +5519,6 @@ const translations: Record<SupportedLanguage, Translations> = {
       adviceScopeOverall: 'Keseluruhan (semua proyek)',
       adviceScopePrompt: 'Pilih fokus saran yang diinginkan',
       adviceDemoButton: 'Pratinjau demo',
-      adviceDemoNotice:
-        '# DEMO — Pratinjau Saran Penggunaan AI\n\n' +
-        '> **File ini adalah demo statis, bukan saran sungguhan.**\n' +
-        '> Teks di bawah ini ditulis manual untuk menunjukkan jenis keluaran\n' +
-        '> yang dihasilkan fitur ini. Ini **bukan** berdasarkan data penggunaan\n' +
-        '> Claude Code Anda yang sebenarnya — tidak ada yang dikirim ke API mana pun untuk menghasilkan ini.\n\n' +
-        '### Untuk mendapatkan saran nyata dan personal berdasarkan penggunaan ANDA:\n\n' +
-        '1. Jalankan **`Claude Code Usage: Show Usage Details`**\n' +
-        '2. Buka bagian **Pengaturan → Saran** di dashboard\n' +
-        '3. Tempel API key yang kompatibel dengan OpenAI — hanya disimpan di VS Code SecretStorage\n' +
-        '   DeepSeek: [deepseek.com](https://platform.deepseek.com)\n' +
-        '4. Jalankan ulang **`Claude Code Usage: Get AI Usage Advice`**',
       costComposition: 'Komposisi Biaya',
       date: 'Tanggal',
       yesterday: 'Kemarin',
@@ -6756,6 +6674,451 @@ const CODEX_COMPRESSION_RUNTIME_UNSUPPORTED: Record<SupportedLanguage, string> =
   id: 'Runtime VS Code saat ini tidak mendukung log Codex terkompresi. Perbarui VS Code. Data terakhir yang terverifikasi tetap dipertahankan.',
 };
 
+type LocalDataRowCopy = { category: string; locationClass: string; networkInteraction: string; clearability: string };
+export type LocalDataRowId = 'R1' | 'R2' | 'P1' | 'P2' | 'P3-P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9' | 'P10' | 'P11';
+
+export interface LocalDataCopy {
+  actionTitles: Record<'rebuild-codex-index' | 'clear-quota-history' | 'clear-advice-data' | 'reset-ui-state' | 'reset-sharing-preferences' | 'clear-byok-secret' | 'clear-all-derived-data', string>;
+  rows: Record<LocalDataRowId, LocalDataRowCopy>;
+  exclusions: readonly [string, string, string, string];
+  allQuota: (count: number) => string;
+  providerQuota: (provider: string, count: number) => string;
+  epochQuota: (provider: string, index: number, count: number) => string;
+  quotaPickDescription: (count: number) => string;
+  quotaPickPlaceholder: string;
+  proceed: string;
+  exactTargets: string;
+  alwaysExcluded: string;
+  preflight: (keys: string) => string;
+  cancelled: string;
+  scopeExpired: string;
+  scopeChanged: string;
+  scopeUsed: string;
+  legacySettingsBlocked: string;
+  scopedClearBlocked: string;
+  incomplete: string;
+  webviewUnconfirmedRetry: string;
+  webviewUnconfirmedNoMarker: string;
+  indexRebuilt: string;
+  quotaCleared: string;
+  adviceCleared: string;
+  uiReset: string;
+  sharingReset: string;
+  byokCleared: string;
+  allCleared: string;
+}
+
+export const LOCAL_DATA_COPY: Record<SupportedLanguage, LocalDataCopy> = {
+  en: {
+    actionTitles: {
+      'rebuild-codex-index': 'Rebuild Codex derived index',
+      'clear-quota-history': 'Clear quota observation history',
+      'clear-advice-data': 'Clear advice data',
+      'reset-ui-state': 'Reset dashboard UI state',
+      'reset-sharing-preferences': 'Reset sharing preferences',
+      'clear-byok-secret': 'Clear BYOK advice secret',
+      'clear-all-derived-data': 'Clear all extension-derived data',
+    },
+    rows: {
+      R1: { category: 'R1 · Claude provider-owned source logs', locationClass: 'Claude Code data directory (read-only source)', networkInteraction: 'None by default; exact preview only for separately consented advice', clearability: 'Never touched by these controls; opt-in Session Actions is separate' },
+      R2: { category: 'R2 · Codex provider-owned source logs', locationClass: 'Codex home sessions/archives (read-only source)', networkInteraction: 'None', clearability: 'Never cleared by this extension' },
+      P1: { category: 'P1 · Codex incremental index', locationClass: 'Extension global storage / codex index', networkInteraction: 'None', clearability: 'Clear and rebuild from R2' },
+      P2: { category: 'P2 · Quota observation history', locationClass: 'Extension global storage / quota observations', networkInteraction: 'Claude official quota request; Codex local structured events', clearability: 'Clear by provider, anonymous account epoch, or all' },
+      'P3-P4': { category: 'P3/P4 · Legacy quota migration inputs', locationClass: 'Extension globalState (legacy, migration-only)', networkInteraction: 'None', clearability: 'Imported transactionally, then removed; included in clear-all' },
+      P5: { category: 'P5 · Codex legacy quota migration input', locationClass: 'Embedded in the P1 Codex index (migration-only)', networkInteraction: 'None', clearability: 'Migrated once into P2; P1 rebuild never deletes migrated P2 history' },
+      P6: { category: 'P6 · Extension preferences and migration state', locationClass: 'VS Code configuration + extension globalState', networkInteraction: 'VS Code Settings Sync may apply to configuration', clearability: 'Reset settings or clear all extension-derived data' },
+      P7: { category: 'P7 · Machine-local pseudonymization material', locationClass: 'Extension globalState', networkInteraction: 'Never', clearability: 'Included in clear-all; invalidates prior local fingerprints' },
+      P8: { category: 'P8 · BYOK advice credential', locationClass: 'VS Code SecretStorage', networkInteraction: 'Only to the configured endpoint after explicit Send', clearability: 'Clear BYOK secret or clear all; value is never inventoried' },
+      P9: { category: 'P9 · Advice-effectiveness ledger', locationClass: 'Extension globalState', networkInteraction: 'Only exact previewed payload after explicit Send', clearability: 'Clear Advice Data' },
+      P10: { category: 'P10 · Dashboard UI preferences', locationClass: 'Webview state + allowlisted localStorage keys', networkInteraction: 'Never', clearability: 'Reset UI State' },
+      P11: { category: 'P11 · Heatmap/share preferences', locationClass: 'Webview localStorage + extension globalState', networkInteraction: 'Local export: none; GitHub publish: explicit confirmed action only', clearability: 'Reset Sharing Preferences' },
+    },
+    exclusions: ['Claude provider-owned source logs', 'Codex provider-owned source logs', 'provider-owned OAuth credentials and cookies', 'external account quotas and subscription state'],
+    allQuota: (count) => `All quota observations (${count})`,
+    providerQuota: (provider, count) => `${provider} observations (${count})`,
+    epochQuota: (provider, index, count) => `${provider} local anonymous account epoch ${index} (${count})`,
+    quotaPickDescription: (count) => `${count} observations`,
+    quotaPickPlaceholder: 'Select the exact quota-history scope to clear',
+    proceed: 'Continue',
+    exactTargets: 'Exact targets:',
+    alwaysExcluded: 'Always excluded:',
+    preflight: (keys) => `Preflight only (if present, stop before any deletion): ${keys}`,
+    cancelled: 'Cancelled; no local data was changed.',
+    scopeExpired: 'The quota-history scope expired. Refresh the inventory and try again.',
+    scopeChanged: 'Quota history changed while confirming. Refresh the inventory and try again.',
+    scopeUsed: 'The quota-history scope was already used or expired. Refresh and try again.',
+    legacySettingsBlocked: 'Legacy settings.json entries cannot be removed safely through the current VS Code API. No setting or secret was deleted; remove those legacy entries manually, then retry.',
+    scopedClearBlocked: 'The selected account/provider scope cannot be mapped safely while quarantined or pending-migration quota data exists. Nothing was scope-cleared; choose All quota observations and confirm again.',
+    incomplete: 'The action did not complete; source logs and account data were not changed.',
+    webviewUnconfirmedRetry: 'Host data was handled, but the Webview did not confirm its local reset. A pending reset was recorded and will retry when the panel next opens.',
+    webviewUnconfirmedNoMarker: 'Host data was handled, but the Webview did not confirm its local reset and a retry marker could not be stored. Keep the panel open and retry.',
+    indexRebuilt: 'The Codex derived index was safely rebuilt.',
+    quotaCleared: 'The selected quota observations were cleared; provider quotas were not changed.',
+    adviceCleared: 'The local advice ledger was cleared.',
+    uiReset: 'Dashboard UI state was reset.',
+    sharingReset: 'Sharing preferences and destination strings were reset.',
+    byokCleared: 'The BYOK advice secret was cleared from SecretStorage.',
+    allCleared: 'Extension-derived data was cleared as listed; Claude/Codex source logs and provider credentials were unchanged. Reload the window to reinitialize.',
+  },
+  'zh-CN': {
+    actionTitles: {
+      'rebuild-codex-index': '重建 Codex 派生索引',
+      'clear-quota-history': '清除额度观测历史',
+      'clear-advice-data': '清除建议数据',
+      'reset-ui-state': '重置仪表板界面状态',
+      'reset-sharing-preferences': '重置分享偏好',
+      'clear-byok-secret': '清除 BYOK 建议密钥',
+      'clear-all-derived-data': '清除全部插件派生数据',
+    },
+    rows: {
+      R1: { category: 'R1 · Claude 自有源日志', locationClass: 'Claude Code 数据目录（只读源）', networkInteraction: '默认无；仅另行同意的建议会发送精确预览内容', clearability: '这些控制绝不触碰；另行启用的会话操作相互独立' },
+      R2: { category: 'R2 · Codex 自有源日志', locationClass: 'Codex home 会话/归档（只读源）', networkInteraction: '无', clearability: '插件绝不清除' },
+      P1: { category: 'P1 · Codex 增量索引', locationClass: '插件全局存储 / Codex 索引', networkInteraction: '无', clearability: '清除后从 R2 重建' },
+      P2: { category: 'P2 · 额度观测历史', locationClass: '插件全局存储 / 额度观测', networkInteraction: 'Claude 官方额度请求；Codex 本地结构化事件', clearability: '按供应商、匿名账号 epoch 或全部清除' },
+      'P3-P4': { category: 'P3/P4 · 旧版额度迁移输入', locationClass: '插件 globalState（旧版，仅迁移）', networkInteraction: '无', clearability: '事务导入后删除；纳入清除全部' },
+      P5: { category: 'P5 · Codex 旧额度迁移输入', locationClass: '嵌入 P1 Codex 索引（仅迁移）', networkInteraction: '无', clearability: '一次性迁入 P2；重建 P1 不删除已迁移的 P2 历史' },
+      P6: { category: 'P6 · 插件偏好与迁移状态', locationClass: 'VS Code 配置 + 插件 globalState', networkInteraction: '配置可能参与 VS Code Settings Sync', clearability: '重置设置或清除全部插件派生数据' },
+      P7: { category: 'P7 · 本机匿名化材料', locationClass: '插件 globalState', networkInteraction: '永不', clearability: '纳入清除全部；旧本机 fingerprint 随即失效' },
+      P8: { category: 'P8 · BYOK 建议凭证', locationClass: 'VS Code SecretStorage', networkInteraction: '仅在明确点击发送后用于所配置端点', clearability: '清除 BYOK 密钥或清除全部；清单绝不读取值' },
+      P9: { category: 'P9 · 建议效果台账', locationClass: '插件 globalState', networkInteraction: '仅在明确点击发送后发送精确预览载荷', clearability: '清除建议数据' },
+      P10: { category: 'P10 · 仪表板界面偏好', locationClass: 'Webview 状态 + 白名单 localStorage 键', networkInteraction: '永不', clearability: '重置界面状态' },
+      P11: { category: 'P11 · 热力图/分享偏好', locationClass: 'Webview localStorage + 插件 globalState', networkInteraction: '本地导出：无；GitHub 发布：仅明确确认的动作', clearability: '重置分享偏好' },
+    },
+    exclusions: ['Claude 自有源日志', 'Codex 自有源日志', '供应商自有 OAuth 凭证与 cookie', '外部账号额度与订阅状态'],
+    allQuota: (count) => `全部额度观测（${count} 项）`,
+    providerQuota: (provider, count) => `${provider} 全部观测（${count} 项）`,
+    epochQuota: (provider, index, count) => `${provider} 本地匿名账号周期 ${index}（${count} 项）`,
+    quotaPickDescription: (count) => `${count} 项观测`,
+    quotaPickPlaceholder: '选择要清除的确切额度历史范围',
+    proceed: '继续',
+    exactTargets: '精确目标：',
+    alwaysExcluded: '始终排除：',
+    preflight: (keys) => `仅预检（若存在则在任何删除前停止）：${keys}`,
+    cancelled: '已取消；未更改任何本地数据。',
+    scopeExpired: '额度历史范围已过期，请刷新清单后重试。',
+    scopeChanged: '额度历史在确认期间发生变化，请刷新清单后重试。',
+    scopeUsed: '额度历史范围已使用或过期，请刷新后重试。',
+    legacySettingsBlocked: '检测到当前清单无法通过 VS Code API 安全删除的旧版 settings.json 项；尚未删除任何设置或密钥，请先手动移除这些旧项后重试。',
+    scopedClearBlocked: '所选按账号/供应商范围无法与隔离或待迁移的额度数据安全对应；尚未做范围删除。请选择“全部额度观测”并再次明确确认。',
+    incomplete: '操作未完成；源日志和账号数据均未更改。',
+    webviewUnconfirmedRetry: '宿主数据已处理，但 Webview 未确认本地状态重置；已记录待处理重置，下次打开面板会自动重试。',
+    webviewUnconfirmedNoMarker: '宿主数据已处理，但 Webview 未确认本地状态重置，且无法写入重试标记；请保持面板打开后重试。',
+    indexRebuilt: 'Codex 派生索引已安全重建。',
+    quotaCleared: '所选额度观测历史已清除；官方额度未受影响。',
+    adviceCleared: '本地建议台账已清除。',
+    uiReset: '仪表板界面状态已重置。',
+    sharingReset: '分享偏好和目标字符串已重置。',
+    byokCleared: 'BYOK 建议密钥已从 SecretStorage 清除。',
+    allCleared: '插件派生数据已按清单清除；Claude/Codex 源日志和账号凭证未更改。请重载窗口以重新初始化。',
+  },
+  'zh-TW': {
+    actionTitles: {
+      'rebuild-codex-index': '重建 Codex 衍生索引',
+      'clear-quota-history': '清除額度觀測記錄',
+      'clear-advice-data': '清除建議資料',
+      'reset-ui-state': '重設儀表板介面狀態',
+      'reset-sharing-preferences': '重設分享偏好',
+      'clear-byok-secret': '清除 BYOK 建議金鑰',
+      'clear-all-derived-data': '清除全部擴充功能衍生資料',
+    },
+    rows: {
+      R1: { category: 'R1 · Claude 自有來源日誌', locationClass: 'Claude Code 資料目錄（唯讀來源）', networkInteraction: '預設無；僅另行同意的建議會傳送精確預覽內容', clearability: '這些控制項絕不觸碰；另行啟用的工作階段操作互相獨立' },
+      R2: { category: 'R2 · Codex 自有來源日誌', locationClass: 'Codex home 工作階段/封存（唯讀來源）', networkInteraction: '無', clearability: '擴充功能絕不清除' },
+      P1: { category: 'P1 · Codex 增量索引', locationClass: '擴充功能全域儲存 / Codex 索引', networkInteraction: '無', clearability: '清除後從 R2 重建' },
+      P2: { category: 'P2 · 額度觀測記錄', locationClass: '擴充功能全域儲存 / 額度觀測', networkInteraction: 'Claude 官方額度請求；Codex 本機結構化事件', clearability: '依供應商、匿名帳號 epoch 或全部清除' },
+      'P3-P4': { category: 'P3/P4 · 舊版額度遷移輸入', locationClass: '擴充功能 globalState（舊版，僅供遷移）', networkInteraction: '無', clearability: '以交易方式匯入後刪除；包含於清除全部' },
+      P5: { category: 'P5 · Codex 舊額度遷移輸入', locationClass: '內嵌於 P1 Codex 索引（僅供遷移）', networkInteraction: '無', clearability: '一次性遷入 P2；重建 P1 不會刪除已遷移的 P2 記錄' },
+      P6: { category: 'P6 · 擴充功能偏好與遷移狀態', locationClass: 'VS Code 設定 + 擴充功能 globalState', networkInteraction: '設定可能參與 VS Code Settings Sync', clearability: '重設設定或清除全部擴充功能衍生資料' },
+      P7: { category: 'P7 · 本機匿名化素材', locationClass: '擴充功能 globalState', networkInteraction: '永不', clearability: '包含於清除全部；先前的本機 fingerprint 隨即失效' },
+      P8: { category: 'P8 · BYOK 建議憑證', locationClass: 'VS Code SecretStorage', networkInteraction: '僅在明確按下傳送後用於所設定的端點', clearability: '清除 BYOK 金鑰或清除全部；清單絕不讀取其值' },
+      P9: { category: 'P9 · 建議成效台帳', locationClass: '擴充功能 globalState', networkInteraction: '僅在明確按下傳送後傳送精確預覽的內容', clearability: '清除建議資料' },
+      P10: { category: 'P10 · 儀表板介面偏好', locationClass: 'Webview 狀態 + 允許清單 localStorage 鍵', networkInteraction: '永不', clearability: '重設介面狀態' },
+      P11: { category: 'P11 · 熱力圖/分享偏好', locationClass: 'Webview localStorage + 擴充功能 globalState', networkInteraction: '本機匯出：無；GitHub 發佈：僅限明確確認的動作', clearability: '重設分享偏好' },
+    },
+    exclusions: ['Claude 自有來源日誌', 'Codex 自有來源日誌', '供應商自有 OAuth 憑證與 cookie', '外部帳號額度與訂閱狀態'],
+    allQuota: (count) => `全部額度觀測（${count} 項）`,
+    providerQuota: (provider, count) => `${provider} 全部觀測（${count} 項）`,
+    epochQuota: (provider, index, count) => `${provider} 本機匿名帳號週期 ${index}（${count} 項）`,
+    quotaPickDescription: (count) => `${count} 項觀測`,
+    quotaPickPlaceholder: '選擇要清除的確切額度記錄範圍',
+    proceed: '繼續',
+    exactTargets: '確切目標：',
+    alwaysExcluded: '一律排除：',
+    preflight: (keys) => `僅預檢（若存在則在任何刪除前停止）：${keys}`,
+    cancelled: '已取消；未變更任何本機資料。',
+    scopeExpired: '額度記錄範圍已過期，請重新整理清單後再試。',
+    scopeChanged: '額度記錄在確認期間發生變化，請重新整理清單後再試。',
+    scopeUsed: '額度記錄範圍已使用或過期，請重新整理後再試。',
+    legacySettingsBlocked: '偵測到目前 VS Code API 無法安全刪除的舊版 settings.json 項目；尚未刪除任何設定或金鑰，請先手動移除這些舊項目後再試。',
+    scopedClearBlocked: '所選的帳號/供應商範圍無法與隔離或待遷移的額度資料安全對應；尚未執行範圍刪除。請選擇「全部額度觀測」並再次明確確認。',
+    incomplete: '操作未完成；來源日誌與帳號資料皆未變更。',
+    webviewUnconfirmedRetry: '主機端資料已處理，但 Webview 未確認本機狀態重設；已記錄待處理的重設，下次開啟面板時會自動重試。',
+    webviewUnconfirmedNoMarker: '主機端資料已處理，但 Webview 未確認本機狀態重設，且無法寫入重試標記；請保持面板開啟後再試。',
+    indexRebuilt: 'Codex 衍生索引已安全重建。',
+    quotaCleared: '所選額度觀測記錄已清除；官方額度不受影響。',
+    adviceCleared: '本機建議台帳已清除。',
+    uiReset: '儀表板介面狀態已重設。',
+    sharingReset: '分享偏好與目標字串已重設。',
+    byokCleared: 'BYOK 建議金鑰已從 SecretStorage 清除。',
+    allCleared: '擴充功能衍生資料已依清單清除；Claude/Codex 來源日誌與供應商憑證未變更。請重新載入視窗以重新初始化。',
+  },
+  'de-DE': {
+    actionTitles: {
+      'rebuild-codex-index': 'Abgeleiteten Codex-Index neu aufbauen',
+      'clear-quota-history': 'Verlauf der Kontingentbeobachtungen löschen',
+      'clear-advice-data': 'Hinweisdaten löschen',
+      'reset-ui-state': 'Oberflächenstatus des Dashboards zurücksetzen',
+      'reset-sharing-preferences': 'Freigabeeinstellungen zurücksetzen',
+      'clear-byok-secret': 'BYOK-Schlüssel für Hinweise löschen',
+      'clear-all-derived-data': 'Alle abgeleiteten Erweiterungsdaten löschen',
+    },
+    rows: {
+      R1: { category: 'R1 · Quellprotokolle von Claude (anbietereigen)', locationClass: 'Claude-Code-Datenverzeichnis (schreibgeschützte Quelle)', networkInteraction: 'Standardmäßig keine; exakte Vorschau nur für separat zugestimmte Hinweise', clearability: 'Von diesen Steuerungen nie berührt; die optionalen Sitzungsaktionen sind getrennt' },
+      R2: { category: 'R2 · Quellprotokolle von Codex (anbietereigen)', locationClass: 'Codex-Home-Sitzungen/Archive (schreibgeschützte Quelle)', networkInteraction: 'Keine', clearability: 'Wird von dieser Erweiterung nie gelöscht' },
+      P1: { category: 'P1 · Inkrementeller Codex-Index', locationClass: 'Globaler Erweiterungsspeicher / Codex-Index', networkInteraction: 'Keine', clearability: 'Löschen und aus R2 neu aufbauen' },
+      P2: { category: 'P2 · Verlauf der Kontingentbeobachtungen', locationClass: 'Globaler Erweiterungsspeicher / Kontingentbeobachtungen', networkInteraction: 'Offizielle Kontingentabfrage von Claude; lokale strukturierte Ereignisse von Codex', clearability: 'Löschen nach Anbieter, anonymer Konto-Epoche oder vollständig' },
+      'P3-P4': { category: 'P3/P4 · Alte Eingaben der Kontingentmigration', locationClass: 'Erweiterungs-globalState (veraltet, nur Migration)', networkInteraction: 'Keine', clearability: 'Transaktional importiert, dann entfernt; in „Alles löschen“ enthalten' },
+      P5: { category: 'P5 · Alte Codex-Eingabe der Kontingentmigration', locationClass: 'Im Codex-Index P1 eingebettet (nur Migration)', networkInteraction: 'Keine', clearability: 'Einmalig nach P2 migriert; Neuaufbau von P1 löscht migrierten P2-Verlauf nie' },
+      P6: { category: 'P6 · Erweiterungseinstellungen und Migrationsstatus', locationClass: 'VS-Code-Konfiguration + Erweiterungs-globalState', networkInteraction: 'VS Code Settings Sync kann auf die Konfiguration angewendet werden', clearability: 'Einstellungen zurücksetzen oder alle abgeleiteten Erweiterungsdaten löschen' },
+      P7: { category: 'P7 · Maschinenlokales Pseudonymisierungsmaterial', locationClass: 'Erweiterungs-globalState', networkInteraction: 'Nie', clearability: 'In „Alles löschen“ enthalten; macht frühere lokale Fingerprints ungültig' },
+      P8: { category: 'P8 · BYOK-Zugangsdaten für Hinweise', locationClass: 'VS Code SecretStorage', networkInteraction: 'Nur an den konfigurierten Endpunkt nach ausdrücklichem Senden', clearability: 'BYOK-Schlüssel oder alles löschen; der Wert wird nie inventarisiert' },
+      P9: { category: 'P9 · Wirksamkeitsprotokoll der Hinweise', locationClass: 'Erweiterungs-globalState', networkInteraction: 'Nur die exakt angezeigte Nutzlast nach ausdrücklichem Senden', clearability: 'Hinweisdaten löschen' },
+      P10: { category: 'P10 · Oberflächeneinstellungen des Dashboards', locationClass: 'Webview-Status + Allowlist-localStorage-Schlüssel', networkInteraction: 'Nie', clearability: 'Oberflächenstatus zurücksetzen' },
+      P11: { category: 'P11 · Heatmap-/Freigabeeinstellungen', locationClass: 'Webview-localStorage + Erweiterungs-globalState', networkInteraction: 'Lokaler Export: keine; GitHub-Veröffentlichung: nur ausdrücklich bestätigte Aktion', clearability: 'Freigabeeinstellungen zurücksetzen' },
+    },
+    exclusions: ['Quellprotokolle von Claude (anbietereigen)', 'Quellprotokolle von Codex (anbietereigen)', 'anbietereigene OAuth-Zugangsdaten und Cookies', 'externe Kontokontingente und Abonnementstatus'],
+    allQuota: (count) => `Alle Kontingentbeobachtungen (${count})`,
+    providerQuota: (provider, count) => `${provider}-Beobachtungen (${count})`,
+    epochQuota: (provider, index, count) => `${provider} lokale anonyme Konto-Epoche ${index} (${count})`,
+    quotaPickDescription: (count) => `${count} Beobachtungen`,
+    quotaPickPlaceholder: 'Genauen zu löschenden Bereich des Kontingentverlaufs auswählen',
+    proceed: 'Fortfahren',
+    exactTargets: 'Exakte Ziele:',
+    alwaysExcluded: 'Immer ausgeschlossen:',
+    preflight: (keys) => `Nur Vorabprüfung (falls vorhanden, vor jedem Löschen anhalten): ${keys}`,
+    cancelled: 'Abgebrochen; es wurden keine lokalen Daten geändert.',
+    scopeExpired: 'Der Bereich des Kontingentverlaufs ist abgelaufen. Inventar aktualisieren und erneut versuchen.',
+    scopeChanged: 'Der Kontingentverlauf hat sich während der Bestätigung geändert. Inventar aktualisieren und erneut versuchen.',
+    scopeUsed: 'Der Bereich des Kontingentverlaufs wurde bereits verwendet oder ist abgelaufen. Aktualisieren und erneut versuchen.',
+    legacySettingsBlocked: 'Alte Einträge in settings.json können mit der aktuellen VS-Code-API nicht sicher entfernt werden. Es wurde keine Einstellung und kein Geheimnis gelöscht; diese Einträge manuell entfernen und erneut versuchen.',
+    scopedClearBlocked: 'Der gewählte Konto-/Anbieterbereich lässt sich bei vorhandenen isolierten oder zur Migration ausstehenden Kontingentdaten nicht sicher zuordnen. Es wurde nichts bereichsweise gelöscht; „Alle Kontingentbeobachtungen“ wählen und erneut bestätigen.',
+    incomplete: 'Die Aktion wurde nicht abgeschlossen; Quellprotokolle und Kontodaten wurden nicht geändert.',
+    webviewUnconfirmedRetry: 'Die Hostdaten wurden verarbeitet, aber die Webview hat das lokale Zurücksetzen nicht bestätigt. Ein ausstehendes Zurücksetzen wurde vermerkt und wird beim nächsten Öffnen des Panels wiederholt.',
+    webviewUnconfirmedNoMarker: 'Die Hostdaten wurden verarbeitet, aber die Webview hat das lokale Zurücksetzen nicht bestätigt und eine Wiederholungsmarkierung konnte nicht gespeichert werden. Das Panel geöffnet lassen und erneut versuchen.',
+    indexRebuilt: 'Der abgeleitete Codex-Index wurde sicher neu aufgebaut.',
+    quotaCleared: 'Die ausgewählten Kontingentbeobachtungen wurden gelöscht; Anbieterkontingente blieben unverändert.',
+    adviceCleared: 'Das lokale Hinweisprotokoll wurde gelöscht.',
+    uiReset: 'Der Oberflächenstatus des Dashboards wurde zurückgesetzt.',
+    sharingReset: 'Freigabeeinstellungen und Zielzeichenfolgen wurden zurückgesetzt.',
+    byokCleared: 'Der BYOK-Schlüssel für Hinweise wurde aus SecretStorage gelöscht.',
+    allCleared: 'Abgeleitete Erweiterungsdaten wurden wie aufgelistet gelöscht; Quellprotokolle von Claude/Codex und Anbieter-Zugangsdaten blieben unverändert. Fenster neu laden, um neu zu initialisieren.',
+  },
+  ja: {
+    actionTitles: {
+      'rebuild-codex-index': 'Codex 派生インデックスを再構築',
+      'clear-quota-history': 'クォータ観測履歴を削除',
+      'clear-advice-data': 'アドバイスデータを削除',
+      'reset-ui-state': 'ダッシュボードの UI 状態をリセット',
+      'reset-sharing-preferences': '共有設定をリセット',
+      'clear-byok-secret': 'BYOK アドバイス用シークレットを削除',
+      'clear-all-derived-data': '拡張機能の派生データをすべて削除',
+    },
+    rows: {
+      R1: { category: 'R1 · Claude 提供元のソースログ', locationClass: 'Claude Code データディレクトリ（読み取り専用ソース）', networkInteraction: '既定ではなし。別途同意したアドバイスのみ正確なプレビューを送信', clearability: 'これらのコントロールは一切触れません。オプトインのセッション操作は別機能です' },
+      R2: { category: 'R2 · Codex 提供元のソースログ', locationClass: 'Codex home のセッション/アーカイブ（読み取り専用ソース）', networkInteraction: 'なし', clearability: 'この拡張機能は削除しません' },
+      P1: { category: 'P1 · Codex 増分インデックス', locationClass: '拡張機能グローバルストレージ / Codex インデックス', networkInteraction: 'なし', clearability: '削除して R2 から再構築' },
+      P2: { category: 'P2 · クォータ観測履歴', locationClass: '拡張機能グローバルストレージ / クォータ観測', networkInteraction: 'Claude 公式クォータ要求。Codex はローカルの構造化イベント', clearability: 'プロバイダー、匿名アカウント epoch、または全件で削除' },
+      'P3-P4': { category: 'P3/P4 · 旧クォータ移行入力', locationClass: '拡張機能 globalState（旧形式、移行専用）', networkInteraction: 'なし', clearability: 'トランザクションでインポート後に削除。すべて削除に含まれる' },
+      P5: { category: 'P5 · Codex 旧クォータ移行入力', locationClass: 'P1 Codex インデックスに埋め込み（移行専用）', networkInteraction: 'なし', clearability: 'P2 へ一度だけ移行。P1 の再構築で移行済みの P2 履歴は削除されません' },
+      P6: { category: 'P6 · 拡張機能の設定と移行状態', locationClass: 'VS Code 設定 + 拡張機能 globalState', networkInteraction: '設定は VS Code Settings Sync の対象になる場合があります', clearability: '設定をリセット、または拡張機能の派生データをすべて削除' },
+      P7: { category: 'P7 · マシンローカルの匿名化素材', locationClass: '拡張機能 globalState', networkInteraction: '送信なし', clearability: 'すべて削除に含まれる。以前のローカル fingerprint は無効になります' },
+      P8: { category: 'P8 · BYOK アドバイス用認証情報', locationClass: 'VS Code SecretStorage', networkInteraction: '明示的に送信した後、設定済みのエンドポイントにのみ送信', clearability: 'BYOK シークレットまたはすべてを削除。値は一覧化されません' },
+      P9: { category: 'P9 · アドバイス効果の台帳', locationClass: '拡張機能 globalState', networkInteraction: '明示的に送信した後、プレビューした内容そのものだけを送信', clearability: 'アドバイスデータを削除' },
+      P10: { category: 'P10 · ダッシュボードの UI 設定', locationClass: 'Webview 状態 + 許可リストの localStorage キー', networkInteraction: '送信なし', clearability: 'UI 状態をリセット' },
+      P11: { category: 'P11 · ヒートマップ/共有設定', locationClass: 'Webview localStorage + 拡張機能 globalState', networkInteraction: 'ローカルエクスポート：なし。GitHub 公開：明示的に確認した操作のみ', clearability: '共有設定をリセット' },
+    },
+    exclusions: ['Claude 提供元のソースログ', 'Codex 提供元のソースログ', 'プロバイダー所有の OAuth 認証情報と Cookie', '外部アカウントのクォータとサブスクリプション状態'],
+    allQuota: (count) => `すべてのクォータ観測（${count} 件）`,
+    providerQuota: (provider, count) => `${provider} の全観測（${count} 件）`,
+    epochQuota: (provider, index, count) => `${provider} ローカル匿名アカウント期間 ${index}（${count} 件）`,
+    quotaPickDescription: (count) => `${count} 件の観測`,
+    quotaPickPlaceholder: '削除するクォータ履歴の正確な範囲を選択',
+    proceed: '続行',
+    exactTargets: '正確な対象：',
+    alwaysExcluded: '常に除外：',
+    preflight: (keys) => `事前チェックのみ（存在する場合は削除前に停止）：${keys}`,
+    cancelled: 'キャンセルしました。ローカルデータは変更されていません。',
+    scopeExpired: 'クォータ履歴の範囲が期限切れです。一覧を更新して再試行してください。',
+    scopeChanged: '確認中にクォータ履歴が変更されました。一覧を更新して再試行してください。',
+    scopeUsed: 'クォータ履歴の範囲は使用済みか期限切れです。更新して再試行してください。',
+    legacySettingsBlocked: '現在の VS Code API では旧形式の settings.json の項目を安全に削除できません。設定もシークレットも削除されていません。これらの旧項目を手動で削除してから再試行してください。',
+    scopedClearBlocked: '隔離済みまたは移行待ちのクォータデータがあるため、選択したアカウント/プロバイダー範囲を安全に対応付けられません。範囲削除は行われていません。「すべてのクォータ観測」を選び、再度確認してください。',
+    incomplete: '操作は完了しませんでした。ソースログとアカウントデータは変更されていません。',
+    webviewUnconfirmedRetry: 'ホスト側のデータは処理しましたが、Webview がローカルのリセットを確認しませんでした。保留中のリセットを記録しており、次にパネルを開いたときに再試行します。',
+    webviewUnconfirmedNoMarker: 'ホスト側のデータは処理しましたが、Webview がローカルのリセットを確認せず、再試行マーカーも保存できませんでした。パネルを開いたまま再試行してください。',
+    indexRebuilt: 'Codex 派生インデックスを安全に再構築しました。',
+    quotaCleared: '選択したクォータ観測を削除しました。プロバイダーのクォータは変更されていません。',
+    adviceCleared: 'ローカルのアドバイス台帳を削除しました。',
+    uiReset: 'ダッシュボードの UI 状態をリセットしました。',
+    sharingReset: '共有設定と送信先文字列をリセットしました。',
+    byokCleared: 'BYOK アドバイス用シークレットを SecretStorage から削除しました。',
+    allCleared: '拡張機能の派生データを一覧どおり削除しました。Claude/Codex のソースログとプロバイダーの認証情報は変更されていません。再初期化するにはウィンドウを再読み込みしてください。',
+  },
+  ko: {
+    actionTitles: {
+      'rebuild-codex-index': 'Codex 파생 인덱스 다시 빌드',
+      'clear-quota-history': '할당량 관측 기록 삭제',
+      'clear-advice-data': '조언 데이터 삭제',
+      'reset-ui-state': '대시보드 UI 상태 초기화',
+      'reset-sharing-preferences': '공유 환경설정 초기화',
+      'clear-byok-secret': 'BYOK 조언 비밀 값 삭제',
+      'clear-all-derived-data': '확장 프로그램 파생 데이터 모두 삭제',
+    },
+    rows: {
+      R1: { category: 'R1 · Claude 제공자 소유 원본 로그', locationClass: 'Claude Code 데이터 디렉터리(읽기 전용 원본)', networkInteraction: '기본값은 없음. 별도로 동의한 조언에 한해 정확한 미리보기만 전송', clearability: '이 컨트롤은 절대 건드리지 않음. 선택형 세션 작업은 별개' },
+      R2: { category: 'R2 · Codex 제공자 소유 원본 로그', locationClass: 'Codex home 세션/보관함(읽기 전용 원본)', networkInteraction: '없음', clearability: '이 확장 프로그램이 절대 삭제하지 않음' },
+      P1: { category: 'P1 · Codex 증분 인덱스', locationClass: '확장 프로그램 전역 저장소 / Codex 인덱스', networkInteraction: '없음', clearability: '삭제 후 R2에서 다시 빌드' },
+      P2: { category: 'P2 · 할당량 관측 기록', locationClass: '확장 프로그램 전역 저장소 / 할당량 관측', networkInteraction: 'Claude 공식 할당량 요청, Codex 로컬 구조화 이벤트', clearability: '제공자, 익명 계정 epoch 또는 전체 기준으로 삭제' },
+      'P3-P4': { category: 'P3/P4 · 이전 할당량 마이그레이션 입력', locationClass: '확장 프로그램 globalState(레거시, 마이그레이션 전용)', networkInteraction: '없음', clearability: '트랜잭션으로 가져온 뒤 제거됨. 전체 삭제에 포함' },
+      P5: { category: 'P5 · Codex 이전 할당량 마이그레이션 입력', locationClass: 'P1 Codex 인덱스에 내장(마이그레이션 전용)', networkInteraction: '없음', clearability: 'P2로 한 번 마이그레이션됨. P1 재빌드는 마이그레이션된 P2 기록을 삭제하지 않음' },
+      P6: { category: 'P6 · 확장 프로그램 환경설정 및 마이그레이션 상태', locationClass: 'VS Code 구성 + 확장 프로그램 globalState', networkInteraction: '구성은 VS Code Settings Sync 대상이 될 수 있음', clearability: '설정 초기화 또는 확장 프로그램 파생 데이터 모두 삭제' },
+      P7: { category: 'P7 · 기기 로컬 익명화 재료', locationClass: '확장 프로그램 globalState', networkInteraction: '절대 없음', clearability: '전체 삭제에 포함. 이전 로컬 fingerprint는 무효화됨' },
+      P8: { category: 'P8 · BYOK 조언 자격 증명', locationClass: 'VS Code SecretStorage', networkInteraction: '명시적으로 보낸 뒤 설정된 엔드포인트로만 전송', clearability: 'BYOK 비밀 값 또는 전체 삭제. 값은 목록에 포함되지 않음' },
+      P9: { category: 'P9 · 조언 효과 원장', locationClass: '확장 프로그램 globalState', networkInteraction: '명시적으로 보낸 뒤 미리 본 페이로드만 전송', clearability: '조언 데이터 삭제' },
+      P10: { category: 'P10 · 대시보드 UI 환경설정', locationClass: 'Webview 상태 + 허용 목록 localStorage 키', networkInteraction: '절대 없음', clearability: 'UI 상태 초기화' },
+      P11: { category: 'P11 · 히트맵/공유 환경설정', locationClass: 'Webview localStorage + 확장 프로그램 globalState', networkInteraction: '로컬 내보내기: 없음. GitHub 게시: 명시적으로 확인한 작업에 한함', clearability: '공유 환경설정 초기화' },
+    },
+    exclusions: ['Claude 제공자 소유 원본 로그', 'Codex 제공자 소유 원본 로그', '제공자 소유 OAuth 자격 증명 및 쿠키', '외부 계정 할당량 및 구독 상태'],
+    allQuota: (count) => `모든 할당량 관측(${count}건)`,
+    providerQuota: (provider, count) => `${provider} 전체 관측(${count}건)`,
+    epochQuota: (provider, index, count) => `${provider} 로컬 익명 계정 기간 ${index}(${count}건)`,
+    quotaPickDescription: (count) => `관측 ${count}건`,
+    quotaPickPlaceholder: '삭제할 정확한 할당량 기록 범위를 선택하세요',
+    proceed: '계속',
+    exactTargets: '정확한 대상:',
+    alwaysExcluded: '항상 제외:',
+    preflight: (keys) => `사전 점검만(있으면 삭제 전에 중단): ${keys}`,
+    cancelled: '취소했습니다. 로컬 데이터는 변경되지 않았습니다.',
+    scopeExpired: '할당량 기록 범위가 만료되었습니다. 목록을 새로 고친 뒤 다시 시도하세요.',
+    scopeChanged: '확인하는 동안 할당량 기록이 변경되었습니다. 목록을 새로 고친 뒤 다시 시도하세요.',
+    scopeUsed: '할당량 기록 범위가 이미 사용되었거나 만료되었습니다. 새로 고친 뒤 다시 시도하세요.',
+    legacySettingsBlocked: '현재 VS Code API로는 이전 settings.json 항목을 안전하게 제거할 수 없습니다. 설정이나 비밀 값은 삭제되지 않았습니다. 해당 이전 항목을 직접 제거한 뒤 다시 시도하세요.',
+    scopedClearBlocked: '격리되었거나 마이그레이션 대기 중인 할당량 데이터가 있어 선택한 계정/제공자 범위를 안전하게 대응시킬 수 없습니다. 범위 삭제는 수행되지 않았습니다. "모든 할당량 관측"을 선택하고 다시 확인하세요.',
+    incomplete: '작업이 완료되지 않았습니다. 원본 로그와 계정 데이터는 변경되지 않았습니다.',
+    webviewUnconfirmedRetry: '호스트 데이터는 처리되었지만 Webview가 로컬 초기화를 확인하지 않았습니다. 보류 중인 초기화를 기록했으며 패널을 다음에 열 때 다시 시도합니다.',
+    webviewUnconfirmedNoMarker: '호스트 데이터는 처리되었지만 Webview가 로컬 초기화를 확인하지 않았고 재시도 표시도 저장하지 못했습니다. 패널을 열어 둔 채 다시 시도하세요.',
+    indexRebuilt: 'Codex 파생 인덱스를 안전하게 다시 빌드했습니다.',
+    quotaCleared: '선택한 할당량 관측을 삭제했습니다. 제공자 할당량은 변경되지 않았습니다.',
+    adviceCleared: '로컬 조언 원장을 삭제했습니다.',
+    uiReset: '대시보드 UI 상태를 초기화했습니다.',
+    sharingReset: '공유 환경설정과 대상 문자열을 초기화했습니다.',
+    byokCleared: 'BYOK 조언 비밀 값을 SecretStorage에서 삭제했습니다.',
+    allCleared: '확장 프로그램 파생 데이터를 목록대로 삭제했습니다. Claude/Codex 원본 로그와 제공자 자격 증명은 변경되지 않았습니다. 다시 초기화하려면 창을 다시 로드하세요.',
+  },
+  'pt-BR': {
+    actionTitles: {
+      'rebuild-codex-index': 'Recriar índice derivado do Codex',
+      'clear-quota-history': 'Limpar histórico de observações de cota',
+      'clear-advice-data': 'Limpar dados de conselhos',
+      'reset-ui-state': 'Redefinir estado da interface do painel',
+      'reset-sharing-preferences': 'Redefinir preferências de compartilhamento',
+      'clear-byok-secret': 'Limpar segredo BYOK de conselhos',
+      'clear-all-derived-data': 'Limpar todos os dados derivados da extensão',
+    },
+    rows: {
+      R1: { category: 'R1 · Logs de origem do Claude (do provedor)', locationClass: 'Diretório de dados do Claude Code (origem somente leitura)', networkInteraction: 'Nenhuma por padrão; prévia exata apenas para conselhos com consentimento separado', clearability: 'Nunca tocado por estes controles; as Ações de sessão opcionais são independentes' },
+      R2: { category: 'R2 · Logs de origem do Codex (do provedor)', locationClass: 'Sessões/arquivos do Codex home (origem somente leitura)', networkInteraction: 'Nenhuma', clearability: 'Nunca apagado por esta extensão' },
+      P1: { category: 'P1 · Índice incremental do Codex', locationClass: 'Armazenamento global da extensão / índice do Codex', networkInteraction: 'Nenhuma', clearability: 'Limpar e recriar a partir de R2' },
+      P2: { category: 'P2 · Histórico de observações de cota', locationClass: 'Armazenamento global da extensão / observações de cota', networkInteraction: 'Solicitação oficial de cota do Claude; eventos estruturados locais do Codex', clearability: 'Limpar por provedor, época anônima de conta ou tudo' },
+      'P3-P4': { category: 'P3/P4 · Entradas legadas de migração de cota', locationClass: 'globalState da extensão (legado, apenas migração)', networkInteraction: 'Nenhuma', clearability: 'Importadas por transação e depois removidas; incluídas em limpar tudo' },
+      P5: { category: 'P5 · Entrada legada de migração de cota do Codex', locationClass: 'Embutida no índice P1 do Codex (apenas migração)', networkInteraction: 'Nenhuma', clearability: 'Migrada uma vez para P2; recriar P1 nunca apaga o histórico P2 migrado' },
+      P6: { category: 'P6 · Preferências da extensão e estado de migração', locationClass: 'Configuração do VS Code + globalState da extensão', networkInteraction: 'O Settings Sync do VS Code pode se aplicar à configuração', clearability: 'Redefinir configurações ou limpar todos os dados derivados da extensão' },
+      P7: { category: 'P7 · Material de pseudonimização local da máquina', locationClass: 'globalState da extensão', networkInteraction: 'Nunca', clearability: 'Incluído em limpar tudo; invalida fingerprints locais anteriores' },
+      P8: { category: 'P8 · Credencial BYOK de conselhos', locationClass: 'VS Code SecretStorage', networkInteraction: 'Somente para o endpoint configurado, após Enviar explícito', clearability: 'Limpar segredo BYOK ou tudo; o valor nunca é inventariado' },
+      P9: { category: 'P9 · Registro de eficácia dos conselhos', locationClass: 'globalState da extensão', networkInteraction: 'Somente o conteúdo exato pré-visualizado, após Enviar explícito', clearability: 'Limpar dados de conselhos' },
+      P10: { category: 'P10 · Preferências da interface do painel', locationClass: 'Estado do Webview + chaves localStorage da lista de permissões', networkInteraction: 'Nunca', clearability: 'Redefinir estado da interface' },
+      P11: { category: 'P11 · Preferências de mapa de calor/compartilhamento', locationClass: 'localStorage do Webview + globalState da extensão', networkInteraction: 'Exportação local: nenhuma; publicação no GitHub: somente ação confirmada explicitamente', clearability: 'Redefinir preferências de compartilhamento' },
+    },
+    exclusions: ['Logs de origem do Claude (do provedor)', 'Logs de origem do Codex (do provedor)', 'credenciais OAuth e cookies do provedor', 'cotas de contas externas e estado de assinatura'],
+    allQuota: (count) => `Todas as observações de cota (${count})`,
+    providerQuota: (provider, count) => `Observações do ${provider} (${count})`,
+    epochQuota: (provider, index, count) => `${provider} época anônima local de conta ${index} (${count})`,
+    quotaPickDescription: (count) => `${count} observações`,
+    quotaPickPlaceholder: 'Selecione o escopo exato do histórico de cota a limpar',
+    proceed: 'Continuar',
+    exactTargets: 'Alvos exatos:',
+    alwaysExcluded: 'Sempre excluídos:',
+    preflight: (keys) => `Somente verificação prévia (se existir, parar antes de qualquer exclusão): ${keys}`,
+    cancelled: 'Cancelado; nenhum dado local foi alterado.',
+    scopeExpired: 'O escopo do histórico de cota expirou. Atualize o inventário e tente novamente.',
+    scopeChanged: 'O histórico de cota mudou durante a confirmação. Atualize o inventário e tente novamente.',
+    scopeUsed: 'O escopo do histórico de cota já foi usado ou expirou. Atualize e tente novamente.',
+    legacySettingsBlocked: 'Entradas legadas do settings.json não podem ser removidas com segurança pela API atual do VS Code. Nenhuma configuração ou segredo foi apagado; remova essas entradas manualmente e tente novamente.',
+    scopedClearBlocked: 'O escopo de conta/provedor selecionado não pode ser mapeado com segurança enquanto houver dados de cota em quarentena ou com migração pendente. Nada foi limpo por escopo; escolha "Todas as observações de cota" e confirme novamente.',
+    incomplete: 'A ação não foi concluída; logs de origem e dados de conta não foram alterados.',
+    webviewUnconfirmedRetry: 'Os dados do host foram tratados, mas o Webview não confirmou a redefinição local. Uma redefinição pendente foi registrada e será repetida na próxima abertura do painel.',
+    webviewUnconfirmedNoMarker: 'Os dados do host foram tratados, mas o Webview não confirmou a redefinição local e não foi possível gravar um marcador de nova tentativa. Mantenha o painel aberto e tente novamente.',
+    indexRebuilt: 'O índice derivado do Codex foi recriado com segurança.',
+    quotaCleared: 'As observações de cota selecionadas foram limpas; as cotas dos provedores não foram alteradas.',
+    adviceCleared: 'O registro local de conselhos foi limpo.',
+    uiReset: 'O estado da interface do painel foi redefinido.',
+    sharingReset: 'As preferências de compartilhamento e as strings de destino foram redefinidas.',
+    byokCleared: 'O segredo BYOK de conselhos foi removido do SecretStorage.',
+    allCleared: 'Os dados derivados da extensão foram limpos conforme listado; logs de origem do Claude/Codex e credenciais dos provedores não foram alterados. Recarregue a janela para reinicializar.',
+  },
+  id: {
+    actionTitles: {
+      'rebuild-codex-index': 'Bangun ulang indeks turunan Codex',
+      'clear-quota-history': 'Hapus riwayat observasi kuota',
+      'clear-advice-data': 'Hapus data saran',
+      'reset-ui-state': 'Atur ulang status UI dasbor',
+      'reset-sharing-preferences': 'Atur ulang preferensi berbagi',
+      'clear-byok-secret': 'Hapus rahasia saran BYOK',
+      'clear-all-derived-data': 'Hapus semua data turunan ekstensi',
+    },
+    rows: {
+      R1: { category: 'R1 · Log sumber milik penyedia Claude', locationClass: 'Direktori data Claude Code (sumber hanya-baca)', networkInteraction: 'Tidak ada secara default; pratinjau persis hanya untuk saran yang disetujui terpisah', clearability: 'Tidak pernah disentuh oleh kontrol ini; Aksi Sesi opsional terpisah' },
+      R2: { category: 'R2 · Log sumber milik penyedia Codex', locationClass: 'Sesi/arsip Codex home (sumber hanya-baca)', networkInteraction: 'Tidak ada', clearability: 'Tidak pernah dihapus oleh ekstensi ini' },
+      P1: { category: 'P1 · Indeks inkremental Codex', locationClass: 'Penyimpanan global ekstensi / indeks Codex', networkInteraction: 'Tidak ada', clearability: 'Hapus dan bangun ulang dari R2' },
+      P2: { category: 'P2 · Riwayat observasi kuota', locationClass: 'Penyimpanan global ekstensi / observasi kuota', networkInteraction: 'Permintaan kuota resmi Claude; peristiwa terstruktur lokal Codex', clearability: 'Hapus per penyedia, epoch akun anonim, atau semuanya' },
+      'P3-P4': { category: 'P3/P4 · Input migrasi kuota lama', locationClass: 'globalState ekstensi (lama, hanya migrasi)', networkInteraction: 'Tidak ada', clearability: 'Diimpor secara transaksional lalu dihapus; termasuk dalam hapus semua' },
+      P5: { category: 'P5 · Input migrasi kuota lama Codex', locationClass: 'Tertanam di indeks Codex P1 (hanya migrasi)', networkInteraction: 'Tidak ada', clearability: 'Dimigrasikan sekali ke P2; membangun ulang P1 tidak pernah menghapus riwayat P2 yang sudah dimigrasikan' },
+      P6: { category: 'P6 · Preferensi ekstensi dan status migrasi', locationClass: 'Konfigurasi VS Code + globalState ekstensi', networkInteraction: 'Settings Sync VS Code dapat berlaku pada konfigurasi', clearability: 'Atur ulang pengaturan atau hapus semua data turunan ekstensi' },
+      P7: { category: 'P7 · Materi pseudonimisasi lokal mesin', locationClass: 'globalState ekstensi', networkInteraction: 'Tidak pernah', clearability: 'Termasuk dalam hapus semua; membatalkan fingerprint lokal sebelumnya' },
+      P8: { category: 'P8 · Kredensial saran BYOK', locationClass: 'VS Code SecretStorage', networkInteraction: 'Hanya ke endpoint yang dikonfigurasi setelah Kirim eksplisit', clearability: 'Hapus rahasia BYOK atau hapus semua; nilainya tidak pernah diinventarisasi' },
+      P9: { category: 'P9 · Buku besar efektivitas saran', locationClass: 'globalState ekstensi', networkInteraction: 'Hanya payload yang dipratinjau persis setelah Kirim eksplisit', clearability: 'Hapus data saran' },
+      P10: { category: 'P10 · Preferensi UI dasbor', locationClass: 'Status Webview + kunci localStorage daftar-izin', networkInteraction: 'Tidak pernah', clearability: 'Atur ulang status UI' },
+      P11: { category: 'P11 · Preferensi peta panas/berbagi', locationClass: 'localStorage Webview + globalState ekstensi', networkInteraction: 'Ekspor lokal: tidak ada; publikasi GitHub: hanya aksi yang dikonfirmasi eksplisit', clearability: 'Atur ulang preferensi berbagi' },
+    },
+    exclusions: ['Log sumber milik penyedia Claude', 'Log sumber milik penyedia Codex', 'kredensial OAuth dan cookie milik penyedia', 'kuota akun eksternal dan status langganan'],
+    allQuota: (count) => `Semua observasi kuota (${count})`,
+    providerQuota: (provider, count) => `Observasi ${provider} (${count})`,
+    epochQuota: (provider, index, count) => `${provider} epoch akun anonim lokal ${index} (${count})`,
+    quotaPickDescription: (count) => `${count} observasi`,
+    quotaPickPlaceholder: 'Pilih cakupan riwayat kuota yang tepat untuk dihapus',
+    proceed: 'Lanjutkan',
+    exactTargets: 'Target persis:',
+    alwaysExcluded: 'Selalu dikecualikan:',
+    preflight: (keys) => `Hanya pemeriksaan awal (jika ada, berhenti sebelum penghapusan apa pun): ${keys}`,
+    cancelled: 'Dibatalkan; tidak ada data lokal yang diubah.',
+    scopeExpired: 'Cakupan riwayat kuota telah kedaluwarsa. Segarkan inventaris lalu coba lagi.',
+    scopeChanged: 'Riwayat kuota berubah saat konfirmasi. Segarkan inventaris lalu coba lagi.',
+    scopeUsed: 'Cakupan riwayat kuota sudah dipakai atau kedaluwarsa. Segarkan lalu coba lagi.',
+    legacySettingsBlocked: 'Entri settings.json lama tidak dapat dihapus dengan aman melalui API VS Code saat ini. Tidak ada pengaturan atau rahasia yang dihapus; hapus entri lama tersebut secara manual, lalu coba lagi.',
+    scopedClearBlocked: 'Cakupan akun/penyedia yang dipilih tidak dapat dipetakan dengan aman selama ada data kuota yang dikarantina atau menunggu migrasi. Tidak ada yang dihapus per cakupan; pilih Semua observasi kuota dan konfirmasi lagi.',
+    incomplete: 'Aksi tidak selesai; log sumber dan data akun tidak diubah.',
+    webviewUnconfirmedRetry: 'Data host telah diproses, tetapi Webview tidak mengonfirmasi pengaturan ulang lokalnya. Pengaturan ulang tertunda telah dicatat dan akan dicoba lagi saat panel dibuka berikutnya.',
+    webviewUnconfirmedNoMarker: 'Data host telah diproses, tetapi Webview tidak mengonfirmasi pengaturan ulang lokalnya dan penanda percobaan ulang tidak dapat disimpan. Biarkan panel terbuka lalu coba lagi.',
+    indexRebuilt: 'Indeks turunan Codex berhasil dibangun ulang dengan aman.',
+    quotaCleared: 'Observasi kuota yang dipilih telah dihapus; kuota penyedia tidak diubah.',
+    adviceCleared: 'Buku besar saran lokal telah dihapus.',
+    uiReset: 'Status UI dasbor telah diatur ulang.',
+    sharingReset: 'Preferensi berbagi dan string tujuan telah diatur ulang.',
+    byokCleared: 'Rahasia saran BYOK telah dihapus dari SecretStorage.',
+    allCleared: 'Data turunan ekstensi telah dihapus sesuai daftar; log sumber Claude/Codex dan kredensial penyedia tidak diubah. Muat ulang jendela untuk menginisialisasi ulang.',
+  },
+};
+
 export class I18n {
   private static currentLanguage: SupportedLanguage = 'en';
   private static currentDecimalPlaces: number = 2;
@@ -6895,6 +7258,10 @@ export class I18n {
 
   static get apiHeatmap() {
     return { ...API_HEATMAP_COPY[this.currentLanguage], ...API_HEATMAP_UI_TRANSLATIONS[this.currentLanguage] };
+  }
+
+  static get localData(): LocalDataCopy {
+    return LOCAL_DATA_COPY[this.currentLanguage];
   }
 
   static get dashboardFeedback(): typeof DASHBOARD_FEEDBACK_TRANSLATIONS.en {

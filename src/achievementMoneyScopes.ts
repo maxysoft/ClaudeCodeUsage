@@ -9,6 +9,7 @@ import { CODEX_PERIOD_LINEAGE_VERSION } from './providers/codex/codexPeriodIndex
 import type { ProviderTokenCounts, UsageProvider } from './providers/providerTypes';
 import type { UsageData } from './types';
 import { codexAchievementCalendarProjection, type AchievementDayEvidence } from './achievementCalendar';
+import { mondayOf, parseDayKey } from './dateKeys';
 
 /** Accept existing materialized model rows without their dashboard cost/count.
  * referenceUsage is the admitted TTL-complete subset, never the full bucket. */
@@ -190,12 +191,10 @@ function base(provider: UsageProvider, book?: AchievementMoneyPricebook): Achiev
     maxSessionTask: book ? PENDING : INVALID } };
 }
 function dayOrdinal(day: string): number {
-  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new RangeError('Invalid date');
-  const time = Date.parse(day + 'T00:00:00.000Z');
-  if (!Number.isFinite(time) || new Date(time).toISOString().slice(0, 10) !== day) throw new RangeError('Invalid date');
+  const time = parseDayKey(day);
+  if (!Number.isFinite(time)) throw new RangeError('Invalid date');
   return time;
 }
-function monday(day: number): number { return day - ((new Date(day).getUTCDay() + 6) % 7) * DAY_MS; }
 interface Peak { value?: number; coverage: MoneyScopeCoverage }
 function peak(parts: Iterable<MoneyEvidence>, provider: UsageProvider, book: AchievementMoneyPricebook): Peak {
   let selected: MoneyEvidence | undefined;
@@ -214,7 +213,7 @@ function weekPeak(days: Map<string, MoneyEvidence>, provider: UsageProvider, boo
   const weeks = new Map<number, Sum>();
   let hasOpenWeek = false;
   for (const [day, amount] of days) {
-    const start = monday(dayOrdinal(day));
+    const start = mondayOf(dayOrdinal(day));
     // End is Sunday's civil date; strictly earlier than caller's asOfDay.
     if (start + 6 * DAY_MS >= asOf) { hasOpenWeek = true; continue; }
     const sum = weeks.get(start) ?? zero(); add(sum, fromEvidence(amount)); weeks.set(start, sum);

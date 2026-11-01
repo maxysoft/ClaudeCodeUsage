@@ -14,7 +14,7 @@ function snapshot(overrides: any = {}): any {
     ...overrides,
   };
 }
-const input = (current: any = snapshot(), previous: any = null): any => ({ enabled: true, now: T, snapshot: current, previous });
+const input = (current: any = snapshot()): any => ({ enabled: true, now: T, snapshot: current });
 const close = (actual: number, expected: number): void => assert.ok(Math.abs(actual - expected) < 1e-10);
 
 test('Claude adapters keep account and explicitly scoped weekly observations independent', () => {
@@ -42,21 +42,11 @@ test('raw time stays anchored across repaints and stale observations lose foreca
   assert.equal(adapt(input(snapshot({ source: 'synthetic-reset' })))[0].result.reason, 'synthetic-observation');
 });
 
-test('decline, source changes, unknown identity and abnormal resets fail closed', () => {
+test('unknown or discontinuous account identity fails closed', () => {
   const adapt = adapters().adaptClaudeQuotaPace;
-  const previous = snapshot({ observedAt: T - 60_000 });
-  previous.windows[0].usedPercent = 30;
-  assert.equal(adapt(input(snapshot(), previous))[0].result.reason, 'untrusted-account-window');
   for (const trust of ['unknown', 'ambiguous', 'discontinuous']) {
     assert.equal(adapt(input(snapshot({ accountWindowTrust: trust })))[0].result.reason, 'untrusted-account-window');
   }
-  const earlyReset = snapshot();
-  earlyReset.windows[0].resetAt += 60_000;
-  assert.equal(adapt(input(earlyReset, snapshot()))[0].result.reason, 'untrusted-account-window');
-  const next = snapshot({ observedAt: START + WEEK + 7 * 60 * 60_000 });
-  next.windows[0].resetAt += WEEK;
-  next.windows[0].usedPercent = 1;
-  assert.equal(adapt({ ...input(next, previous), now: next.observedAt })[0].result.status, 'ready');
 });
 
 test('Codex requires one latest trusted account window; scoped/conflicting windows never merge', () => {

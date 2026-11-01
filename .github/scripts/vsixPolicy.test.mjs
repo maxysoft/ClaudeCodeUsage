@@ -48,9 +48,6 @@ test('VSIX policy rejects development, dependency, and secret material', () => {
     'extension/AGENTS.md',
     'extension/node_modules/left-pad/index.js',
     'extension/node_modules/@playwright/test/index.js',
-    'extension/issue87-benchmark.cjs',
-    'extension/issue87-prototype-benchmark.cjs',
-    'extension/out/claudeIncrementalPrototype.js',
     'extension/.env.local',
     'extension/private.pem',
     'extension/private.key',
@@ -75,13 +72,6 @@ test('VSIX policy rejects internal Superpowers review material', () => {
 
 test('VSIX policy rejects dormant v2.3.1 preparation seams and review documents', () => {
   for (const entry of [
-    'extension/out/adviceEffectiveness/evidencePreparation.js',
-    'extension/out/adviceEffectiveness/feedback.js',
-    'extension/out/adviceEffectiveness/legacyBridge.js',
-    'extension/out/adviceEffectiveness/legacyPersonalization.js',
-    'extension/out/adviceEffectiveness/modelExperiment.js',
-    'extension/out/adviceDemoSample.js',
-    'extension/out/adviceSummary.js',
     'extension/AI-ADVICE-INTEGRATION-V2.3.1.md',
     'extension/V2.3.1-CANDIDATE-CONTRACT.zh-CN.md',
   ]) {

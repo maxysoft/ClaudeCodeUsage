@@ -93,7 +93,6 @@ test('model signals reuse ancestry proof instead of walking every deep parent ch
   }).reverse();
   const signals = codexModelSignals(rows);
   assert.equal(signals.verifiedRootCount, 1);
-  assert.equal(signals.verifiedChildCount, size - 1);
   assert.equal(signals.familyProcessedTokens?.astra, size * 2);
 });
 

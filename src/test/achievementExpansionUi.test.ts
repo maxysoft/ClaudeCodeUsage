@@ -21,8 +21,7 @@ test('host connects Token output/cache and calendar proof with independent cover
       get: (key: string) => state.get(key), update: async (key: string, value: unknown) => state.set(key, value),
     } }) as any;
     provider.providerAvailability = { claude: false, codex: true, codexData: true };
-    provider.codexAchievementSignals = { modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
-      tokenEvidence: { complete: true, output: 50_000_000, cachedInput: 1_000_000_000 },
+    provider.codexAchievementSignals = { tokenEvidence: { complete: true, output: 50_000_000, cachedInput: 1_000_000_000 },
       dayEvidence: { complete: true, timeZone: 'UTC', days: Array.from({ length: 7 }, (_, index) => ({
         day: `2026-09-0${index + 1}`, processed: 1_000_000, output: 1,
         models: { 'gpt-6-astra': { processed: 1_000_000, output: 1 } },

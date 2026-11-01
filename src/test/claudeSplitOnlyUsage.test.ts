@@ -4,6 +4,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ClaudeDataLoader, compactUsageRecord } from '../dataLoader';
+import { LegacyClaudeLoader } from './helpers/legacyClaudeLoader';
 import { claudeReferenceUsage } from '../claudeReferenceUsage';
 import { claudeUsageDashboardSnapshot, createClaudeUsageIndex, updateClaudeUsageIndex } from '../claudeIncrementalIndex';
 import { claudeMoneyEvidenceFromModels } from '../achievementMoneyScopes';
@@ -84,7 +85,7 @@ test('Full, index, materialization and frozen money agree across split-only cold
     await writeFile(file, line(row('initial')));
     let result = await updateClaudeUsageIndex(createClaudeUsageIndex(), root, { analyzeContent: false });
     const check = async (creation: number, processed: number, microUsd: number) => {
-      const full = await ClaudeDataLoader.loadUsageRecords(root, { analyzeContent: false });
+      const full = await LegacyClaudeLoader.loadUsageRecords(root, { analyzeContent: false });
       const data = ClaudeDataLoader.calculateUsageData(full.records);
       assert.equal(data.totalCacheCreationTokens, creation);
       assert.deepEqual(result.index.aggregates.allTime, data);

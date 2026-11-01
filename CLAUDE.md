@@ -40,8 +40,10 @@ Claude-specific compatibility notes:
   labelled API-equivalent cost estimates, never a bill or subscription charge.
   Codex is also a development tool for this repository — do not conflate the
   two roles.
-- Claude conversation JSONL is read-only. OAuth credential refresh is a
-  separate, existing security-sensitive behavior; do not broaden it casually.
+- Claude conversation JSONL is read-only. Claude OAuth credentials are
+  read-only too: this fork never refreshes or writes them (an expired token
+  leaves the quota unavailable until Claude Code refreshes it). Do not
+  reintroduce a refresh or credential write path.
   The existing opt-in, exactly confirmed single-log move to OS trash is separate
   from read-only usage ingestion and derived-data clearing, not an agent permission.
 - Claude runtime usage refreshes go through `claudeIncrementalIndex.ts`; do not

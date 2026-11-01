@@ -1,6 +1,5 @@
-import { calculateCostFromPricing, getExactModelPricing } from './pricing';
-import { ClaudeApiUsageResponse, ClaudeUsageRecord } from './types';
-import { normalizeQuotaWindows } from './quotaWindows';
+import { calculateCostFromPricing, getExactModelPricing, getPricingBackend, getPricingLastFetched } from './pricing';
+import { ClaudeUsageRecord } from './types';
 import { ProviderTokenCounts, UsageProvider } from './providers/providerTypes';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -98,73 +97,6 @@ function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-function observationIdentity(observation: WeeklyQuotaObservation): string {
-  return [
-    observation.provider,
-    observation.seriesKey,
-    observation.resetAt,
-    observation.usedPercent,
-    observation.sourceKey ?? '',
-  ].join('|');
-}
-
-/**
- * Keep one latest sample for each percentage step in a reset window. This
- * preserves the observation closest to reset without writing one item per
- * quota poll. The bounded history contains no credentials or account names.
- */
-export function appendWeeklyQuotaObservations(
-  history: WeeklyQuotaObservation[],
-  additions: WeeklyQuotaObservation[],
-  limit = 512,
-): WeeklyQuotaObservation[] {
-  const compacted = new Map<string, WeeklyQuotaObservation>();
-  for (const item of [...history, ...additions]) {
-    if (
-      !Number.isFinite(item.observedAt) ||
-      !Number.isFinite(item.resetAt) ||
-      !Number.isFinite(item.usedPercent) ||
-      item.resetAt <= 0
-    ) {
-      continue;
-    }
-    const normalized: WeeklyQuotaObservation = {
-      ...item,
-      usedPercent: Math.min(100, Math.max(0, item.usedPercent)),
-    };
-    const key = observationIdentity(normalized);
-    const previous = compacted.get(key);
-    if (!previous || normalized.observedAt > previous.observedAt) {
-      compacted.set(key, normalized);
-    }
-  }
-  return [...compacted.values()]
-    .sort((left, right) => left.observedAt - right.observedAt)
-    .slice(-Math.max(1, Math.floor(limit)));
-}
-
-export function claudeWeeklyQuotaObservations(
-  usage: ClaudeApiUsageResponse | null,
-  profileKey: string,
-  observedAt: number,
-): WeeklyQuotaObservation[] {
-  return normalizeQuotaWindows(usage)
-    .filter((window) => window.kind === 'weekly_all')
-    .flatMap((window) => {
-      const resetAt = Date.parse(window.resetsAt);
-      if (!Number.isFinite(resetAt) || resetAt <= 0) {
-        return [];
-      }
-      return [{
-        provider: 'claude' as const,
-        seriesKey: profileKey,
-        observedAt,
-        resetAt,
-        usedPercent: window.utilization,
-      }];
-    });
-}
-
 function tokenTotal(tokens: ProviderTokenCounts): number {
   return finiteNonNegative(tokens.inputTotal) + finiteNonNegative(tokens.outputTotal);
 }
@@ -236,37 +168,58 @@ export function equivalentCostBreakdownFromProviderTokens(
   };
 }
 
+function claudeEquivalentRow(record: ClaudeUsageRecord): WeeklyEquivalentUsage | null {
+  if (record._isUserPrompt || record.isApiErrorMessage) {
+    return null;
+  }
+  const model = record.message.model;
+  const usage = record.message.usage;
+  const timestamp = Date.parse(record.timestamp);
+  if (!model || model === '<synthetic>' || !usage || !Number.isFinite(timestamp)) {
+    return null;
+  }
+  const totalTokens =
+    finiteNonNegative(usage.input_tokens) +
+    finiteNonNegative(usage.output_tokens) +
+    finiteNonNegative(usage.cache_creation_input_tokens ?? 0) +
+    finiteNonNegative(usage.cache_read_input_tokens ?? 0);
+  const pricing = getExactModelPricing(model, timestamp);
+  // Non-Claude proxy models do not consume an Anthropic subscription window.
+  if (!pricing || !model.toLowerCase().includes('claude')) {
+    return { timestamp, equivalentUsd: 0, pricedTokens: 0, totalTokens };
+  }
+  return {
+    timestamp,
+    equivalentUsd: calculateCostFromPricing(usage, pricing),
+    pricedTokens: totalTokens,
+    totalTokens,
+  };
+}
+
+let pricedRows = {
+  pricing: getPricingLastFetched(),
+  backend: getPricingBackend(),
+  rows: new WeakMap<ClaudeUsageRecord, WeeklyEquivalentUsage | null>(),
+};
+
+/** Index records are never mutated once published, so each keeps its row
+ * until the pricing catalog or backend changes. */
 export function claudeWeeklyEquivalentUsage(
   records: ClaudeUsageRecord[],
 ): WeeklyEquivalentUsage[] {
+  const pricing = getPricingLastFetched();
+  const backend = getPricingBackend();
+  if (pricedRows.pricing !== pricing || pricedRows.backend !== backend) {
+    pricedRows = { pricing, backend, rows: new WeakMap() };
+  }
   const rows: WeeklyEquivalentUsage[] = [];
   for (const record of records) {
-    if (record._isUserPrompt || record.isApiErrorMessage) {
-      continue;
+    let row = pricedRows.rows.get(record);
+    if (row === undefined) {
+      row = claudeEquivalentRow(record);
+      pricedRows.rows.set(record, row);
     }
-    const model = record.message.model;
-    const usage = record.message.usage;
-    const timestamp = Date.parse(record.timestamp);
-    if (!model || model === '<synthetic>' || !usage || !Number.isFinite(timestamp)) {
-      continue;
-    }
-    const totalTokens =
-      finiteNonNegative(usage.input_tokens) +
-      finiteNonNegative(usage.output_tokens) +
-      finiteNonNegative(usage.cache_creation_input_tokens ?? 0) +
-      finiteNonNegative(usage.cache_read_input_tokens ?? 0);
-    const pricing = getExactModelPricing(model);
-    // Non-Claude proxy models do not consume an Anthropic subscription window.
-    if (!pricing || !model.toLowerCase().includes('claude')) {
-      rows.push({ timestamp, equivalentUsd: 0, pricedTokens: 0, totalTokens });
-      continue;
-    }
-    rows.push({
-      timestamp,
-      equivalentUsd: calculateCostFromPricing(usage, pricing),
-      pricedTokens: totalTokens,
-      totalTokens,
-    });
+    if (row) rows.push(row);
   }
   return rows;
 }
@@ -932,21 +885,6 @@ export function buildWeeklyValueTimeline(
   }).slice(0, limit);
 }
 
-/** Keep observed quota rows authoritative while filling older gaps from logs. */
-export function mergeWeeklyValuePoints(
-  observed: WeeklyValuePoint[],
-  history: WeeklyValuePoint[],
-  limit = 12,
-): WeeklyValuePoint[] {
-  const fallback = history.filter((candidate) => !observed.some((point) =>
-    point.provider === candidate.provider &&
-    Math.abs(point.resetAt - candidate.resetAt) <= RESET_CLUSTER_MS,
-  ));
-  return [...observed, ...fallback]
-    .sort((left, right) => right.resetAt - left.resetAt)
-    .slice(0, Math.max(1, Math.floor(limit)));
-}
-
 function confidenceFor(
   current: boolean,
   observationGapMs: number,
@@ -962,124 +900,4 @@ function confidenceFor(
     return 'high';
   }
   return observationGapMs <= 24 * 60 * 60 * 1000 ? 'medium' : 'low';
-}
-
-/**
- * Builds reset-aligned weekly points. The full-window figure is an audited
- * extrapolation: API-equivalent value accumulated by the last quota sample,
- * divided by that sample's utilization. It is omitted when utilization or
- * model-price coverage is too small to support the inference.
- */
-export function buildWeeklyValueTrend(
-  inputs: WeeklyValueInputs,
-  now: number = Date.now(),
-): WeeklyValuePoint[] {
-  const points: WeeklyValuePoint[] = [];
-  const clusters = clusterObservations(inputs.observations);
-  for (const cluster of clusters) {
-    const windowStart = cluster.resetAt - WEEK_MS;
-    const clusterSourceKeys = new Set(
-      cluster.observations.flatMap((item) => item.sourceKey ? [item.sourceKey] : []),
-    );
-    const hasOverlappingCodexSeries = cluster.provider === 'codex' && clusters.some((other) =>
-      {
-        if (
-          other === cluster ||
-          other.provider !== cluster.provider ||
-          windowStart >= other.resetAt ||
-          other.resetAt - WEEK_MS >= cluster.resetAt
-        ) {
-          return false;
-        }
-        const otherSourceKeys = new Set(
-          other.observations.flatMap((item) => item.sourceKey ? [item.sourceKey] : []),
-        );
-        const disjointExplicitSources = clusterSourceKeys.size > 0 && otherSourceKeys.size > 0 &&
-          [...clusterSourceKeys].every((sourceKey) => !otherSourceKeys.has(sourceKey));
-        return other.seriesKey !== cluster.seriesKey || disjointExplicitSources;
-      },
-    );
-    const periodEnd = Math.min(now, cluster.resetAt);
-    const eligibleObservations = cluster.observations
-      .filter((item) => item.observedAt >= windowStart && item.observedAt <= periodEnd)
-      .sort((left, right) => left.observedAt - right.observedAt);
-    const latest = eligibleObservations[eligibleObservations.length - 1];
-    if (!latest) {
-      continue;
-    }
-    const sourceKeys = new Set(
-      cluster.observations.flatMap((item) => item.sourceKey ? [item.sourceKey] : []),
-    );
-    const matchedUsage = inputs.usage.filter((row) =>
-      row.timestamp >= windowStart &&
-      row.timestamp <= now &&
-      row.timestamp < cluster.resetAt &&
-      (sourceKeys.size === 0 || (row.sourceKey !== undefined && sourceKeys.has(row.sourceKey))),
-    );
-    const used = totals(matchedUsage);
-    if (used.totalTokens <= 0 && latest.usedPercent <= 0) {
-      continue;
-    }
-    const observed = totals(matchedUsage.filter((row) => row.timestamp <= latest.observedAt));
-    const observedPricingCoverage = observed.totalTokens > 0
-      ? Math.min(1, observed.pricedTokens / observed.totalTokens)
-      : 0;
-    const pricingCoverage = used.totalTokens > 0
-      ? Math.min(1, used.pricedTokens / used.totalTokens)
-      : 0;
-    const current = cluster.resetAt > now;
-    const observationGapMs = Math.max(
-      0,
-      (current ? now : cluster.resetAt) - latest.observedAt,
-    );
-    let fullEquivalentUsd: number | null = null;
-    let observationOverrun = false;
-    if (
-      !hasOverlappingCodexSeries &&
-      latest.usedPercent > 0 &&
-      observed.equivalentUsd > 0 &&
-      latest.usedPercent <= 100
-    ) {
-      fullEquivalentUsd = observed.equivalentUsd / (latest.usedPercent / 100);
-      if (!Number.isFinite(fullEquivalentUsd) || fullEquivalentUsd <= 0) {
-        fullEquivalentUsd = null;
-      } else if (used.equivalentUsd > fullEquivalentUsd) {
-        // A quota sample can be older than the newest local usage. Never show a
-        // total allowance below usage already observed, and surface the stale
-        // inference through low confidence instead of implying false precision.
-        fullEquivalentUsd = used.equivalentUsd;
-        observationOverrun = true;
-      }
-    }
-    points.push({
-      provider: cluster.provider,
-      seriesKey: cluster.seriesKey,
-      seriesLabel: cluster.seriesLabel,
-      windowStart,
-      resetAt: cluster.resetAt,
-      current,
-      usedEquivalentUsd: used.equivalentUsd,
-      fullEquivalentUsd,
-      unusedEquivalentUsd:
-        fullEquivalentUsd !== null && !observationOverrun
-          ? Math.max(0, fullEquivalentUsd - used.equivalentUsd)
-          : null,
-      utilizationPercent: latest.usedPercent,
-      pricingCoverage,
-      observationGapMs,
-      confidence: fullEquivalentUsd === null
-        ? 'usage-only'
-        : observationOverrun ||
-          latest.accountAttribution === 'unattributed' ||
-          (latest.flags ?? []).some((flag) =>
-            flag === 'approximate-boundary' || flag === 'account-ambiguous'
-          ) ||
-          latest.usedPercent < 5 ||
-          observedPricingCoverage < MIN_PRICED_SHARE
-          ? 'low'
-          : confidenceFor(current, observationGapMs, pricingCoverage),
-      basis: 'quota-observation',
-    });
-  }
-  return points.sort((left, right) => right.resetAt - left.resetAt).slice(0, 12);
 }

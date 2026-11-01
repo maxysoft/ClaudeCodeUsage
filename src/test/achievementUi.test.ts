@@ -2872,7 +2872,6 @@ test('unverified cached Codex totals cannot award volume, family, day or weekly 
       hourlyCoverage: { complete: false, timeZone: 'UTC' }, last30DaysHourlyByDay: {},
     };
     provider.codexAchievementSignals = {
-      modelCount: 1, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
       familyProcessedTokens: { astra: 10_000_000_000, sol: 0, luna: 0 },
       processedLowerBound: 10_000_000_000,
     };

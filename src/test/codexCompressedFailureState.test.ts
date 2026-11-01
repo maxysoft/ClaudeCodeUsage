@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, unlink, appendFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -9,6 +9,7 @@ import { createEmptyCodexIndex, updateCodexIndex, saveCodexIndexAtomic, loadCode
   normalizeCodexIndex, CodexIndexCancelledError, codexFilePassFailureCode, type CodexIndexV3 } from '../providers/codex/codexIndex';
 import { scanCodexManifest, type CodexManifest } from '../providers/codex/codexManifest';
 import { CodexFilePassPool } from '../providers/codex/codexFilePassPool';
+import { codexOriginBaselineReady } from '../providers/codex/codexAchievementOrigin';
 import { CodexZstdError, supportsCodexZstd, type CodexZstdErrorCode } from '../providers/codex/codexZstd';
 import * as fsPromises from 'node:fs/promises';
 
@@ -263,5 +264,47 @@ test('pool carries only safe typed failure codes while healthy files and date/zo
       assert.deepEqual(message.outcome, { taskId: 'safe-task', ok: false, failureCode: 'trailing-data' });
       assert.doesNotMatch(JSON.stringify(message), /private|payload|absolutePath|stack/);
     } finally { await worker.terminate(); }
+  });
+});
+
+test('terminal codec failure is counted as terminal coverage and upgrades an index saved without the count', { skip: !supportsCodexZstd() }, async () => {
+  await fixture(async home => {
+    const manifest = await scanCodexManifest(home, options.salt);
+    const first = await updateCodexIndex(createEmptyCodexIndex('UTC'), manifest, options);
+    assert.equal(first.index.coverage.complete, false);
+    assert.equal((first.index.coverage as any).terminalFiles, 1);
+    assert.equal((normalizeCodexIndex(JSON.parse(JSON.stringify(first.index)))!.coverage as any).terminalFiles, 1);
+    const legacy = normalizeCodexIndex(JSON.parse(JSON.stringify(first.index)))!;
+    delete (legacy.coverage as any).terminalFiles;
+    const upgraded = await updateCodexIndex(legacy, manifest, { ...options,
+      io: { async *read() { throw Error('must not read'); } } });
+    assert.equal(upgraded.indexChanged, true); assert.equal(upgraded.bodyReads, 0);
+    assert.equal((upgraded.index.coverage as any).terminalFiles, 1);
+    await assertStable(upgraded.index, manifest);
+  });
+});
+
+test('terminal codec failure does not withhold a live append usage delta', { skip: !supportsCodexZstd() }, async () => {
+  await fixture(async home => {
+    const live = path.join(home, 'sessions', 'live.jsonl');
+    const token = (input: number, output: number, at: number) => JSON.stringify({ type: 'event_msg',
+      timestamp: new Date(at).toISOString(), payload: { type: 'token_count', info: { total_token_usage: {
+        input_tokens: input, cached_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0,
+        total_tokens: input + output } } } });
+    const through = options.now(), after = through - 3_600_000;
+    await writeFile(live, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'live-fixture-session' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6.1-astra', effort: 'high' } }),
+      token(100, 20, after - 3_600_000), '',
+    ].join('\n'));
+    const manifest = await scanCodexManifest(home, options.salt);
+    let baseline = await updateCodexIndex(createEmptyCodexIndex('UTC'), manifest, options);
+    for (let i = 0; baseline.migration.pending && i < 6; i++) baseline = await updateCodexIndex(baseline.index, manifest, options);
+    assert.equal(baseline.index.coverage.complete, false);
+    assert.equal(codexOriginBaselineReady(baseline.index), true);
+    await appendFile(live, token(300, 60, through - 1000) + '\n');
+    const appended = await updateCodexIndex(baseline.index, await scanCodexManifest(home, options.salt),
+      { ...options, achievementUsageWindow: { after, through } });
+    assert.equal(appended.achievementUsageDelta?.processed, 240);
   });
 });

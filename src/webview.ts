@@ -6,7 +6,7 @@ import {achievementUiIcon} from './achievementUiIcons';
 import {compactAchievementLevelNotes,achievementCurrentValue} from './achievementDetailPresentation';
 import {achievementHistoryDates,achievementHistoryCatalogSignature,claudeAchievementHistoryEvidence,
   claudeAchievementSessionHistory,type AchievementHistoryDate} from './achievementHistoryDates';
-import type { ClaudeAchievementUsageDelta } from './claudeIncrementalIndex';
+import { claudeWeekDailyUsage, type ClaudeAchievementUsageDelta } from './claudeIncrementalIndex';
 import { I18n, achievementCopyFor, achievementAppearanceCopyFor, achievementEffortCopyFor, weeklyQuotaPaceCopy, achievementRecordStatusCopyFor, achievementEvidenceHintCopyFor } from './i18n';
 import {CODEX_ACHIEVEMENT_EFFORTS,EFFORT_STATISTICS_PRICEBOOK_VERSION} from './achievementEffortStatistics';
 import {EFFORT_PROCESSED,EFFORT_OUTPUT,EFFORT_ROOTS} from './achievementCollaboration';
@@ -55,26 +55,19 @@ import { buildApiHeatmapArtifact, normalizeApiHeatmapConfig, type ApiHeatmapArti
 import { buildApiHeatmapDaily } from './apiHeatmapDaily';
 import {
   CombinedHeatmapRange,
-  claudeDailyPointsFromUsage,
-  codexDailyPointsFromUsage,
-  combinedHeatmapFilename,
-  combinedHeatmapMarkdown,
-  mergeCombinedDailyUsage,
   normalizeCombinedHeatmapRange,
   sanitizeCombinedHeatmapTitle,
-  selectCombinedHeatmapWindow,
 } from './combinedHeatmap';
 import {
   normalizeCombinedHeatmapAccent,
   normalizeCombinedHeatmapIntensityMode,
   normalizeCombinedHeatmapPalette,
-  renderCombinedHeatmapSvg,
 } from './combinedHeatmapSvg';
 import { DEFAULT_SECTIONS, ShareSections, buildShareCardData, shareCardFilename } from './shareCard';
 import { renderShareCardSvg, ShareCardTheme } from './shareCardSvg';
 import { AchievementSharePreview, highestEarnedAchievements, renderAchievementShareSvg, selectShareAchievements } from './achievementShare';
 import { getAchievementMoneyPricebook } from './achievementMoney';
-import { ACHIEVEMENT_IMAGE_FILES, achievementImageDataUrl, achievementImagePath } from './achievementIcons';
+import { ACHIEVEMENT_ASSET_DIR, ACHIEVEMENT_IMAGE_FILES, achievementImageDataUrl, achievementImagePath } from './achievementIcons';
 import { formatAchievementCompact, formatAchievementInteger } from './achievementFormat';
 import { nextAchievementStage } from './achievementStages';
 import { ACHIEVEMENT_GALLERY, achievementGalleryKey, achievementStatisticsDestination } from './achievementGallery';
@@ -83,6 +76,7 @@ import { achievementEvidenceDomain, AchievementEvidenceDomain, AchievementEviden
   AchievementNoticeBaseline, copyClaudeUsageDelta, codexTailAchievementCrossings, claudeTailAchievementCrossings } from './achievementEvidence';
 import { CodexAchievementUsageWindow, CodexAchievementUsageDelta, copyCodexUsageWindow,
   copyCodexUsageDelta } from './providers/codex/codexAchievementOrigin';
+import { codexCoverageSettled } from './providers/codex/codexIndex';
 import { ACHIEVEMENT_RECORD_FILE, AchievementAuxiliaryProof, AchievementRecordRepository, AchievementRecordStore, AchievementRecord } from './achievementRecordStore';
 import {
   AchievementActivity,
@@ -96,7 +90,7 @@ import {
   SAFE_EXPLORATION_FEATURES,
 } from './achievementActivity';
 import {
-  collectClaudeOutputHours,
+  claudeOutputHours,
   collectCodexOutputHours,
   HourEvidence,
   longestOutputHourStreak,
@@ -208,7 +202,6 @@ import {
   ContentAnalysis,
   ContentSlice,
   ProjectGroup,
-  ProjectUsage,
   SessionData,
   SessionUsage,
   UsageAttribution,
@@ -430,6 +423,180 @@ function localDataUiCopy(locale: string): LocalDataUiCopy {
       bytes: '字节',
       items: '项',
       sourceExclusions: '始终排除：',
+    };
+  }
+  if (locale === 'zh-TW') {
+    return {
+      title: '本機資料與隱私控制',
+      intro: '清單只顯示類別、非敏感的位置類型和彙總中繼資料；不會顯示路徑、帳號指紋、設定值或日誌內容。',
+      inventory: '本機資料清單',
+      refresh: '重新整理清單',
+      category: '類別',
+      location: '位置類型',
+      schema: 'Schema',
+      sizeCount: '約佔用 / 數量',
+      dateRange: '最早 / 最新',
+      network: '可能的網路互動',
+      clearability: '清除方式',
+      actions: '安全清除與重建',
+      rebuildIndex: '重建 Codex 索引…',
+      quotaScope: '額度歷史範圍',
+      clearQuota: '清除所選額度歷史…',
+      clearAdvice: '清除建議資料…',
+      resetUi: '重設介面狀態…',
+      resetSharing: '重設分享偏好…',
+      clearByok: '清除 BYOK 金鑰…',
+      clearAll: '清除全部擴充功能衍生資料…',
+      loading: '正在讀取不含敏感值的本機清單…',
+      unavailable: '暫時無法讀取本機資料清單。',
+      bytes: '位元組',
+      items: '項',
+      sourceExclusions: '一律排除：',
+    };
+  }
+  if (locale === 'de-DE') {
+    return {
+      title: 'Lokale Daten und Datenschutzkontrollen',
+      intro: 'Das Inventar zeigt nur Kategorien, nicht sensible Speicherortklassen und zusammengefasste Metadaten – niemals Pfade, Konto-Fingerabdrücke, Einstellungswerte oder Protokollinhalte.',
+      inventory: 'Inventar lokaler Daten',
+      refresh: 'Inventar aktualisieren',
+      category: 'Kategorie',
+      location: 'Speicherortklasse',
+      schema: 'Schema',
+      sizeCount: 'Ungefähre Größe / Anzahl',
+      dateRange: 'Älteste / neueste',
+      network: 'Mögliche Netzwerkinteraktion',
+      clearability: 'Löschweg',
+      actions: 'Sicheres Löschen und Neuaufbau',
+      rebuildIndex: 'Codex-Index neu aufbauen…',
+      quotaScope: 'Umfang des Kontingentverlaufs',
+      clearQuota: 'Ausgewählten Kontingentverlauf löschen…',
+      clearAdvice: 'Beratungsdaten löschen…',
+      resetUi: 'UI-Zustand zurücksetzen…',
+      resetSharing: 'Teilen-Einstellungen zurücksetzen…',
+      clearByok: 'BYOK-Schlüssel löschen…',
+      clearAll: 'Alle von der Erweiterung abgeleiteten Daten löschen…',
+      loading: 'Lokales Inventar ohne Werte wird gelesen…',
+      unavailable: 'Das Inventar lokaler Daten ist vorübergehend nicht verfügbar.',
+      bytes: 'Bytes',
+      items: 'Einträge',
+      sourceExclusions: 'Immer ausgeschlossen:',
+    };
+  }
+  if (locale === 'ja') {
+    return {
+      title: 'ローカルデータとプライバシー管理',
+      intro: 'インベントリにはカテゴリ、機密でない保存場所の種類、集計メタデータのみを表示します。パス、アカウントのフィンガープリント、設定値、ログの内容は表示しません。',
+      inventory: 'ローカルデータのインベントリ',
+      refresh: 'インベントリを更新',
+      category: 'カテゴリ',
+      location: '保存場所の種類',
+      schema: 'スキーマ',
+      sizeCount: '概算サイズ / 件数',
+      dateRange: '最古 / 最新',
+      network: '発生しうるネットワーク通信',
+      clearability: '削除方法',
+      actions: '安全な削除と再構築',
+      rebuildIndex: 'Codex インデックスを再構築…',
+      quotaScope: 'クォータ履歴の範囲',
+      clearQuota: '選択したクォータ履歴を削除…',
+      clearAdvice: 'アドバイスデータを削除…',
+      resetUi: 'UI の状態をリセット…',
+      resetSharing: '共有設定をリセット…',
+      clearByok: 'BYOK キーを削除…',
+      clearAll: '拡張機能の派生データをすべて削除…',
+      loading: '機密値を含まないローカルインベントリを読み込み中…',
+      unavailable: 'ローカルデータのインベントリを一時的に読み込めません。',
+      bytes: 'バイト',
+      items: '件',
+      sourceExclusions: '常に除外:',
+    };
+  }
+  if (locale === 'ko') {
+    return {
+      title: '로컬 데이터 및 개인정보 보호 제어',
+      intro: '인벤토리는 범주, 민감하지 않은 위치 유형, 집계 메타데이터만 표시하며 경로, 계정 지문, 설정 값, 로그 내용은 절대 표시하지 않습니다.',
+      inventory: '로컬 데이터 인벤토리',
+      refresh: '인벤토리 새로고침',
+      category: '범주',
+      location: '위치 유형',
+      schema: '스키마',
+      sizeCount: '대략적 크기 / 개수',
+      dateRange: '가장 오래된 / 최신',
+      network: '발생 가능한 네트워크 상호작용',
+      clearability: '삭제 방법',
+      actions: '안전한 삭제 및 재구축',
+      rebuildIndex: 'Codex 인덱스 재구축…',
+      quotaScope: '할당량 기록 범위',
+      clearQuota: '선택한 할당량 기록 삭제…',
+      clearAdvice: '조언 데이터 삭제…',
+      resetUi: 'UI 상태 초기화…',
+      resetSharing: '공유 설정 초기화…',
+      clearByok: 'BYOK 키 삭제…',
+      clearAll: '확장 프로그램 파생 데이터 모두 삭제…',
+      loading: '민감한 값이 없는 로컬 인벤토리를 읽는 중…',
+      unavailable: '로컬 데이터 인벤토리를 일시적으로 사용할 수 없습니다.',
+      bytes: '바이트',
+      items: '개',
+      sourceExclusions: '항상 제외:',
+    };
+  }
+  if (locale === 'pt-BR') {
+    return {
+      title: 'Dados locais e controles de privacidade',
+      intro: 'O inventário mostra apenas categorias, classes de local não sensíveis e metadados agregados — nunca caminhos, impressões digitais de conta, valores de configuração ou conteúdo de logs.',
+      inventory: 'Inventário de dados locais',
+      refresh: 'Atualizar inventário',
+      category: 'Categoria',
+      location: 'Classe de local',
+      schema: 'Esquema',
+      sizeCount: 'Tamanho aprox. / quantidade',
+      dateRange: 'Mais antigo / mais recente',
+      network: 'Possível interação de rede',
+      clearability: 'Forma de limpeza',
+      actions: 'Limpeza segura e reconstrução',
+      rebuildIndex: 'Reconstruir índice do Codex…',
+      quotaScope: 'Escopo do histórico de cota',
+      clearQuota: 'Limpar histórico de cota selecionado…',
+      clearAdvice: 'Limpar dados de conselho…',
+      resetUi: 'Redefinir estado da interface…',
+      resetSharing: 'Redefinir preferências de compartilhamento…',
+      clearByok: 'Limpar chave BYOK…',
+      clearAll: 'Limpar todos os dados derivados da extensão…',
+      loading: 'Lendo um inventário local sem valores…',
+      unavailable: 'O inventário de dados locais está temporariamente indisponível.',
+      bytes: 'bytes',
+      items: 'itens',
+      sourceExclusions: 'Sempre excluído:',
+    };
+  }
+  if (locale === 'id') {
+    return {
+      title: 'Data lokal dan kontrol privasi',
+      intro: 'Inventaris hanya menampilkan kategori, kelas lokasi yang tidak sensitif, dan metadata agregat—tidak pernah jalur, sidik jari akun, nilai pengaturan, atau isi log.',
+      inventory: 'Inventaris data lokal',
+      refresh: 'Segarkan inventaris',
+      category: 'Kategori',
+      location: 'Kelas lokasi',
+      schema: 'Skema',
+      sizeCount: 'Perkiraan ukuran / jumlah',
+      dateRange: 'Terlama / terbaru',
+      network: 'Kemungkinan interaksi jaringan',
+      clearability: 'Cara penghapusan',
+      actions: 'Penghapusan aman dan pembangunan ulang',
+      rebuildIndex: 'Bangun ulang indeks Codex…',
+      quotaScope: 'Cakupan riwayat kuota',
+      clearQuota: 'Hapus riwayat kuota terpilih…',
+      clearAdvice: 'Hapus data saran…',
+      resetUi: 'Atur ulang status UI…',
+      resetSharing: 'Atur ulang preferensi berbagi…',
+      clearByok: 'Hapus kunci BYOK…',
+      clearAll: 'Hapus semua data turunan ekstensi…',
+      loading: 'Membaca inventaris lokal tanpa nilai…',
+      unavailable: 'Inventaris data lokal untuk sementara tidak tersedia.',
+      bytes: 'byte',
+      items: 'item',
+      sourceExclusions: 'Selalu dikecualikan:',
     };
   }
   return {
@@ -1076,9 +1243,7 @@ export class UsageWebviewProvider {
   private sharingWorkspaceRequested = false;
   private readonly sharingCommandIntents = new SharingCommandIntentLedger();
   private codexView: CodexUsageView | null = null;
-  private codexAchievementSignals: CodexAchievementSignals = {
-    modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
-  };
+  private codexAchievementSignals: CodexAchievementSignals = {};
   private achievementGrants = new Set<AchievementId>();
   private achievementLegacyRuleGrants: AchievementId[] = [];
   private pendingAchievementGrants = new Set<AchievementId>();
@@ -1236,6 +1401,9 @@ export class UsageWebviewProvider {
     records: any[]; analysis: ContentAnalysis | null; day: string; timeZone: string;
     pricing: unknown; backend: string; attribution: UsageAttribution;
   };
+  private readonly usageAttributionCache = new Map<AttributionScope['kind'], {
+    records: any[]; analysis: ContentAnalysis | null; key: string; pricing: unknown; attribution: UsageAttribution;
+  }>();
   private weeklyUsageCache?: { records: any[]; pricing: unknown; backend: string; usage: ReturnType<typeof claudeWeeklyEquivalentUsage> };
   private readonly refreshStates: Partial<Record<SettingProvider, { failed: boolean; lastSuccessfulAt?: number }>> = {};
   private claudeHeatmapPreviewCache?: {
@@ -1884,6 +2052,11 @@ export class UsageWebviewProvider {
       utf8Bytes: preview.utf8Bytes,
       sha256: preview.sha256,
       body: preview.body,
+      ...(preview.fallbackBody === undefined ? {} : {
+        fallbackBody: preview.fallbackBody,
+        fallbackSha256: preview.fallbackSha256,
+        fallbackUtf8Bytes: preview.fallbackUtf8Bytes,
+      }),
     });
   }
 
@@ -2110,6 +2283,7 @@ export class UsageWebviewProvider {
     this.claudeDailyUsageCache = undefined;
     this.dataPanelCache.clear();
     this.todayAttributionCache = undefined;
+    this.usageAttributionCache.clear();
   }
 
   private retireApiHeatmapPreview(notify = true): void {
@@ -2475,6 +2649,7 @@ export class UsageWebviewProvider {
     this.panel = vscode.window.createWebviewPanel('claudeCodeUsage', I18n.t.popup.title, vscode.ViewColumn.One, {
       enableScripts: true,
       retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.file(ACHIEVEMENT_ASSET_DIR)],
     });
 
     this.panel.onDidDispose(() => {
@@ -2932,7 +3107,7 @@ export class UsageWebviewProvider {
             const sharedTabs = ['today', 'month', 'all', 'sessions', 'projects', 'content', 'settings'];
             if (this.setting<boolean>('enableAchievements', true)) sharedTabs.push('achievements');
             const allowedTabs = requested === 'claude'
-              ? [...sharedTabs, 'branches', 'workflows']
+              ? [...sharedTabs, 'week', 'branches', 'workflows']
               : sharedTabs;
             if (typeof message.tab === 'string' && allowedTabs.includes(message.tab)) {
               this.currentTab = message.tab;
@@ -3279,9 +3454,7 @@ export class UsageWebviewProvider {
     }
     if (this.codexView?.daily !== codexView?.daily) this.invalidateSharingCaches();
     this.codexView = codexView;
-    this.codexAchievementSignals = codexAchievementSignals ?? {
-      modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
-    };
+    this.codexAchievementSignals = codexAchievementSignals ?? {};
     this.codexInsights = codexView ? insights : emptyCodexScopedInsights();
     this.codexLoading = providerAvailability.codexLoading ?? false;
     this.codexProgress = providerAvailability.codexProgress ?? null;
@@ -3702,7 +3875,7 @@ export class UsageWebviewProvider {
     if (typeof tab !== 'string') return false;
     if (this.currentProvider === 'compare') return tab === 'all';
     const tabs = ['today', 'month', 'all', 'sessions', 'projects', 'content', 'settings'];
-    if (this.currentProvider === 'claude') tabs.push('branches', 'workflows');
+    if (this.currentProvider === 'claude') tabs.push('week', 'branches', 'workflows');
     if (this.setting<boolean>('enableAchievements', true)) tabs.push('achievements');
     return tabs.includes(tab);
   }
@@ -4511,12 +4684,12 @@ export class UsageWebviewProvider {
   private codexAchievementVolume(): { processed: number; lowerBound: boolean } {
     const view = this.acceptedCodexAchievement?.view ?? this.codexView;
     if (this.revokedAchievementEvidence.has('codex') ||
-        view?.currentManifestVerified !== true || !view.coverage.complete) {
+        view?.currentManifestVerified !== true || !codexCoverageSettled(view.coverage).complete) {
       return { processed: 0, lowerBound: this.providerAvailability.codex };
     }
     const visible = view.allTime.total.processed;
     if (!Number.isSafeInteger(visible) || visible < 0) return { processed: 0, lowerBound: this.providerAvailability.codex };
-    if (view.coverage.identity.complete) return { processed: visible, lowerBound: false };
+    if (view.coverage.identity.complete) return { processed: visible, lowerBound: (view.coverage.terminalFiles ?? 0) > 0 };
     const bound = (this.acceptedCodexAchievement?.signals ?? this.codexAchievementSignals).processedLowerBound;
     return Number.isSafeInteger(bound) && bound !== undefined && bound >= 0 && bound <= visible
       ? { processed: bound, lowerBound: true }
@@ -5141,9 +5314,7 @@ export class UsageWebviewProvider {
       outputHourStreak: Math.max(hours.streak, this.achievementHourEvidence.maxStreak),
       nightOutputPeak: hours.nightPeak,
       activity: this.achievementActivity,
-      codex: codexSubsetTrusted ? codexSignals : {
-        modelCount: 0, efforts: [], familyRootCounts: { astra: 0, sol: 0, luna: 0 },
-      },
+      codex: codexSubsetTrusted ? codexSignals : {},
     });
     this.achievementCalendarLowerBounds = new Set(results.filter(result => !weekCoverageComplete &&
       positiveCalendarProof && result.progress > 0 &&
@@ -5607,7 +5778,7 @@ export class UsageWebviewProvider {
     if (cached && cached.records === records && cached.codex === codex &&
         cached.timeZone === timeZone && cached.asOfUtcHour === asOfUtcHour) return cached;
     const claudeHours = this.revokedAchievementEvidence.has('claude')
-      ? [] : collectClaudeOutputHours(records);
+      ? [] : claudeOutputHours(records);
     const codexRows = Object.fromEntries(Object.entries(codex?.last30DaysHourlyByDay ?? {})
       .map(([day, rows]) => [day, rows.map((row) => ({ hour: row.hour, output: row.total.output }))]));
     const manifestVerified = !this.revokedAchievementEvidence.has('codex') &&
@@ -5940,10 +6111,7 @@ export class UsageWebviewProvider {
         cumulativeLowerBound && (cumulativeVolume || result.group === 'codex')) ? '≥' : '';
       const levelName = series && earnedTiers > 0
         ? copy.levels[tierOrder.indexOf(tier)] : earned ? copy.milestone : copy.locked;
-      const webview = this.panel?.webview;
-      const iconSrc = webview?.asWebviewUri && this.context.extensionPath
-        ? webview.asWebviewUri(vscode.Uri.file(achievementImagePath(result.id))).toString()
-        : achievementImageDataUrl(result.id);
+      const iconSrc = this.achievementIconSrc(result.id);
       const seriesAttrs = series
         ? ' data-achievement-series="' + series + '" data-achievement-tier="' + tier + '"'
         : '';
@@ -6020,8 +6188,7 @@ export class UsageWebviewProvider {
       const milestoneRules = milestones.length ? '<h5>' + this.escapeHtml(copy.milestone) +
         '</h5><ul class="achievement-level-rules achievement-milestones">' + milestones.map(entry => {
           const metadata=dated(entry);
-          const src = webview?.asWebviewUri && this.context.extensionPath
-            ? webview.asWebviewUri(vscode.Uri.file(achievementImagePath(entry.id))).toString() : achievementImageDataUrl(entry.id);
+          const src = this.achievementIconSrc(entry.id);
           return '<li data-achievement-milestone="' + entry.id + '" data-achievement-level="' + entry.id + '">' +
             '<img src="' + this.escapeHtml(src) + '" alt="" loading="lazy"><strong>' + this.escapeHtml(copy.titles[entry.id]) +
             '</strong><span>' + this.escapeHtml(compact(entry.target) + ' ' + unitFor(entry.id)) + '</span>'+
@@ -6146,9 +6313,7 @@ export class UsageWebviewProvider {
             (monetary ? moneyLowerBound ? '≥' : '' : this.achievementCalendarLowerBounds.has(entry.nextResult.id) ||
               cumulativeLowerBound && (entry.series === 'cumulative-volume' || entry.result.group === 'codex') ? '≥' : '') +
             compactValue(entry.nextResult.id,state.progress) + ' / ' + compactValue(entry.nextResult.id,state.target) : proofLabel);
-          const imagePath = achievementImagePath(entry.result.id);
-          const iconSrc = this.panel?.webview?.asWebviewUri && this.context.extensionPath ?
-            this.panel.webview.asWebviewUri(vscode.Uri.file(imagePath)).toString() : achievementImageDataUrl(entry.result.id);
+          const iconSrc = this.achievementIconSrc(entry.result.id);
           const selectedPin = pins.find(pin => achievementGalleryKey(pin) === key);
           const pinKey = selectedPin ?? (currentPin(key) ? key : entry.milestones.find(row => currentPin(row.id))?.id);
           return '<div class="achievement-overview-item">' + (kind === 'badges' && pinKey ?
@@ -6172,9 +6337,7 @@ export class UsageWebviewProvider {
       visibleResults.filter(isEarned).map(row => row.id));
     const recordButton = (record: AchievementRecord): string => {
       const key = achievementGalleryKey(record.id)!;
-      const iconSrc = this.panel?.webview?.asWebviewUri && this.context.extensionPath
-        ? this.panel.webview.asWebviewUri(vscode.Uri.file(achievementImagePath(record.id))).toString()
-        : achievementImageDataUrl(record.id);
+      const iconSrc = this.achievementIconSrc(record.id);
       const stamp = record.recordedDay === null ? this.escapeHtml(copy.historicalAward)
         : '<time datetime="' + record.recordedDay + '" title="' + this.escapeHtml(record.timeZone ?? '') + '">' +
           this.escapeHtml(copy.recordedDay + ': ' + record.recordedDay) + '</time>';
@@ -6333,6 +6496,12 @@ export class UsageWebviewProvider {
     }));
   }
 
+  private achievementIconSrc(id: AchievementId): string {
+    const webview = this.panel?.webview;
+    return webview?.asWebviewUri && this.context.extensionPath
+      ? webview.asWebviewUri(vscode.Uri.file(achievementImagePath(id))).toString() : achievementImageDataUrl(id);
+  }
+
   private achievementShareSvg(ids: readonly string[] | undefined): string {
     const copy = achievementCopyFor(I18n.getLocale());
     const selected = selectShareAchievements(this.earnedAchievements(), ids);
@@ -6357,8 +6526,6 @@ export class UsageWebviewProvider {
     const chosen = selectShareAchievements(results, this.achievementShareSelection);
     const accepted = selected === 'achievements' ? this.acceptedAchievementPreview.read(chosen, I18n.getLocale()) : undefined;
     const preview = accepted?.svg ?? '';
-    const iconSrc = (id: AchievementId): string => this.panel?.webview?.asWebviewUri && this.context.extensionPath
-      ? this.panel.webview.asWebviewUri(vscode.Uri.file(achievementImagePath(id))).toString() : achievementImageDataUrl(id);
     const choices = results.map((result) => {
       const series=Object.values(ACHIEVEMENT_SERIES).find(ids=>ids.includes(result.id));
       const rank=series?copy.levels[series.indexOf(result.id)]:copy.milestone;
@@ -6366,7 +6533,7 @@ export class UsageWebviewProvider {
       return '<label class="sc-check achievement-share-option"><input type="checkbox" class="achievement-share-choice" value="' +
         result.id + '" aria-label="'+this.escapeHtml(copy.titles[result.id])+'"'+(chosen.includes(result.id) ? ' checked' : '') +
         ' onchange="previewAchievementShare(this)"><img class="achievement-share-choice-icon" src="' +
-        this.escapeHtml(iconSrc(result.id)) + '" alt="" loading="lazy"><span class="achievement-share-option-text"><span class="achievement-share-option-name">'+
+        this.escapeHtml(this.achievementIconSrc(result.id)) + '" alt="" loading="lazy"><span class="achievement-share-option-text"><span class="achievement-share-option-name">'+
         this.escapeHtml(title)+'</span><small>'+this.escapeHtml(rank)+'</small></span></label>';
     }).join('');
     return '<section class="sharing-presentation achievement-share-presentation" data-sharing-presentation="achievements"' +
@@ -6429,6 +6596,7 @@ export class UsageWebviewProvider {
       }
       html += '</div>';
     }
+    html += this.renderLocalDataControls();
     html += '</div>';
     return html;
   }
@@ -7513,7 +7681,7 @@ export class UsageWebviewProvider {
     if (weekStartTs !== undefined && this.allRecords && this.allRecords.length > 0) {
       insights = this.renderUsageTracking({ kind: 'week', sinceTs: weekStartTs });
       dailyBreakdown = this.renderDailyBreakdownSection(
-        ClaudeDataLoader.getDailyDataForWeek(this.allRecords, new Date(weekStartTs)),
+        claudeWeekDailyUsage(this.allRecords, new Date(weekStartTs)),
         'week-'
       );
     }
@@ -9098,11 +9266,7 @@ export class UsageWebviewProvider {
     // The timeframe's usage characteristics, ≥5% only (full sentence in the
     // tooltip). All cost-weighted from exact usage — no estimates in this card.
     if (this.allRecords && this.allRecords.length > 0) {
-      // Only the Today card can use the memoised attribution; the fork's week /
-      // month / all cards each carry their own exact scope.
-      const attr = scope.kind === 'day'
-        ? this.getTodayAttribution()
-        : ClaudeDataLoader.getUsageAttribution(this.allRecords, this.contentAnalysis, scope);
+      const attr = scope.kind === 'day' ? this.getTodayAttribution() : this.getScopedAttribution(scope);
       if (attr.totalCost > 0) {
         const add = (share: number, short: string, sentence: string, hint: string, color: string): void => {
           if (share < 0.05) {
@@ -9171,6 +9335,19 @@ export class UsageWebviewProvider {
     );
     this.todayAttributionCache = { records: this.allRecords, analysis: this.contentAnalysis,
       day, timeZone, pricing, backend, attribution };
+    return attribution;
+  }
+
+  private getScopedAttribution(scope: AttributionScope): UsageAttribution {
+    const timeZone = I18n.getTimezone();
+    const key = JSON.stringify([scope, dayKeyInZone(new Date(Date.now()), timeZone), timeZone, getPricingBackend()]);
+    const pricing = getPricingLastFetched();
+    const previous = this.usageAttributionCache.get(scope.kind);
+    if (previous?.records === this.allRecords && previous.analysis === this.contentAnalysis &&
+        previous.key === key && previous.pricing === pricing) return previous.attribution;
+    const attribution = ClaudeDataLoader.getUsageAttribution(this.allRecords, this.contentAnalysis, scope);
+    this.usageAttributionCache.set(scope.kind, { records: this.allRecords, analysis: this.contentAnalysis,
+      key, pricing, attribution });
     return attribution;
   }
 
@@ -10104,7 +10281,7 @@ export class UsageWebviewProvider {
               5,
               t.result,
               html(resultText) + '<br><span class="advice-step-caveat">' +
-                html(pairText + ' · ' + minimumText) + '</span>',
+                html(pairText + ' · ' + minimumText + ' · ' + t.qualityNotMeasured) + '</span>',
             ) +
             '</ol>' + feedbackFor(recommendation) + '</div>'
           );
@@ -10460,7 +10637,7 @@ export class UsageWebviewProvider {
     // number are the SAME metric (TTL) so there's no ambiguity; hit rate and
     // volume ride along as secondary. (Provider is the family's nominal vendor;
     // the serving endpoint isn't logged — a true cross-provider comparison needs
-    // pooled cross-user data, reserved via dataContribution.ts.)
+    // pooled cross-user data.)
     const byModel = analysis.byModel;
     const withTtl = byModel.filter((s) => s.ttlMin != null);
     if (byModel.length >= 2 && withTtl.length >= 1) {
@@ -16032,12 +16209,16 @@ function ccuRenderLocalDataInventory(inventory) {
       (Array.isArray(inventory.exclusions) ? inventory.exclusions.join(' · ') : '');
   }
   if (select) {
+    var previousScope = select.selectedOptions && select.selectedOptions[0];
+    var previousScopeKey = previousScope ? previousScope.dataset.scopeKey : '';
     while (select.firstChild) { select.removeChild(select.firstChild); }
     (Array.isArray(inventory.quotaScopes) ? inventory.quotaScopes : []).forEach(function(scope) {
       if (!scope || typeof scope.token !== 'string' || typeof scope.label !== 'string') { return; }
       var option = document.createElement('option');
       option.value = scope.token;
       option.textContent = scope.label;
+      option.dataset.scopeKey = typeof scope.key === 'string' ? scope.key : '';
+      option.selected = option.dataset.scopeKey === previousScopeKey;
       select.appendChild(option);
     });
   }
@@ -17456,6 +17637,14 @@ window.addEventListener('message', async function(event) {
         message.utf8Bytes,
       );
     }
+    var hasFallback = message.fallbackBody !== undefined;
+    if (validSnapshot && hasFallback) {
+      validSnapshot = await ccuVerifyCanonicalPreview(
+        message.fallbackBody,
+        message.fallbackSha256,
+        message.fallbackUtf8Bytes,
+      );
+    }
     if (advicePreviewValidationGeneration[snapshotProvider] !== snapshotValidationGeneration) {
       return;
     }
@@ -17488,7 +17677,11 @@ window.addEventListener('message', async function(event) {
       var previewCount = preview.querySelector('[data-advice-preview-count]');
       var previewDestination = preview.querySelector('[data-advice-preview-destination]');
       if (previewDestination) { previewDestination.textContent = ccuRequestDestinationText(message); }
-      if (previewBody) { previewBody.textContent = message.body; }
+      if (previewBody) {
+        previewBody.textContent = hasFallback
+          ? message.body + '\\n\\n' + __adviceCopy.fallbackBodyLabel + ' (SHA-256 ' + message.fallbackSha256 + ')\\n' + message.fallbackBody
+          : message.body;
+      }
       if (previewDigest) { previewDigest.textContent = 'SHA-256 ' + message.sha256; }
       if (previewContentType) { previewContentType.textContent = message.contentType; }
       if (previewMode) {
@@ -18625,6 +18818,7 @@ function renderHourlyChart(hourlyData, metric) {
   dispose(): void {
     this.retireAchievementUsageObservations();
     this.todayAttributionCache = undefined;
+    this.usageAttributionCache.clear();
     if (this.panel) {
       this.panel.dispose();
     }
