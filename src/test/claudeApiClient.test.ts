@@ -437,3 +437,16 @@ test('an unreadable credentials directory keeps the cached token instead of logg
     fs.chmodSync(dir, 0o700);
   }
 });
+
+test('the shared-quota identity read forwards its abort signal to the credential read', async () => {
+  const client = Object.create(ClaudeApiClient.prototype) as any;
+  client.quotaIdentitySalt = 'salt';
+  const controller = new AbortController();
+  let seen: AbortSignal | undefined;
+  client.loadCredentials = async (signal?: AbortSignal) => {
+    seen = signal;
+    return { claudeAiOauth: { accessToken: 'a', refreshToken: 'r' } };
+  };
+  assert.ok(await client.currentQuotaIdentitySignal(controller.signal));
+  assert.equal(seen, controller.signal);
+});

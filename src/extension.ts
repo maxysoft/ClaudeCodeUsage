@@ -5073,7 +5073,7 @@ export class ClaudeCodeUsageExtension {
         observedAt > since && observedAt <= now && now - observedAt < ttl;
       if (!current() || !store.observations.some((item) =>
         item.provider === 'claude' && fresh(item.observedAt))) return null;
-      const signal = await apiClient.currentQuotaIdentitySignal();
+      const signal = await apiClient.currentQuotaIdentitySignal(cancel);
       const sharedLabels = signal ? await this.quotaObservationRepository.loadScopeLabels() : [];
       if (!signal || !current()) return null;
       const fingerprint = fingerprintForStableIdentity(this.quotaFingerprintSalt, 'claude', signal);

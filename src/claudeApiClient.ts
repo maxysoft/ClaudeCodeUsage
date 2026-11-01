@@ -159,9 +159,9 @@ export class ClaudeApiClient {
    * matched before this window has a successful request of its own. It uses
    * the same credential read as the request path and never refreshes a token
    * or sends a request. */
-  async currentQuotaIdentitySignal(): Promise<string | null> {
+  async currentQuotaIdentitySignal(signal?: AbortSignal): Promise<string | null> {
     if (!this.quotaIdentitySalt) return null;
-    const refreshToken = (await this.loadCredentials())?.claudeAiOauth?.refreshToken;
+    const refreshToken = (await this.loadCredentials(signal))?.claudeAiOauth?.refreshToken;
     return typeof refreshToken === 'string' && refreshToken.length > 0
       ? claudeQuotaIdentitySignal(this.quotaIdentitySalt, refreshToken)
       : null;
