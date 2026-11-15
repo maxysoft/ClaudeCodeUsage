@@ -40,30 +40,6 @@ export function sanitizeCodexHourProof(value: unknown): CodexHourProof | undefin
   };
 }
 
-/** Return undefined on capacity exhaustion; callers must fail closed. */
-export function addCodexOutputHour(
-  hours: readonly number[],
-  timestamp: number,
-  outputTotal: number,
-): number[] | undefined {
-  if (!Number.isFinite(timestamp) || timestamp <= 0 ||
-      !Number.isSafeInteger(outputTotal) || outputTotal <= 0) return hours as number[];
-  const hour = Math.floor(timestamp / HOUR_MS);
-  if (!Number.isSafeInteger(hour) || hour <= 0) return hours as number[];
-  let low = 0;
-  let high = hours.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if (hours[mid] < hour) low = mid + 1;
-    else high = mid;
-  }
-  if (hours[low] === hour) return hours as number[];
-  if (hours.length >= MAX_CODEX_HOURS_PER_FILE) return undefined;
-  const next = [...hours];
-  next.splice(low, 0, hour);
-  return next;
-}
-
 /** Mutates only an owned working array; avoids copying it for every event. */
 export function addCodexOutputHourInPlace(
   hours: number[],

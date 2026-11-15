@@ -12,30 +12,6 @@ import {
 
 export type AdviceFormat = 'anthropic' | 'openai';
 
-/** Normalise an OpenAI-compatible chat endpoint URL. */
-function normalizeOpenAiUrl(url: string): string {
-  let u = (url || '').trim().replace(/\/+$/, '');
-  if (u === '') {
-    return 'https://api.deepseek.com/chat/completions';
-  }
-  if (/api\.deepseek\.com\/v1(\/chat\/completions)?$/.test(u)) {
-    u = u.replace('/v1', '');
-  }
-  if (!u.endsWith('/chat/completions')) {
-    u = `${u}/chat/completions`;
-  }
-  return u;
-}
-
-/** Normalise an Anthropic Messages endpoint URL. */
-function normalizeAnthropicUrl(url: string): string {
-  const u = (url || '').trim().replace(/\/+$/, '');
-  if (u === '' || /api\.anthropic\.com$/.test(u) || /chat\/completions$/.test(u)) {
-    return 'https://api.anthropic.com/v1/messages';
-  }
-  return u.endsWith('/v1/messages') ? u : `${u}/v1/messages`;
-}
-
 const CONNECT_PHASE_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ENOTFOUND',
@@ -228,19 +204,4 @@ export function buildOptimizerSystemPrompt(
     '===PROMPT===\n<the rewritten prompt, plain text>\n===SETTINGS===\n<the three settings lines>\n' +
     `Write the prompt and the reasons in ${language}.`
   );
-}
-
-/** Split the optimizer reply on the ===PROMPT=== / ===SETTINGS=== markers. */
-export function parseOptimizerOutput(raw: string): { prompt: string; settings: string } {
-  const text = (raw || '').trim();
-  const promptIdx = text.indexOf('===PROMPT===');
-  const settingsIdx = text.indexOf('===SETTINGS===');
-  if (promptIdx === -1 || settingsIdx === -1 || settingsIdx < promptIdx) {
-    // Marker-free or malformed: surface the whole thing as the prompt so the
-    // user still gets a usable result.
-    return { prompt: text, settings: '' };
-  }
-  const prompt = text.slice(promptIdx + '===PROMPT==='.length, settingsIdx).trim();
-  const settings = text.slice(settingsIdx + '===SETTINGS==='.length).trim();
-  return { prompt, settings };
 }

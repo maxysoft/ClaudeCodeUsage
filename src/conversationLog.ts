@@ -114,7 +114,7 @@ function summarizeInput(input: unknown): string {
 }
 
 function clip(text: string, max: number): { text: string; truncated: boolean } {
-  const t = text.replace(/\s+$/g, '');
+  const t = text.trimEnd();
   if (t.length <= max) {
     return { text: t, truncated: false };
   }

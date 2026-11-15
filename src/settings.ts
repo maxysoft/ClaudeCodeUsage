@@ -847,6 +847,40 @@ export const KNOWN_CONFIGURATION_SETTING_KEYS: readonly string[] = [
 
 const BY_KEY: Map<string, SettingDef> = new Map(SETTINGS.map((d) => [d.key, d]));
 
+function urlHost(value: unknown): string {
+  try {
+    return new URL(String(value).trim()).host.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/** What a dashboard write (`next` undefined = reset) must confirm host-side: a new AI advice host, or a deleted or replaced secret. */
+export function dashboardSettingRisk(
+  key: string,
+  current: () => unknown,
+  next?: unknown,
+): { host: string } | { secret: string; replace: boolean } | undefined {
+  const def = BY_KEY.get(key);
+  if (!def) {
+    throw new Error(`Unknown setting: ${key}`);
+  }
+  const value = next === undefined ? def.default : next;
+  if (def.storage === 'secret') {
+    const secret = String(value).trim();
+    const stored = String(current() ?? '').trim();
+    if (secret === '') {
+      return { secret: key, replace: false };
+    }
+    return stored !== '' && stored !== secret ? { secret: key, replace: true } : undefined;
+  }
+  if (key !== 'advice.apiUrl') {
+    return undefined;
+  }
+  const host = urlHost(value);
+  return host && host !== urlHost(current()) ? { host } : undefined;
+}
+
 /** A snapshot of one setting for the webview panel: definition + current value. */
 export interface SettingView extends SettingDef {
   value: boolean | number | string;

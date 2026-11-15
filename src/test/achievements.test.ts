@@ -13,7 +13,6 @@ import {
   fableAchievementSignals,
   longestActiveDayStreak,
   notifiableAchievementIds,
-  peakCalendarWeekProcessed,
   type AchievementFacts,
   type AchievementId,
 } from '../achievements';
@@ -714,21 +713,10 @@ test('Claude family awards accept exact known model IDs, not proxy substrings or
   }
 });
 
-test('calendar-week peak combines provider days once and rejects incomplete coverage', () => {
-  const rows = [
-    { day: '2026-12-28', processed: 200_000_000 },
-    { day: '2026-12-31', processed: 200_000_000 },
-    { day: '2027-01-01', processed: 150_000_000 },
-    { day: '2027-01-01', processed: 150_000_000 },
-    { day: '2027-01-04', processed: 999_000_000 },
-    { day: 'invalid', processed: 10_000_000_000 },
-    { day: '2027-01-05', processed: -1 },
-  ];
-  assert.equal(peakCalendarWeekProcessed(rows, true), 999_000_000);
-  assert.equal(peakCalendarWeekProcessed(rows, false), 0);
+test('weekly volume grants follow the supplied weekly peak', () => {
   const facts: AchievementFacts = {
     claudeTokens: 0, codexTokens: 0, activeDays: 0, claudeFamilies: [],
-    weeklyPeakProcessed: peakCalendarWeekProcessed(rows, true),
+    weeklyPeakProcessed: 999_000_000,
     codex: {},
   };
   const grants = new Map(evaluateAchievements(facts).map((result) => [result.id, result]));

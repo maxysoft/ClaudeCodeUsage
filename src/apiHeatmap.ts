@@ -432,7 +432,3 @@ export function buildApiHeatmapArtifact(daily: ApiHeatmapDaily, options: ApiHeat
   const markdown = `![${alt.replace(/[\r\n\[\]]/g, ' ')}](${filename})`;
   return { config, svg, summary, filename, markdown, cacheKey, dataQualitySignature };
 }
-
-export function renderApiHeatmapSvg(daily: ApiHeatmapDaily, options: ApiHeatmapOptions): string {
-  return buildApiHeatmapArtifact(daily, options).svg;
-}

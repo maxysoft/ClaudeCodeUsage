@@ -124,6 +124,7 @@ export interface QuotaObservationLoadResult {
   /** 'unreadable': the file may still hold history; it must not be overwritten. */
   disposition: 'missing' | 'valid' | 'quarantined' | 'unreadable';
   quarantinePath?: string;
+  droppedRows?: number;
 }
 
 export class QuotaObservationScopedClearBlockedError extends Error {
@@ -692,7 +693,11 @@ function parseObservation(value: unknown, now: number): QuotaObservationV2 | nul
   };
 }
 
-function parseStore(value: unknown, now: number): QuotaObservationStoreV2 | null {
+function parseStore(
+  value: unknown,
+  now: number,
+  dropped?: { rows: number },
+): QuotaObservationStoreV2 | null {
   const item = record(value);
   if (!item || !exactKeys(item, [
     'schemaVersion', 'fingerprintAlgorithm', 'observations',
@@ -702,12 +707,14 @@ function parseStore(value: unknown, now: number): QuotaObservationStoreV2 | null
     item.fingerprintAlgorithm !== 'hmac-sha256-v1' ||
     !Array.isArray(item.observations)
   ) return null;
-  const observations = item.observations.map((entry) => parseObservation(entry, now));
-  if (observations.some((entry) => entry === null)) {
-    return null;
+  const parsed = item.observations.map((entry) => parseObservation(entry, now));
+  const observations = parsed.filter((entry): entry is QuotaObservationV2 => entry !== null);
+  if (observations.length < parsed.length) {
+    if (!dropped) return null;
+    dropped.rows = parsed.length - observations.length;
   }
   const observationMap = new Map(
-    (observations as QuotaObservationV2[]).map((entry) => [observationIdentity(entry), entry]),
+    observations.map((entry) => [observationIdentity(entry), entry]),
   );
   return {
     schemaVersion: 2,
@@ -743,12 +750,17 @@ export async function loadQuotaObservationStore(
     return { store: createEmptyQuotaObservationStore(), disposition: 'unreadable' };
   }
   let store: QuotaObservationStoreV2 | null = null;
+  const dropped = { rows: 0 };
   try {
-    store = parseStore(JSON.parse(body) as unknown, now);
+    store = parseStore(JSON.parse(body) as unknown, now, dropped);
   } catch {
     // Corrupt JSON is quarantined below.
   }
-  if (store) return { store, disposition: 'valid' };
+  if (store) {
+    return dropped.rows > 0
+      ? { store, disposition: 'valid', droppedRows: dropped.rows }
+      : { store, disposition: 'valid' };
+  }
   if (options.quarantineInvalid === false) {
     return { store: createEmptyQuotaObservationStore(), disposition: 'unreadable' };
   }
@@ -901,6 +913,7 @@ async function fileIdentity(filePath: string): Promise<string | null> {
 export class QuotaObservationRepository {
   private snapshot: { identity: string; store: QuotaObservationStoreV2 } | undefined;
   private pending: Promise<void> = Promise.resolve();
+  onDroppedRows: (count: number) => void = () => undefined;
 
   constructor(
     private readonly filePath: string,
@@ -914,6 +927,12 @@ export class QuotaObservationRepository {
     return result;
   }
 
+  private async loadStore(quarantineInvalid?: boolean): Promise<QuotaObservationLoadResult> {
+    const loaded = await loadQuotaObservationStore(this.filePath, { now: this.now(), quarantineInvalid });
+    if (loaded.droppedRows) this.onDroppedRows(loaded.droppedRows);
+    return loaded;
+  }
+
   private scopeLabelPath(): string {
     return path.join(path.dirname(this.filePath), QUOTA_SCOPE_LABEL_FILE);
   }
@@ -924,27 +943,10 @@ export class QuotaObservationRepository {
     return (await readScopeLabels(this.scopeLabelPath())) ?? [];
   }
 
-  /** Adds the names a successful response used, newest first and bounded,
-   * under the store's lease so a concurrent clear cannot be undone. */
-  rememberScopeLabels(labels: readonly string[]): Promise<void> {
-    const fresh = [...new Set(labels.filter(validScopeLabel))];
-    if (fresh.length === 0) return Promise.resolve();
-    return this.serialized(async () => {
-      const known = await readScopeLabels(this.scopeLabelPath());
-      if (known === null || fresh.every((label) => known.includes(label))) return;
-      const lease = await acquireCodexIndexLease(this.filePath);
-      try {
-        await this.writeScopeLabels(fresh);
-      } finally {
-        await lease.release();
-      }
-    });
-  }
-
   /** Caller owns the observation lease throughout this write. */
   private async writeScopeLabels(
     labels: readonly string[],
-    shouldPersist: () => boolean = () => true,
+    shouldPersist: () => boolean,
   ): Promise<void> {
     const fresh = [...new Set(labels.filter(validScopeLabel))];
     if (fresh.length === 0 || !shouldPersist()) return;
@@ -957,9 +959,7 @@ export class QuotaObservationRepository {
   }
 
   load(): Promise<QuotaObservationStoreV2> {
-    return this.serialized(async () => (await loadQuotaObservationStore(this.filePath, {
-      now: this.now(),
-    })).store);
+    return this.serialized(async () => (await this.loadStore()).store);
   }
 
   /** A read-only snapshot, parsed again only after the shared file changes:
@@ -970,9 +970,7 @@ export class QuotaObservationRepository {
       // read later instead of hiding the newer file.
       const identity = await fileIdentity(this.filePath);
       if (identity !== null && this.snapshot?.identity === identity) return this.snapshot.store;
-      const { store } = await loadQuotaObservationStore(this.filePath, {
-        now: this.now(), quarantineInvalid: false,
-      });
+      const { store } = await this.loadStore(false);
       this.snapshot = identity === null ? undefined : { identity, store };
       return store;
     });
@@ -989,11 +987,11 @@ export class QuotaObservationRepository {
         if (!shouldPersist()) return createEmptyQuotaObservationStore();
         // Always re-read under the process-shared lease. A second VS Code
         // Extension Host may have committed observations since our last call.
-        const loaded = await loadQuotaObservationStore(this.filePath, {
-          now: this.now(),
-        });
+        const loaded = await this.loadStore();
         if (!writableAfter(loaded)) {
-          throw new Error(`quota-observation-store:${loaded.disposition}`);
+          throw Object.assign(new Error(`quota-observation-store:${loaded.disposition}`), {
+            code: `quota-observation-store-${loaded.disposition}`,
+          });
         }
         const current = loaded.store;
         if (!shouldPersist()) return cloneStore(current);
@@ -1027,9 +1025,7 @@ export class QuotaObservationRepository {
     return this.serialized(async () => {
       const lease = await acquireCodexIndexLease(this.filePath);
       try {
-        const loaded = await loadQuotaObservationStore(this.filePath, {
-          now: this.now(),
-        });
+        const loaded = await this.loadStore();
         const clearAll = scope.provider === undefined &&
           scope.accountFingerprint === undefined;
         const auxiliaries = await quotaObservationAuxiliaryNames(this.filePath);
@@ -1049,7 +1045,7 @@ export class QuotaObservationRepository {
           fingerprintAlgorithm: 'hmac-sha256-v1',
           observations,
         };
-        if (clearAll || observations.length !== current.observations.length) {
+        if (clearAll || observations.length !== current.observations.length || loaded.droppedRows) {
           await saveQuotaObservationStoreAtomic(this.filePath, next);
         }
         if (clearAll) {

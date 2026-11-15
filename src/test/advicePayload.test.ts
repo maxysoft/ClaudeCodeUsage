@@ -5,7 +5,6 @@ import {
   buildAdviceAggregateSnapshot,
   prepareAdvicePayload,
   previewAdvicePayload,
-  sendPreparedAdvicePayload,
 } from '../adviceEffectiveness/payload';
 import { payloadInputFixture, usageFixture } from './adviceTestFixtures';
 
@@ -23,22 +22,13 @@ test('defaults to aggregates-only and omits the promptSamples field entirely', (
   assert.equal(Object.prototype.hasOwnProperty.call(parsed, 'promptSamples'), false);
 });
 
-test('preview and sender consume the exact same canonical serialization', async () => {
+test('preview consumes the exact canonical serialization', () => {
   const input = payloadInputFixture();
   const before = JSON.stringify(input);
   const first = prepareAdvicePayload(input);
   const second = prepareAdvicePayload(input);
   const preview = previewAdvicePayload(first);
-  let captured: Uint8Array | undefined;
-  const result = await sendPreparedAdvicePayload(first, async (canonicalBytes, contentType, sha256) => {
-    captured = canonicalBytes;
-    assert.equal(contentType, 'application/json');
-    assert.equal(sha256, first.sha256);
-    return 'sent';
-  });
-  assert.equal(result, 'sent');
   assert.equal(preview.body, first.serializedBody);
-  assert.strictEqual(captured, first.canonicalBytes);
   assert.equal(Buffer.from(first.canonicalBytes).toString('utf8'), preview.body);
   assert.equal(preview.sha256, first.sha256);
   assert.equal(first.serializedBody, second.serializedBody);
@@ -47,14 +37,10 @@ test('preview and sender consume the exact same canonical serialization', async 
   assert.equal(JSON.stringify(input), before, 'payload preparation must not mutate input');
 });
 
-test('preview and sender reject any mutation of the sealed body, bytes, or digest', async () => {
+test('preview rejects any mutation of the sealed body, bytes, or digest', () => {
   const bodyMutation = prepareAdvicePayload(payloadInputFixture());
   bodyMutation.serializedBody = '{"mutated":true}';
   assert.throws(() => previewAdvicePayload(bodyMutation), /integrity check failed/);
-  await assert.rejects(
-    () => sendPreparedAdvicePayload(bodyMutation, async () => 'sent'),
-    /integrity check failed/,
-  );
 
   const byteMutation = prepareAdvicePayload(payloadInputFixture());
   byteMutation.canonicalBytes[0] ^= 1;

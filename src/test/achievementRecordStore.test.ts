@@ -306,7 +306,6 @@ test('old grants migrate quietly with unknown dates, once and within 64 KiB', as
     assert.equal(new Set(first.records.map((row: any) => row.seq)).size, 124);
     assert.ok(Buffer.byteLength(await readFile(file, 'utf8')) <= 65_536);
     assert.equal((await repository.initialize(['unknown-private-canary'])).records.length, 124, 'existing canonical state wins over stale legacy input');
-    assert.equal(api.recentAchievementRecords(first).length, 30);
   });
 });
 

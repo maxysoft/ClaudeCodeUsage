@@ -4700,7 +4700,7 @@ test('changing Claude profiles replaces the quota client and clears account stat
   };
   extension.statusBar = { updateQuota: (value: unknown) => quotaUpdates.push(value) };
   extension.webviewProvider = {
-    updateQuota: (value: unknown) => quotaUpdates.push(value),
+    clearQuota: () => quotaUpdates.push(null),
     updateWeeklyQuotaHistory: (value: unknown) => weeklyHistoryUpdates.push(value),
   };
   extension.context = { globalState: { get: () => undefined } };

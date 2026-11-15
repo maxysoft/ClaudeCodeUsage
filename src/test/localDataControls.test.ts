@@ -11,7 +11,6 @@ import {
   finiteTimestampRange,
   groupQuotaAccountEpochs,
   isLocalDataAction,
-  shouldClearQuotaObservation,
 } from '../localDataControls';
 import { LOCAL_DATA_COPY } from '../i18n';
 import type {
@@ -283,45 +282,6 @@ test('quota account epochs group deterministically while public scope fixtures h
   const serializedPublicOptions = JSON.stringify(publicOptions);
   assert.doesNotMatch(serializedPublicOptions, /accountFingerprint/);
   assert.doesNotMatch(serializedPublicOptions, /acct-(?:claude|codex)-.*private-canary/);
-});
-
-test('shouldClearQuotaObservation applies all, provider, account, and exact scopes', () => {
-  const claudeA = observation({
-    provider: 'claude',
-    accountFingerprint: 'acct-a',
-  });
-  const claudeB = observation({
-    provider: 'claude',
-    accountFingerprint: 'acct-b',
-  });
-  const codexA = observation({
-    provider: 'codex',
-    accountFingerprint: 'acct-a',
-  });
-
-  assert.equal(shouldClearQuotaObservation(claudeA, {}), true);
-  assert.equal(shouldClearQuotaObservation(codexA, {}), true);
-
-  assert.equal(shouldClearQuotaObservation(claudeA, { provider: 'claude' }), true);
-  assert.equal(shouldClearQuotaObservation(claudeB, { provider: 'claude' }), true);
-  assert.equal(shouldClearQuotaObservation(codexA, { provider: 'claude' }), false);
-
-  assert.equal(shouldClearQuotaObservation(claudeA, { accountFingerprint: 'acct-a' }), true);
-  assert.equal(shouldClearQuotaObservation(codexA, { accountFingerprint: 'acct-a' }), true);
-  assert.equal(shouldClearQuotaObservation(claudeB, { accountFingerprint: 'acct-a' }), false);
-
-  assert.equal(shouldClearQuotaObservation(claudeA, {
-    provider: 'claude',
-    accountFingerprint: 'acct-a',
-  }), true);
-  assert.equal(shouldClearQuotaObservation(claudeB, {
-    provider: 'claude',
-    accountFingerprint: 'acct-a',
-  }), false);
-  assert.equal(shouldClearQuotaObservation(codexA, {
-    provider: 'claude',
-    accountFingerprint: 'acct-a',
-  }), false);
 });
 
 test('source policy wires controls into Settings while preserving safe command allowlists', () => {

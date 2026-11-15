@@ -482,18 +482,3 @@ export function previewAdvicePayload(prepared: PreparedAdvicePayload): AdvicePay
     sha256: prepared.sha256,
   };
 }
-
-export type AdvicePayloadSender<T> = (
-  canonicalBytes: Uint8Array,
-  contentType: PreparedAdvicePayload['contentType'],
-  sha256: string,
-) => Promise<T>;
-
-/** This boundary deliberately cannot reserialize: it only receives the prepared bytes. */
-export async function sendPreparedAdvicePayload<T>(
-  prepared: PreparedAdvicePayload,
-  sender: AdvicePayloadSender<T>
-): Promise<T> {
-  assertPreparedAdvicePayloadIntegrity(prepared);
-  return sender(prepared.canonicalBytes, prepared.contentType, prepared.sha256);
-}

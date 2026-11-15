@@ -584,6 +584,7 @@ export class ClaudeCodeUsageExtension {
   private quotaFetchInFlight:
     { generation: number; pending: Promise<ClaudeApiUsageResponse | null> } | undefined;
   private claudeProfileGeneration: number = 0;
+  private sharedQuotaChecked: { generation: number; observedAt: number } | undefined;
   private quotaObservationGeneration: number = 0;
   private clearingQuotaHistory: boolean = false;
   private claudeWeeklyQuotaHistory: WeeklyQuotaObservation[] = [];
@@ -723,6 +724,8 @@ export class ClaudeCodeUsageExtension {
         path.join(context.globalStorageUri.fsPath, QUOTA_OBSERVATION_FILE),
         this.quotaFingerprintSalt,
       );
+    this.quotaObservationRepository.onDroppedRows = (count) =>
+      this.outputChannel.appendLine(`quota-history: dropped-rows=${count}`);
     this.quotaObservationStore = quotaRuntime?.store ??
       createEmptyQuotaObservationStore();
     this.apiClient = new ClaudeApiClient(
@@ -4021,7 +4024,7 @@ export class ClaudeCodeUsageExtension {
     this.cache.usageLimitsBackoffUntil = new Date(0);
     this.cache.usageLimitsFailStreak = 0;
     this.statusBar.updateQuota(null);
-    this.webviewProvider.updateQuota(null);
+    this.webviewProvider.clearQuota?.();
     this.claudeWeeklyQuotaHistory = [];
     this.activeClaudeQuotaFingerprint = fingerprintForStableIdentity(
       this.quotaFingerprintSalt,
@@ -4546,13 +4549,15 @@ export class ClaudeCodeUsageExtension {
   private handleCredentialsChange(): void {
     // The cached quota and any failure backoff belong to the previous
     // token/account. Clear both so a successful re-login retries immediately.
+    this.cache.usageLimits = null;
     this.cache.usageLimitsLastUpdate = new Date(0);
     this.cache.usageLimitsFailStreak = 0;
     this.cache.usageLimitsBackoffUntil = new Date(0);
     this.claudeProfileGeneration += 1;
     this.activeClaudeQuotaFingerprint = undefined;
-    this.statusBar.updateQuota(this.cache.usageLimits ?? null, null);
-    this.webviewProvider.updateQuotaPace?.(null);
+    this.statusBar.updateQuota(null, null);
+    this.webviewProvider.clearQuota?.();
+    this.webviewProvider.updateQuotaPace?.(null, null);
     this.claudeWeeklyQuotaHistory = [];
     this.webviewProvider.updateWeeklyQuotaHistory([]);
     void this.refreshData(false, 'credentials');
@@ -5033,7 +5038,11 @@ export class ClaudeCodeUsageExtension {
       // expired-window bypass so a just-rolled window can't trigger an immediate
       // refetch.
       this.cache.usageLimitsBackoffUntil = new Date(Date.now() + 30000);
-      await this.recordClaudeQuotaObservation(fetched, observedAt, current).catch(() => undefined);
+      await this.recordClaudeQuotaObservation(fetched, observedAt, current).catch((error: unknown) => {
+        // Code or name only: an error message can carry a path.
+        const { code, name } = (error ?? {}) as { code?: unknown; name?: unknown };
+        this.outputChannel.appendLine(`quota-history: write-failed=${String(code ?? name ?? 'unknown')}`);
+      });
       return current() ? fetched : this.cache.usageLimits;
     }
     if (apiClient.lastFetchCredentialsUnavailable) {
@@ -5071,11 +5080,16 @@ export class ClaudeCodeUsageExtension {
       const now = Date.now();
       const fresh = (observedAt: number): boolean =>
         observedAt > since && observedAt <= now && now - observedAt < ttl;
-      if (!current() || !store.observations.some((item) =>
-        item.provider === 'claude' && fresh(item.observedAt))) return null;
+      const newest = store.observations.reduce((max, item) =>
+        item.provider === 'claude' && fresh(item.observedAt) ? Math.max(max, item.observedAt) : max, 0);
+      const checked = this.sharedQuotaChecked;
+      if (!current() || newest === 0 ||
+        (checked?.generation === profileGeneration && newest <= checked.observedAt)) return null;
       const signal = await apiClient.currentQuotaIdentitySignal(cancel);
       const sharedLabels = signal ? await this.quotaObservationRepository.loadScopeLabels() : [];
-      if (!signal || !current()) return null;
+      if (!current()) return null;
+      this.sharedQuotaChecked = { generation: profileGeneration, observedAt: newest };
+      if (!signal) return null;
       const fingerprint = fingerprintForStableIdentity(this.quotaFingerprintSalt, 'claude', signal);
       const shared = latestClaudeQuotaUsage(
         store,

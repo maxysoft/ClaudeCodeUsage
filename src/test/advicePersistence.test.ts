@@ -1,8 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 
-import { compareAdviceEffectiveness } from '../adviceEffectiveness/comparison';
-
 import {
   ADVICE_LOCAL_STATE_KEY,
   ADVICE_LOCAL_STATE_VERSION,
@@ -19,10 +17,9 @@ import {
   saveAdviceLocalState,
   snoozeAdviceRecommendation,
   resumeAdviceRecommendation,
-  selectStoredComparablePairLineage,
-  toComparableTaskPairs,
   upsertAdviceLocalFeedback,
 } from '../adviceEffectiveness/versionedPersistence';
+import { toComparableTaskPairs } from '../adviceEffectiveness/comparisonPairing';
 import {
   AdviceComparisonResultEnvelope,
   buildAdviceComparisonResultEnvelope,
@@ -545,42 +542,6 @@ test('comparable-pair persistence accepts only coarse enums, finite numbers, and
   const invalidNumber = comparablePair();
   invalidNumber.metric.afterValue = Number.NaN;
   assert.equal(appendStoredComparablePair(state, invalidNumber).ok, false);
-});
-
-test('comparison lineage spans rotating advice instances while preserving strict cohort checks', () => {
-  const acrossDays = Array.from({ length: 5 }, (_, index) => {
-    const pair = comparablePair();
-    pair.pairId = `pair-day-${index + 1}`;
-    pair.adviceId = `advice-codex-30d-day-${index + 1}`;
-    return pair;
-  });
-  const otherRecommendation = comparablePair();
-  otherRecommendation.pairId = 'pair-other-recommendation';
-  otherRecommendation.recommendationId = 'recommendation-other';
-  const otherProvider = comparablePair();
-  otherProvider.pairId = 'pair-other-provider';
-  otherProvider.context.provider = 'claude';
-
-  const selected = selectStoredComparablePairLineage(
-    [...acrossDays, otherRecommendation, otherProvider],
-    { provider: 'codex', recommendationId: 'recommendation-1' },
-  );
-  assert.deepEqual(selected.map((pair) => pair.adviceId), acrossDays.map((pair) => pair.adviceId));
-  assert.equal(compareAdviceEffectiveness(toComparableTaskPairs(selected)).status, 'improved');
-
-  const mixedTask = comparablePair();
-  mixedTask.pairId = 'pair-mixed-task';
-  mixedTask.adviceId = 'advice-codex-30d-later-day';
-  mixedTask.context.taskKind = 'feature';
-  const withMixedCohort = selectStoredComparablePairLineage(
-    [...acrossDays, mixedTask],
-    { provider: 'codex', recommendationId: 'recommendation-1' },
-  );
-  assert.equal(
-    compareAdviceEffectiveness(toComparableTaskPairs(withMixedCohort)).status,
-    'insufficient-evidence',
-    'lineage selection must not silently drop an incomparable task cohort',
-  );
 });
 
 test('legacy exact v2 state migrates in-place to the same ledger with empty comparison results', async () => {

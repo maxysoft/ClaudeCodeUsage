@@ -246,12 +246,3 @@ export function groupQuotaAccountEpochs(
     left.accountFingerprint.localeCompare(right.accountFingerprint),
   );
 }
-
-export function shouldClearQuotaObservation(
-  observation: QuotaObservationStoreV2['observations'][number],
-  scope: ResolvedQuotaScope,
-): boolean {
-  return (scope.provider === undefined || observation.provider === scope.provider) &&
-    (scope.accountFingerprint === undefined ||
-      observation.accountFingerprint === scope.accountFingerprint);
-}

@@ -949,3 +949,13 @@ test('the dashboard panel may load local resources only from the bundled badge d
     assert.equal(path.dirname(achievementImagePath(id as keyof typeof ACHIEVEMENT_IMAGE_FILES)), roots[0], id);
   }
 });
+
+test('clearQuota withdraws the previous account quota that a failed fetch keeps', () => {
+  const p = provider();
+  p.panel = undefined;
+  p.updateQuota({ seven_day: { utilization: 25, resets_at: '2026-10-07T12:00:00Z' } });
+  p.updateQuota(null);
+  assert.notEqual(p.usageLimits, null, 'a failed fetch keeps the last value');
+  p.clearQuota();
+  assert.equal(p.usageLimits, null);
+});

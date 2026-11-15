@@ -2,6 +2,8 @@
 
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import { renderMarkdown } from '../miniMarkdown';
 
@@ -69,4 +71,59 @@ test('a lone pipe line is not treated as a table', () => {
   const html = renderMarkdown('a | b is just text');
   assert.ok(!html.includes('<table>'));
   assert.ok(html.includes('<p>'));
+});
+
+// A regression here is a synchronous infinite loop that node:test timeouts cannot interrupt, so render in a bounded worker.
+function renderInWorker(src: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      "const { parentPort, workerData } = require('node:worker_threads');" +
+        'parentPort.postMessage(require(workerData.mod).renderMarkdown(workerData.src));',
+      {
+        eval: true,
+        workerData: { mod: path.join(__dirname, '..', 'miniMarkdown'), src },
+        resourceLimits: { maxOldGenerationSizeMb: 64 },
+      },
+    );
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error('renderMarkdown did not return'));
+    }, 10000);
+    worker.once('message', (html: string) => {
+      clearTimeout(timer);
+      resolve(html);
+    });
+    worker.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+test('a fence opener with U+2028 terminates and still opens a fence', async () => {
+  assert.equal(await renderInWorker('```js\u2028x\ncode\n```\nafter'), '<pre><code>code</code></pre>\n<p>after</p>');
+});
+
+test('a heading line with U+2028 terminates and still renders as a heading', async () => {
+  assert.equal(await renderInWorker('# a\u2028b\nnext'), '<h1>a\u2028b</h1>\n<p>next</p>');
+});
+
+test('NUL in input is replaced and never resolves an internal placeholder', () => {
+  assert.equal(renderMarkdown('`c` x\u00000\u0000 y\u00009\u0000'), '<p><code>c</code> x\uFFFD0\uFFFD y\uFFFD9\uFFFD</p>');
+});
+
+test('links keep _ and * intact in href and text', () => {
+  const url = 'https://x.io/a_b_c/d*e*f';
+  assert.ok(renderMarkdown(`[t](${url}) _em_`).includes(`<a href="${url}">t</a> <em>em</em>`));
+  assert.ok(renderMarkdown('[**b**](https://x.io/a_b)').includes('<a href="https://x.io/a_b"><strong>b</strong></a>'));
+  assert.ok(renderMarkdown('[x](javascript:a_b_c)').includes('x (javascript:a_b_c)'));
+  assert.ok(renderMarkdown('[`a_b`](https://x.io)').includes('<a href="https://x.io"><code>a_b</code></a>'));
+});
+
+test('a link URL never captures an inline code span', () => {
+  assert.equal(renderMarkdown('[t](https://x.io/`a`)'), '<p>[t](https://x.io/<code>a</code>)</p>');
+});
+
+test('a rejected-scheme link URL is escaped exactly once', () => {
+  assert.equal(renderMarkdown('[x](javascript:<b>&)'), '<p>x (javascript:&lt;b&gt;&amp;)</p>');
 });

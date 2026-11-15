@@ -1,6 +1,6 @@
 # Audit record: ClaudeCodeUsage fork
 
-Repo `maxysoft/ClaudeCodeUsage`. Current version v2.18.0, HEAD `a185731`. Rounds: 2026-10-04, 2026-10-18, 2026-10-20, 2026-11-01, 2026-11-14. This file replaces every earlier `.audit/` working file.
+Repo `maxysoft/ClaudeCodeUsage`. Current version v2.18.1, HEAD fix branch `fix/audit-2026-11-14` at `2a474ef` (plus this audit commit). Rounds: 2026-10-04, 2026-10-18, 2026-10-20, 2026-11-01, 2026-11-14, 2026-11-15. This file replaces every earlier `.audit/` working file.
 
 ## Header
 
@@ -11,8 +11,9 @@ Repo `maxysoft/ClaudeCodeUsage`. Current version v2.18.0, HEAD `a185731`. Rounds
 | 2026-10-20 | Delta review `2c07bd4..027304d` (Opus only, Fable denied) | `2c07bd4` | `64c8f2b`, `68a51d9`, `027304d`, then the 2026-11-01 builders; squashed into `4291292` |
 | 2026-11-01 | Fix round for 2026-10-20 items, review `027304d..820f0a2`, final verify at `fa5dad0`, review of the upstream v2.5.1 merge | `027304d`, merge `c5a18f4` | `f9db6ce`, `a62a602`, `5dfdd1f`, `820f0a2`, `55a2b90`, `fa5dad0`, `399c4e8`, `48566dc` squashed into `4291292`; merge F1/F2 fixed by `a185731` |
 | 2026-11-14 | Webview security surface (handler 2640-3341 and sinks, `miniMarkdown.ts`) never read before, plus status of all older ids at HEAD. Audit only, no code changed | `a185731` | none |
+| 2026-11-15 | Fix of the 12 issues from 2026-11-14 plus review of the fix branch | `33d5a29` | `406dedb`, `a27c86c`, `c30d06d`, `b659146`, `5437149`, `fb73adb`, `5f170c4`, `753ec45`, `0dbb364`, `8f76b2f`, `73968b7`, `0961643`, `acf7228`, `3a56763`, `9a5363d`, `d7631ff`, `dd6307b`, `8c37baf`, `6658137`, `0dba2e2`, `6c24e00`, `baf8c5b`; release `2a474ef` (v2.18.1) |
 
-Process: each unit read by an Opus and a Fable reader (some slots denied by the auto-mode classifier), arbitration by a fresh Opus agent, TypeSafe (Jev) for severity and fix-now, Astra for security-sensitive hunks, main verified every finding in code. Machine checks (tsc, node suite in Docker, osv-scanner) ran first. Outcomes below follow the 2026-11-14 status check (`open-items.md`) and its triage.
+Process: each unit read by an Opus and a Fable reader (some slots denied by the auto-mode classifier), arbitration by a fresh Opus agent, TypeSafe (Jev) for severity and fix-now, Astra for security-sensitive hunks, main verified every finding in code. 2026-11-15: four builders in worktrees (Opus: markdown, webview security, quota; Sonnet: dead code), one Sonnet risk hunt, Opus + Fable readers on markdown, webview and quota, Fable only on the dead-code deletion, Jev for 12 findings plus the version choice, Astra twice (round 1 and fix-round final look). Maintainer decision on issue 3: keep API-key entry in the dashboard, with an extension-side modal on advice.apiUrl host change and on secret delete/replace. Machine checks (tsc, node suite in Docker, osv-scanner) ran first. Outcomes below follow the 2026-11-14 status check (`open-items.md`) and its triage.
 
 Ids are prefixed by round. Round-1 findings of the fix-branch review are `1018-R*` (Jev's F1-F13 numbering cannot be mapped one-to-one from the files, so they are keyed by location). `1018-A*` and `1018-B*` come from ledgers A and B. Raised-by codes in `1018-A*`/`1018-B*`: CD claude-data-opus, CX codex-fable, WV webview-a-fable, AO/AF achievements opus/fable, HO/HF host opus/fable, AdO/AdF advice opus/fable (verbatim from the ledgers; `BOTH` means both readers of the unit). Severity is the final one after arbiter and Jev; Fable-vs-Opus differences are noted in the column.
 
@@ -21,13 +22,14 @@ Ids are prefixed by round. Round-1 findings of the fix-branch review are `1018-R
 | Round | fixed | deferred | rejected-noise | won't fix | total |
 | --- | --- | --- | --- | --- | --- |
 | 1004 | 10 | 2 | 0 | 0 | 12 |
-| 1018 | 73 | 96 | 4 | 2 | 175 |
+| 1018 | 80 | 89 | 4 | 2 | 175 |
 | 1020 | 8 | 0 | 0 | 0 | 8 |
-| 1101 | 8 | 4 | 1 | 0 | 13 |
-| 1114 | 0 | 8 | 0 | 0 | 8 |
-| all | 99 | 110 | 5 | 2 | 216 |
+| 1101 | 11 | 1 | 1 | 0 | 13 |
+| 1114 | 8 | 0 | 0 | 0 | 8 |
+| 1115 | 9 | 4 | 1 | 0 | 14 |
+| all | 126 | 96 | 6 | 2 | 230 |
 
-The 1018 count is 175: 153 ledger ids (7 HIGH, 39 MEDIUM, 107 LOW), 4 merge rows, 15 round-1 review rows and 3 builder open notes (`1018-N*`, not reader findings). The 1101 row counts the 2026-11-01 review (7) and the v2.5.1 merge review (6).
+The 1018 count is 175: 153 ledger ids (7 HIGH, 39 MEDIUM, 107 LOW), 4 merge rows, 15 round-1 review rows and 3 builder open notes (`1018-N*`, not reader findings). The 1101 row counts the 2026-11-01 review (7) and the v2.5.1 merge review (6). The 1114 and 1115 rows count the 2026-11-14 audit (8) and the 2026-11-15 round (14). On 2026-11-15 the 12 issues of 2026-11-14 flipped 14 existing rows to fixed: all 8 `1114-*`, plus `1018-B26`, `1018-B31`, `1018-B55`, `1101-merge-F3`, `1101-merge-F4`, `1101-merge-F5` (issue 8 matches both `1114-L1` and `1018-B55`; issue 9 matches `1114-L2` and `1101-merge-F4`). No issue lacked a row.
 
 ## Findings
 
@@ -98,12 +100,12 @@ Outcome is one of fixed, deferred, rejected-noise, won't fix. Gone (code deleted
 | 1018-A49 | src/providers/codex/codexIndexLease.ts:73,346 | LOW | CX | deferred | Windows EPERM rename not in isPublishConflict path |
 | 1018-A50 | src/providers/codex/codexManifest.ts:151 | LOW | CX | deferred | sequential lstat per file each refresh |
 | 1018-A51 | src/providers/codex/codexIndexStorage.ts:13,43,81 | LOW | CX | deferred | unused/passthrough timeZone param; all-keys checkpoint adoption (unverified) |
-| 1018-A52 | src/providers/codex/codexInsights.ts:193 | LOW | CX | deferred | pasteReadyConstraint test-only |
+| 1018-A52 | src/providers/codex/codexInsights.ts:193 | LOW | CX | fixed | pasteReadyConstraint test-only; deleted in 9a5363d (2026-11-15) |
 | 1018-A53 | src/codexView.ts | LOW | CX | deferred | re-export shim remains |
 | 1018-A54 | src/providers/codex/codexIndex.ts:3804,3843 | LOW | CX | deferred | schema 1/2 migration types remain |
 | 1018-A55 | src/codexIndex.ts | LOW | CX | fixed | no sequential/parallel duplicate loops remain |
 | 1018-A56 | src/providers/codex/codexIndexLease.ts:26,149,227 | LOW | CX | deferred | legacy single-file lock shim remains |
-| 1018-A57 | src/providers/codex/codexIdentity.ts:450 | LOW | CX | deferred | loadCodexSessionTitles test-only |
+| 1018-A57 | src/providers/codex/codexIdentity.ts:450 | LOW | CX | fixed | loadCodexSessionTitles test-only; deleted in 9a5363d (2026-11-15) |
 | 1018-A58 | src/providers/codex/codexFilePassPool.ts:270 | LOW | CX | deferred | terminate failure plumbing remains (unverified) |
 | 1018-A59 | src/providers/codex/codexProvider.ts:398-399 | LOW | CX | deferred | unverified branch computes full proof snapshot then discards hours |
 | 1018-A60 | src/webview.ts:3947,3969,3993,4381,4491 | LOW | WV | deferred | CSP script-src unsafe-inline on all documents |
@@ -121,7 +123,7 @@ Outcome is one of fixed, deferred, rejected-noise, won't fix. Gone (code deleted
 | 1018-A72 | src/webview.ts:18438-18440 | LOW | WV | deferred | per-date chartMetrics keys never pruned |
 | 1018-A73 | src/webview.ts:18972-18974 | LOW | WV | deferred | I18n strings interpolated raw into JS single-quoted literals |
 | 1018-A74 | src/achievementCalendar.ts:326 | LOW | AO+AF | fixed | codexAchievementDayEvidence + validCanonicalFiles test-only; ~40 lines. Upstream-owned. Fixed in 4291292. |
-| 1018-A75 | src/providers/codex/codexHourProof.ts:44 | LOW | AO+AF | deferred | addCodexOutputHour test-only copy |
+| 1018-A75 | src/providers/codex/codexHourProof.ts:44 | LOW | AO+AF | fixed | addCodexOutputHour test-only copy; deleted in 9a5363d (2026-11-15) |
 | 1018-A76 | src/achievementMoneyScopes.ts:245-250 | LOW | AO | deferred | per-date signature map remains |
 | 1018-A77 | src/achievementRecordStore.ts:19 | LOW | AO+AF (apiHeatmap.ts:411) | deferred | V2 constant duplicate remains |
 | 1018-A78 | src/heatmapSvg.ts:137; combinedHeatmapSvg.ts:121 | LOW | AO+AF (achievementShare.ts:57) | deferred | compactNum duplicate |
@@ -161,18 +163,18 @@ Outcome is one of fixed, deferred, rejected-noise, won't fix. Gone (code deleted
 | 1018-B23 | src/adviceEffectiveness/versionedPersistence.ts:236,324,352,457 | LOW | AO17, AF5 | deferred | every mutation helper re-runs full parseCurrentState |
 | 1018-B24 | src/httpClient.ts:47 / src/advisor.ts:51 (redirect) | LOW | AO3, AF4 | fixed | requestViaFetch uses default redirect:'follow'; undici strips Authorization but not x-api-key on... Fixed in 4291292. |
 | 1018-B25 | src/settings.ts:938,956 | LOW | HO7 | deferred | empty workspace advice.apiKey plus legacy key throws legacy-secret-conflict forever |
-| 1018-B26 | src/extension.ts:4546-4551 | LOW | HO11 | deferred | handleCredentialsChange keeps cache.usageLimits and redisplays it via statusBar.updateQuota |
+| 1018-B26 | src/extension.ts:4546-4551 | LOW | HO11 | fixed | handleCredentialsChange keeps cache.usageLimits and redisplays it via statusBar.updateQuota Fixed 2026-11-15 in 753ec45, 0dbb364: dashboard `clearQuota()` on credentials change; webview keeps last value on fetch failure by design. |
 | 1018-B27 | src/extension.ts / preparedRequest.ts | LOW | HO12 | fixed | recordClaudeQuotaObservation rejection no longer drops fresh quota (now swallowed, see F3) |
 | 1018-B28 | src/extension.ts:2406,2416 | LOW | HO13, HF20 | deferred | onDidChangeConfiguration/onDidChangeWorkspaceFolders disposables not pushed to subscriptions |
 | 1018-B29 | src/statusBar.ts:113 | LOW | HO15 | deferred | setProvider re-renders on every call, no unchanged early return |
 | 1018-B30 | src/extension.ts:1536 | LOW | HO17 | deferred | Undecided status at 2026-11-14: codex re-derive not traced |
-| 1018-B31 | src/quotaObservationStore.ts:788-799 | LOW | HO18 | deferred | one bad row makes parseStore return null, quarantining all history |
+| 1018-B31 | src/quotaObservationStore.ts:788-799 | LOW | HO18 | fixed | one bad row makes parseStore return null, quarantining all history Fixed 2026-11-15 in 8f76b2f, 73968b7: invalid rows dropped, rest of history kept. |
 | 1018-B32 | src/extension.ts:878 | LOW | HO19 | deferred | Undecided status at 2026-11-14: clear flag ordering not traced |
 | 1018-B33 | src/statusBar.ts:434,648,775 | LOW | HO20, HF17 | deferred | Undecided status at 2026-11-14: label escaped; display_name/surface not traced |
 | 1018-B34 | src/extension.ts:4704 | LOW | HO21 | deferred | Undecided status at 2026-11-14: blur watcher recreate not traced |
 | 1018-B35 | src/quotaObservationStore.ts:635 | LOW | HO24 | fixed | deriveQuotaResetEvents + helpers have no production caller (machine check). ~75 lines. Fixed in 4291292. |
 | 1018-B36 | src/backgroundWorkState.ts:451 (+58-69, 293-295, 325-333; resourceOwnership.ts:3 | LOW | HO25, HF26 | fixed | pauseBackgroundWork / 'user' pause / 'user-pause' stop condition unreachable;... Fixed in 4291292. |
-| 1018-B37 | src/localDataControls.ts:250 | LOW | HO26, HF22 | deferred | shouldClearQuotaObservation test-only |
+| 1018-B37 | src/localDataControls.ts:250 | LOW | HO26, HF22 | fixed | shouldClearQuotaObservation test-only; deleted in 9a5363d (2026-11-15) |
 | 1018-B38 | src/statusBar.ts:61, 379, 383, 427, 445-465, 471-475 + quotaPaceAdapters.ts:60-7 | LOW | HO27, HF14, HF15 | fixed | previousPace never supplied, adapters' continuous() always true; hasRawClaudePaceNumber duplicates... Fixed in 4291292. |
 | 1018-B39 | src/claudeApiClient.ts:283-286 | LOW | HO28, HF19 | fixed | getAccessToken() has no caller; only public method returning the raw OAuth token. Delete. Fixed in 4291292. |
 | 1018-B40 | src/extension.ts:673-674 | LOW | HO29 | deferred | settings?/quotaRuntime? optional fallbacks test-only |
@@ -190,7 +192,7 @@ Outcome is one of fixed, deferred, rejected-noise, won't fix. Gone (code deleted
 | 1018-B52 | src/extension.ts (50 getConfiguration( calls) | LOW | HF32 | deferred | settings read inside hot closures |
 | 1018-B53 | src/adviceEffectiveness/remoteAdvice.ts:161 | LOW | AO19, AF6 | deferred | catch discards HTTP status; all failures read "transport failed" |
 | 1018-B54 | src/optimizerRequest.ts:58-75 | LOW | AO21, AF8 | deferred | strict parser no CRLF/dash normalisation |
-| 1018-B55 | src/advisor.ts:16 | LOW | AO11, AF15 | deferred | Undecided status at 2026-11-14: unused url normalisers not traced |
+| 1018-B55 | src/advisor.ts:16 | LOW | AO11, AF15 | fixed | Undecided status at 2026-11-14: unused url normalisers not traced Fixed 2026-11-15 in 9a5363d: url normalisers deleted. |
 | 1018-B56 | src/versionedPersistence.ts:5 | LOW | AO12, AF16 | deferred | Undecided status at 2026-11-14: unused import not traced |
 | 1018-B57 | src/adviceEffectiveness/* | LOW | AO13, AF19 | deferred | guard helpers copy-pasted across modules |
 | 1018-B58 | src/preparedRequest.ts:87 | LOW | AO16, AF20 | deferred | Undecided status at 2026-11-14: seal/rehash not traced |
@@ -239,38 +241,52 @@ Outcome is one of fixed, deferred, rejected-noise, won't fix. Gone (code deleted
 | 1101-AS1 | src/claudeApiClient.ts:125 | MEDIUM | Astra (main rates LOW) | fixed | existsSync before readFile misclassifies absence; read directly, ENOENT = absence (fa5dad0). |
 | 1101-merge-F1 | LOCAL-DATA.md:24, LOCAL-DATA.zh-CN.md:42 | HIGH | Fable | fixed | Docs still said expired token is refreshed and written back; corrected (a185731). |
 | 1101-merge-F2 | src/claudeApiClient.ts:162 | MEDIUM | Opus, Fable, Astra (LOW) | fixed | currentQuotaIdentitySignal had no abort signal so blur/settings change waited on Keychain prompt; signal forwarded (a185731). |
-| 1101-merge-F3 | src/extension.ts:5036 | MEDIUM | Fable (LOW) | deferred | recordClaudeQuotaObservation rejection swallowed with no log; still open at 2026-11-14. |
-| 1101-merge-F4 | src/quotaObservationStore.ts:929 | LOW | Opus, Fable | deferred | rememberScopeLabels has no production caller (dead upstream API); still open. |
-| 1101-merge-F5 | src/extension.ts:5076 | MEDIUM | Opus (LOW) | deferred | adoptSharedQuota re-reads credentials every tick on foreign fresh observation; still open. |
+| 1101-merge-F3 | src/extension.ts:5036 | MEDIUM | Fable (LOW) | fixed | recordClaudeQuotaObservation rejection swallowed with no log; still open at 2026-11-14. Fixed 2026-11-15 in acf7228: quota history write failures logged by error code. |
+| 1101-merge-F4 | src/quotaObservationStore.ts:929 | LOW | Opus, Fable | fixed | rememberScopeLabels has no production caller (dead upstream API); still open. Fixed 2026-11-15 in d7631ff: rememberScopeLabels removed. |
+| 1101-merge-F5 | src/extension.ts:5076 | MEDIUM | Opus (LOW) | fixed | adoptSharedQuota re-reads credentials every tick on foreign fresh observation; still open. Fixed 2026-11-15 in 0dba2e2: credentials read once per new shared reading. |
 | 1101-merge-A1 | src/claudeApiClient.ts (loadCredentials) | LOW | Astra | deferred | Credential file read has no size limit; not triaged by Jev, not fixed. |
-| 1114-X1 | src/dataLoader.ts:787 (findSessionFiles via webview.ts:3174) | HIGH (arbiter+Astra MEDIUM) | Fable (MED), Opus (LOW) | deferred | Delete trashes every projects/**/<sessionId> dir, so id memory/subagents trashes auto-memory dirs; report only. |
-| 1114-X2 | src/webview.ts:3220-3250 | HIGH (arbiter+Astra MEDIUM) | Opus (MED), Fable (LOW) | deferred | updateSetting/resetSetting accept any key incl. advice.apiUrl and secrets; advice send has no host confirmation; report only. |
-| 1114-X3 | src/miniMarkdown.ts:63-172 | MEDIUM | Fable | deferred | U+2028/U+2029 in fence/heading line: renderMarkdown never terminates, host OOM (proven by run); report only. |
-| 1114-X4 | src/webview.ts:3145 | LOW | Fable | deferred | resumeSession cwd taken from message, not host record. |
-| 1114-X5 | src/miniMarkdown.ts:40-44 | LOW | Opus, Fable | deferred | Emphasis regex rewrites inside generated href. |
-| 1114-X6 | src/miniMarkdown.ts:47 | LOW | Opus, Fable | deferred | NUL placeholder collision renders "undefined" or duplicates a code span. |
-| 1114-L1 | src/advisor.ts:13-37 | LOW | main (tsc strict) | deferred | normalizeOpenAiUrl/normalizeAnthropicUrl unused (same as 1018-B55). |
-| 1114-L2 | src/webview.ts:154-155; src/projectUsageMatrix.ts:178,209 | LOW | main | deferred | Unused imports and ~10 production functions only tests call (unused-exports.txt). |
+| 1114-X1 | src/dataLoader.ts:787 (findSessionFiles via webview.ts:3174) | HIGH (arbiter+Astra MEDIUM) | Fable (MED), Opus (LOW) | fixed | Delete trashes every projects/**/<sessionId> dir, so id memory/subagents trashes auto-memory dirs; report only. Fixed 2026-11-15 in c30d06d: directory match needs UUID id plus sibling `<id>.jsonl`; dialog text and view title come from extension data. |
+| 1114-X2 | src/webview.ts:3220-3250 | HIGH (arbiter+Astra MEDIUM) | Opus (MED), Fable (LOW) | fixed | updateSetting/resetSetting accept any key incl. advice.apiUrl and secrets; advice send has no host confirmation; report only. Fixed 2026-11-15 in b659146, 5437149, fb73adb: extension-side modal on advice.apiUrl host change and on secret delete/replace, unknown keys caught, setting messages serialized. |
+| 1114-X3 | src/miniMarkdown.ts:63-172 | MEDIUM | Fable | fixed | U+2028/U+2029 in fence/heading line: renderMarkdown never terminates, host OOM (proven by run); report only. Fixed 2026-11-15 in 406dedb, a27c86c: paragraph loop always advances; fence/heading regexes use the `s` flag. |
+| 1114-X4 | src/webview.ts:3145 | LOW | Fable | fixed | resumeSession cwd taken from message, not host record. Fixed 2026-11-15 in 3a56763: cwd and sameProject come from extension session data. |
+| 1114-X5 | src/miniMarkdown.ts:40-44 | LOW | Opus, Fable | fixed | Emphasis regex rewrites inside generated href. Fixed 2026-11-15 in dd6307b, 8c37baf: emphasis rules no longer touch generated links. |
+| 1114-X6 | src/miniMarkdown.ts:47 | LOW | Opus, Fable | fixed | NUL placeholder collision renders "undefined" or duplicates a code span. Fixed 2026-11-15 in 6658137: U+0000 replaced by U+FFFD on input. |
+| 1114-L1 | src/advisor.ts:13-37 | LOW | main (tsc strict) | fixed | normalizeOpenAiUrl/normalizeAnthropicUrl unused (same as 1018-B55). Fixed 2026-11-15 in 9a5363d: helpers deleted. |
+| 1114-L2 | src/webview.ts:154-155; src/projectUsageMatrix.ts:178,209 | LOW | main | fixed | Unused imports and ~10 production functions only tests call (unused-exports.txt). Fixed 2026-11-15 in 9a5363d, d7631ff: test-only production functions deleted, tests retargeted. |
+| 1115-1 | src/settings.ts:869 | MEDIUM | Opus, Fable | fixed | Replace of a stored key needs a modal. 5437149. |
+| 1115-2 | src/webview.ts settings handler | LOW/MEDIUM (Jev split, Astra MEDIUM) | Fable, Astra | fixed | Setting messages handled one at a time (race). fb73adb; Astra final look: resolved. |
+| 1115-3 | src/webview.ts:2735 | MEDIUM | Opus | fixed | clearAdviceLocalData confirmed by an extension-side local-data modal; client `window.confirm` removed. 5f170c4. |
+| 1115-4 | src/quotaObservationStore.ts:752,1042 | MEDIUM | Opus, Fable | fixed | Dropped rows counted and logged; scoped clear rewrites the file. 73968b7; LOCAL-DATA.md in 0961643. |
+| 1115-5 | src/extension.ts:4550 | MEDIUM (Jev) | Opus | deferred | Same-account token rotation blanks the quota and it stays blank during 429 backoff. No account id exists before a fetch; blank is the safe side; this is the audit's approved fix. |
+| 1115-6 | src/extension.ts:5084 | LOW | Opus | rejected-noise | Marker keyed on pre-lease observedAt only skips one reuse; own fetch still runs (Jev real 0.23). |
+| 1115-7 | src/test/quotaWindowSharing.test.ts | LOW | Opus | deferred | No test for marker reset on generation bump; Fable traced both bump sites (Jev real 0.30). |
+| 1115-8 | src/miniMarkdown.ts:33 | LOW | Opus, Fable | fixed | Code span inside a link URL. a27c86c. |
+| 1115-9 | src/miniMarkdown.ts:33,100,193 | LOW (Jev 0.67 MEDIUM lean, conf 0.5) | Opus, Fable | deferred | Quadratic link, heading and table regexes; bounded by the 4000-char turn cap (10-12 ms per turn). |
+| 1115-10 | src/miniMarkdown.ts:73,100 | LOW | Fable (Opus gave the fix idea) | fixed | U+2028 in fence/heading lines: `s` flag. a27c86c. |
+| 1115-11 | src/miniMarkdown.ts:36 | LOW | Fable | fixed | Rejected-scheme URL escaped twice. a27c86c. |
+| 1115-12 | src/adviceEffectiveness/versionedPersistence.ts:26 | LOW | Fable | fixed | Test-only toComparableTaskPairs re-export removed. 6c24e00. |
+| 1115-13 | src/conversationLog.ts:117 | MEDIUM | Opus | fixed | `/\s+$/` was quadratic (40k spaces 1.06 s, red test 26.9 s); `trimEnd()`. baf8c5b. |
+| 1115-14 | src/webview.ts:3190-3199 | LOW | risk hunt (Sonnet) | deferred | Delete loop swallows trash errors; a trash failure shows "not found". |
 
 ## Open items
 
-Most severe first. None of these were changed on 2026-11-14 (audit only).
+Most severe first. Status at `2a474ef` after the 2026-11-15 fix round; the 12 issues of 2026-11-14 are fixed and removed from this list.
 
-1. `1114-X1` HIGH (arbiter and Astra MEDIUM, Jev HIGH .54): session delete trashes every `projects/**/<sessionId>` directory. Fix: match a directory only when a sibling `<sessionId>.jsonl` exists, or require UUID shape; use `replace('{name}', () => name)`.
-2. `1114-X2` HIGH (arbiter and Astra MEDIUM): `updateSetting`/`resetSetting` accept any key, including `advice.apiUrl` and secret keys, and advice send needs no host confirmation. Fix: reject secret keys, gate endpoint changes behind a host modal, wrap `settings.set`.
-3. `1114-X3` MEDIUM: U+2028/U+2029 makes `renderMarkdown` loop forever and OOM the host when the conversation opens. Fix: consume one line when a paragraph loop makes no progress; add a test.
-4. `1101-merge-F5` MEDIUM `src/extension.ts:5076`, `1101-merge-F3` MEDIUM `src/extension.ts:5036`, `1101-merge-F4` LOW `src/quotaObservationStore.ts:929`, `1101-merge-A1` LOW unbounded credential file read.
-5. `1018-B17` MEDIUM comparison guardrail cannot fail; `1018-B26` old account quota stays shown after logout (`extension.ts:4546`); `1018-B31` one row more than a day in the future quarantines the whole quota store (`quotaObservationStore.ts:705`, current `788-799`).
-6. `1018-merge-S1`, `1018-merge-S2` publish workflow build/tag conditions (TypeSafe said defer), `1018-N1..N3`.
-7. LOW: `1114-X4..X6`, `1114-L1`, `1114-L2`, `1004-8`, `1004-11`, `1018-A73` (latent: no locale string contains an apostrophe today), and the remaining deferred `1018-A*`/`1018-B*` rows. About 4,500 production lines in the 2026-10-18 report were flagged removable or movable to tests; the dead-code blocks not yet deleted are in those rows (unused exports, test-only functions, locale copy in `webview.ts`, duplicated parsers, schema migrations).
-8. Seventeen `1018-*` rows have undecided status (not traced at HEAD): A46, A48, A68, A69, A79, A81, A86, B19, B30, B32, B33, B34, B49, B55, B56, B58, B60.
+1. `1115-5` MEDIUM `src/extension.ts:4550`: same-account token rotation blanks the quota, which stays blank during 429 backoff. Deferred by Jev; no account id exists before a fetch.
+2. `1101-merge-A1` LOW: unbounded credential file read (`claudeApiClient.ts` loadCredentials).
+3. `1018-B17` MEDIUM comparison guardrail cannot fail.
+4. `1018-merge-S1`, `1018-merge-S2` publish workflow build/tag conditions (TypeSafe said defer), `1018-N1..N3`.
+5. LOW from 2026-11-15: `1115-7` (no test for marker reset on generation bump), `1115-9` (quadratic link/heading/table regexes, bounded by the 4000-char turn cap), `1115-14` (delete loop swallows trash errors, failure shows "not found").
+6. LOW: `1004-8`, `1004-11`, `1018-A73` (latent: no locale string contains an apostrophe today), and the remaining deferred `1018-A*`/`1018-B*` rows. About 4,500 production lines in the 2026-10-18 report were flagged removable or movable to tests; the dead-code blocks not yet deleted are in those rows (unused exports, test-only functions, locale copy in `webview.ts`, duplicated parsers, schema migrations).
+7. Sixteen `1018-*` rows have undecided status (not traced at HEAD): A46, A48, A68, A69, A79, A81, A86, B19, B30, B32, B33, B34, B49, B56, B58, B60.
+8. Accepted trade-offs from 2026-11-15: link text gets emphasis like plain text; the secret-delete modal shows even when no key is stored; the client still sends dead cwd/title fields; dropped rows found at startup load are logged at the next load.
 
 ### Coverage gaps still open
 
 - `webview.ts` outside the message handler (2640-3341) and sink windows: only grep heuristics were applied on 2026-11-14.
 - `codexView.ts`, `codexViewComponents.ts`, `i18n.ts` string tables, `webview.ts` CSS (`getStyles`): never read.
 - 2026-10-18 denied readers: security-fable, claude-index-opus, refactor-opus; claude-data had only Opus, codex and webview-a only Fable. 2026-10-20 had no Fable reader. Webview-b (`webview.ts` 5799-11413, `conversationViewerHtml.ts`, `miniMarkdown.ts`, `svgEscape.ts`) got its first read on 2026-11-14 for the handler and sinks only.
-- Playwright UI suite not run on 2026-10-18 or 2026-11-14; fix-round UI specs run were only week-tab and local-data-controls (11/11). Specs listed but not run: claude-settings, codex-accessibility, achievement-experience, dashboard-live-refresh.
+- Playwright full UI suite not run on 2026-10-18, 2026-11-14 or 2026-11-15; 2026-11-15 ran an 8-spec subset (195 passed). Specs listed but not run: codex-accessibility, achievement-experience.
 - Asset downscale of the 11 MB achievement badges (binary assets) not done; `1018-A26` is a partial fix.
 
 ## Dependency scan history
@@ -282,6 +298,7 @@ Most severe first. None of these were changed on 2026-11-14 (audit only).
 | 2026-11-01 (fix round, `820f0a2`) | osv-scanner 2.7.0, same image | same two | 2 LOW dev-only, both in `.github/build-tools` (not shipped in the VSIX): GHSA-xcx6-jx8p-x3h5 `@azure/msal-node` 6.0.1 (CVSS 7.5) and GHSA-g3hv-75wg-m249 `minimatch` 10.2.6 (CVSS 6.9). Fixed by user commit `1f4b731` (msal-node 7.1.2 via `@azure/identity` 4.14.1; scoped `minimatch` 11.0.3 override for vsce); proof: `npm audit --audit-level=high` 0, `vsce package` and `verify-vsix.mjs` ok |
 | 2026-11-01 (final, `fa5dad0`) | osv-scanner 2.7.0 | both (197 packages in build-tools) | No issues found |
 | 2026-11-14 | osv-scanner v2.7.1 | both (9 and 197 packages) | No issues found |
+| 2026-11-15 | osv-scanner v2.7.1 | `package-lock.json`, `.github/build-tools/package-lock.json` | No issues found |
 
 The extension has no runtime dependencies. Supply-chain notes: see `1018-merge-S1` and `1018-merge-S2`.
 
@@ -295,5 +312,6 @@ The extension has no runtime dependencies. Supply-chain notes: see `1018-merge-S
 | 2026-10-20 | node suite, Playwright week-tab + local-data-controls | 2776 tests / 2773 pass / 0 fail / 3 skipped; Playwright 11 passed (8.6 s) |
 | 2026-11-01 | baseline, final node suite, Playwright week-tab + local-data-controls | baseline 2776 / 2773; final 2785 / 2782 / 0 fail / 3 skipped; Playwright 11 passed (10.0 s, final 7.9 s) |
 | 2026-11-14 | tsc, node suite in Docker `node:26@sha256:e18c3ccdf7d71619990b0e85639f506e2028a95410999cab24cc373cbd10e0ac`, tsc strict | tsc clean, 2986 tests / 2983 pass / 0 fail / 3 skipped; strict: 16 unused plus 2 missing-return (`webview.ts:5026` intentional); Playwright not run |
+| 2026-11-15 (HEAD `2a474ef`) | tsc, node suite in Docker `node:26`, Playwright subset in `mcr.microsoft.com/playwright:v1.64.1-noble` (advice-effectiveness, claude-settings, local-data-controls, project-usage-matrix, api-heatmap, api-heatmap-compact, dashboard-live-refresh, weekly-quota-pace) | tsc clean, 2996 tests / 2993 pass / 0 fail / 3 skipped; Playwright 195 passed (8.2 min) |
 
-Astra security passes: 2026-10-18 fix round $0.268, merge-review unlisted; 2026-10-20 $0.172; 2026-11-01 $0.104 (CRED hunks), $0.050 (final look, none), $0.130 (v2.5.1 merge); 2026-11-14 $0.175.
+Astra security passes: 2026-10-18 fix round $0.268, merge-review unlisted; 2026-10-20 $0.172; 2026-11-01 $0.104 (CRED hunks), $0.050 (final look, none), $0.130 (v2.5.1 merge); 2026-11-14 $0.175; 2026-11-15 $0.157 (round 1: markdown none, webview MEDIUM race) + $0.057 (final look, none).

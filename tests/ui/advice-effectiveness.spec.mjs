@@ -435,7 +435,6 @@ test('clearing local advice data cancels a preview whose digest validation is pe
   await expect.poll(() => page.evaluate(() =>
     globalThis.__ccuAdvicePreviewValidationStarted)).toBe(true);
 
-  page.once('dialog', (dialog) => dialog.accept());
   await root.locator('[data-advice-action="clear"]').click();
   await expectPostedCount(page, 'clearAdviceLocalData', 1);
   await releaseAdvicePreviewValidation(page);
@@ -643,7 +642,6 @@ test('candidate exposes only bounded advice actions and feedback posts identifie
   await expect(helpful).toBeEnabled();
   await expect(root.locator('[data-advice-feedback-status]')).not.toBeEmpty();
 
-  page.once('dialog', (dialog) => dialog.accept());
   await root.locator('[data-advice-action="clear"]').click();
   await expectPostedCount(page, 'clearAdviceLocalData', 1);
   expect((await postedMessages(page, 'clearAdviceLocalData')).at(-1)).toEqual({

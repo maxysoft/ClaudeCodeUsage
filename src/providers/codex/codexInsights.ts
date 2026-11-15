@@ -188,25 +188,3 @@ export function buildCodexInsights(
 
   return insights;
 }
-
-/** Build only kind-specific local guidance; empty evidence intentionally means no text. */
-export function pasteReadyConstraint(insights: CodexInsight[]): string {
-  const kinds = new Set(insights.map((insight) => insight.kind));
-  const sentences: string[] = [];
-  if (kinds.has('multi-agent-share')) {
-    sentences.push('For comparable tasks, decide whether subagents are needed before spawning them.');
-  }
-  if (kinds.has('effort-comparison')) {
-    sentences.push('On a representative task, A/B the observed high effort against one lower effort level.');
-  }
-  if (kinds.has('post-patch-tool-intensity')) {
-    sentences.push('After the next patch, use the structural proxy to consider a shorter tool sequence.');
-  }
-  if (kinds.has('cache-context')) {
-    sentences.push('Keep the cache and context proxy in view when choosing the next task boundary.');
-  }
-  if (kinds.has('approval-reviewer-share')) {
-    sentences.push('Before adding approval reviewers, check whether that role is needed for this task.');
-  }
-  return sentences.join(' ');
-}

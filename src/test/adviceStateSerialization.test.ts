@@ -386,6 +386,7 @@ test('clear is serialized after an older consent write and remains the final dur
     },
   };
   provider.onAdviceDataCleared = async () => undefined;
+  provider.onRunLocalDataAction = async () => ({ ok: await provider.clearAdviceLocalData(), message: '' });
 
   const consent = provider.handleAdviceConsentMessage({
     provider: 'claude',

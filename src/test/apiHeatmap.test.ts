@@ -5,7 +5,6 @@ import {
   ApiHeatmapOptions,
   buildApiHeatmapArtifact,
   normalizeApiHeatmapConfig,
-  renderApiHeatmapSvg,
 } from '../apiHeatmap';
 import { API_HEATMAP_COPY } from '../apiHeatmapCopy';
 import {
@@ -77,7 +76,6 @@ test('both amount mode has two independent blocks and no cross-provider amount t
   assert.match(artifact.svg, /Estimated/);
   assert.match(artifact.svg, /Exact model pricing/);
   assert.match(artifact.svg, /Current pricing/);
-  assert.equal(artifact.svg, renderApiHeatmapSvg(daily, options));
   assert.equal(artifact.svg, buildApiHeatmapArtifact(daily, options).svg);
 });
 
@@ -147,7 +145,7 @@ test('built-in currency conversion is reused and does not change USD-based ranki
 
 test('both Token output retains the exact existing combined renderer contract', () => {
   const daily = { '2026-06-30': { claude: day(10, 999), codex: day(20, 123) } };
-  const svg = renderApiHeatmapSvg(daily, { ...options, showAmounts: false });
+  const { svg } = buildApiHeatmapArtifact(daily, { ...options, showAmounts: false });
   assert.equal(svg, renderCombinedHeatmapSvg({ '2026-06-30': {
     dateISO: '2026-06-30', claudeProcessed: 10, codexProcessed: 20, combinedProcessed: 30,
   } }, { range: '30d', endDateISO: '2026-06-30', locale: 'en' }));
@@ -171,7 +169,7 @@ test('date/provider order does not affect canonical bytes; invalid numeric total
   const a = { '2026-06-29': { codex: day(1, 2), claude: day(2, 1) }, '2026-06-30': { claude: day(3, 4) } };
   const b = { '2026-06-30': { claude: day(3, 4) }, '2026-06-29': { claude: day(2, 1), codex: day(1, 2) } };
   assert.deepEqual(buildApiHeatmapArtifact(a, options), buildApiHeatmapArtifact(b, options));
-  assert.throws(() => renderApiHeatmapSvg({ '2026-06-30': { claude: day(Number.MAX_VALUE, 1) } }, options));
+  assert.throws(() => buildApiHeatmapArtifact({ '2026-06-30': { claude: day(Number.MAX_VALUE, 1) } }, options));
 });
 
 test('invalid pricing counts cannot silently become complete coverage', () => {

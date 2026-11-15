@@ -381,6 +381,57 @@ test('corrupt and future-schema files are quarantined without exposing their con
   }
 });
 
+test('one invalid row is dropped while the rest of the shared history loads and survives the next write', async () => {
+  const root = path.join(os.tmpdir(), `ccu-quota-invalid-row-${process.pid}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(root, { recursive: true });
+  const file = path.join(root, 'quota-observations-v2.json');
+  const repository = new QuotaObservationRepository(file, SALT, () => NOW);
+  await repository.append([capture({ observedAt: NOW - HOUR })]);
+  const persisted = JSON.parse(await readFile(file, 'utf8'));
+  persisted.observations.push(
+    { ...persisted.observations[0], observedAt: NOW + 2 * DAY },
+    { ...persisted.observations[0], observedAt: NOW - 2 * HOUR, usedFraction: 2 },
+  );
+  await writeFile(file, JSON.stringify(persisted), 'utf8');
+
+  const loaded = await loadQuotaObservationStore(file, { now: NOW });
+  assert.equal(loaded.disposition, 'valid');
+  assert.equal(loaded.droppedRows, 2);
+  assert.deepEqual(loaded.store.observations.map((item) => item.observedAt), [NOW - HOUR]);
+  await assert.rejects(
+    () => saveQuotaObservationStoreAtomic(file, persisted),
+    /invalid quota observation store/,
+    'a write still accepts only valid rows',
+  );
+
+  const dropped: number[] = [];
+  repository.onDroppedRows = (count) => dropped.push(count);
+  await repository.append([capture()]);
+  assert.deepEqual(await readdir(root), ['quota-observations-v2.json'], 'nothing was quarantined');
+  assert.deepEqual(
+    (await repository.load()).observations.map((item) => item.observedAt),
+    [NOW - HOUR, NOW],
+  );
+  assert.deepEqual(dropped, [2], 'reported once, by the load that dropped them');
+});
+
+test('a scoped clear rewrites dropped rows away so cleared history cannot come back', async () => {
+  const root = path.join(os.tmpdir(), `ccu-quota-dropped-clear-${process.pid}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(root, { recursive: true });
+  const file = path.join(root, 'quota-observations-v2.json');
+  const repository = new QuotaObservationRepository(file, SALT, () => NOW);
+  await repository.append([capture()]);
+  const persisted = JSON.parse(await readFile(file, 'utf8'));
+  persisted.observations.push({ ...persisted.observations[0], observedAt: NOW + 2 * DAY });
+  await writeFile(file, JSON.stringify(persisted), 'utf8');
+
+  await repository.clear({ provider: 'claude' });
+  assert.deepEqual(
+    JSON.parse(await readFile(file, 'utf8')).observations.map((item: { observedAt: number }) => item.observedAt),
+    [NOW],
+  );
+});
+
 test('repository serializes cross-instance concurrent appends without losing either observation', async () => {
   const root = path.join(os.tmpdir(), `ccu-quota-repository-${process.pid}-${Math.random().toString(16).slice(2)}`);
   await mkdir(root, { recursive: true });

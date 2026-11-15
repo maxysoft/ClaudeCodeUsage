@@ -345,6 +345,29 @@ test("showing another window's success clears this window's failure backoff", as
   );
 });
 
+test("a credentials change withdraws the previous account's quota, also after a later failed request", async (t) => {
+  const clock = controlledClock(t);
+  const profile = claudeProfile('fixture-refresh-a');
+  const window = editorWindow(sharedStoreFile(), profile);
+  window.api.status = 200;
+  window.api.payload = usage(clock.now(), 37, 12);
+  assert.ok(await window.refresh());
+  const shown: unknown[] = [];
+  window.extension.statusBar = { updateQuota: (value: unknown) => shown.push(value) };
+  window.extension.refreshData = async () => undefined;
+  let dashboardCleared = 0;
+  window.extension.webviewProvider.clearQuota = () => { dashboardCleared += 1; };
+
+  fs.rmSync(path.join(profile, '.credentials.json'));
+  window.extension.handleCredentialsChange();
+  assert.equal(window.extension.cache.usageLimits, null);
+  assert.deepEqual(shown, [null], 'the status bar drops the old value at once');
+  assert.equal(dashboardCleared, 1, 'the dashboard drops the old value at once');
+
+  clock.advance(1_000);
+  assert.equal(await window.refresh(), null, 'the failed request after logout never shows the old value again');
+});
+
 test('a backing-off window parses the shared store again only after it changes', async (t) => {
   const clock = controlledClock(t);
   const storeFile = sharedStoreFile();
@@ -379,6 +402,31 @@ test('a backing-off window parses the shared store again only after it changes',
   storeReads = 0;
   assert.equal(barText(await cold.refresh()), '5h 38% · wk 12%');
   assert.equal(storeReads, 1, "another window's write is picked up with one re-read");
+});
+
+test("another account's fresh success costs one credential read, not one per refresh", async (t) => {
+  const clock = controlledClock(t);
+  const storeFile = sharedStoreFile();
+  const repository = new QuotaObservationRepository(storeFile, SALT, () => Date.now());
+  const otherAccount = claudeQuotaIdentitySignal(SALT, 'fixture-refresh-b');
+  const resetBase = clock.now();
+  await repository.append(claudeQuotaCapturesFromUsage(
+    usage(resetBase, 37, 12), otherAccount, 'verified-local-signal', clock.now(),
+  ));
+  clock.advance(5_000);
+
+  const window = editorWindow(storeFile, claudeProfile('fixture-refresh-a'));
+  window.extension.cache.usageLimitsBackoffUntil = new Date(clock.now() + 8 * 60_000);
+  for (let n = 0; n < 3; n++) assert.equal(await window.refresh(), null);
+  assert.equal(window.api.credentialReads, 1, 'the same shared reading is checked once');
+
+  await repository.append(claudeQuotaCapturesFromUsage(
+    usage(resetBase, 38, 12), otherAccount, 'verified-local-signal', clock.now(),
+  ));
+  clock.advance(1_000);
+  assert.equal(await window.refresh(), null);
+  assert.equal(window.api.credentialReads, 2, 'a newer shared reading is checked again');
+  assert.equal(window.api.requests, 0);
 });
 
 test("another window's success never feeds this window's weekly pace forecast", async (t) => {
@@ -438,13 +486,13 @@ test('a shared scope name is shown only when it reproduces the stored window has
   await repository.append(claudeQuotaCapturesFromUsage(
     usage(clock.now(), 37, 12, 16), signal, 'verified-local-signal', clock.now(),
   ));
-  await repository.rememberScopeLabels(['Opus']);
+  await repository.append([], { scopeLabels: ['Opus'] });
   clock.advance(5_000);
 
   const unmatched = editorWindow(storeFile, profile);
   assert.equal(barText(await unmatched.refresh()), '5h 37% · wk 12% (wk* 16%)');
 
-  await repository.rememberScopeLabels(['Fable']);
+  await repository.append([], { scopeLabels: ['Fable'] });
   const matched = editorWindow(storeFile, profile);
   assert.equal(barText(await matched.refresh()), '5h 37% · wk 12% (fable 16%)');
 });
@@ -454,8 +502,8 @@ test('shared scope names stay bounded and valid, and an unknown schema is left a
   const labelFile = path.join(path.dirname(storeFile), QUOTA_SCOPE_LABEL_FILE);
   const repository = new QuotaObservationRepository(storeFile, SALT);
   const names = Array.from({ length: 20 }, (_, index) => `Scope ${index}`);
-  await repository.rememberScopeLabels(names.slice(0, 10));
-  await repository.rememberScopeLabels(['', ' ', 'x'.repeat(257), ...names.slice(10)]);
+  await repository.append([], { scopeLabels: names.slice(0, 10) });
+  await repository.append([], { scopeLabels: ['', ' ', 'x'.repeat(257), ...names.slice(10)] });
 
   const labels = await repository.loadScopeLabels();
   assert.equal(labels.length, 16);
@@ -465,7 +513,7 @@ test('shared scope names stay bounded and valid, and an unknown schema is left a
   assert.equal(fs.statSync(labelFile).mode & 0o777, 0o600);
 
   fs.writeFileSync(labelFile, JSON.stringify({ schemaVersion: 2, labels: ['Future'] }));
-  await repository.rememberScopeLabels(['Fable']);
+  await repository.append([], { scopeLabels: ['Fable'] });
   assert.deepEqual(JSON.parse(fs.readFileSync(labelFile, 'utf8')).labels, ['Future']);
   assert.deepEqual(await repository.loadScopeLabels(), []);
 });
@@ -474,21 +522,21 @@ test('shared scope names are removed by every quota clear that covers Claude', a
   const storeFile = sharedStoreFile();
   const labelFile = path.join(path.dirname(storeFile), QUOTA_SCOPE_LABEL_FILE);
   const repository = new QuotaObservationRepository(storeFile, SALT);
-  await repository.rememberScopeLabels(['Fable']);
+  await repository.append([], { scopeLabels: ['Fable'] });
 
   await repository.clear({ provider: 'codex' });
   assert.deepEqual(await repository.loadScopeLabels(), ['Fable'], 'a Codex-only clear keeps them');
   await repository.clear({ provider: 'claude' });
   assert.equal(fs.existsSync(labelFile), false);
 
-  await repository.rememberScopeLabels(['Fable']);
+  await repository.append([], { scopeLabels: ['Fable'] });
   await repository.clear({
     provider: 'claude',
     accountFingerprint: fingerprintForStableIdentity(SALT, 'claude', 'fixture-signal'),
   });
   assert.equal(fs.existsSync(labelFile), false, 'a Claude account-epoch clear removes them');
 
-  await repository.rememberScopeLabels(['Fable']);
+  await repository.append([], { scopeLabels: ['Fable'] });
   await repository.clear({});
   assert.equal(fs.existsSync(labelFile), false, 'clearing all quota history removes them');
 });
@@ -828,3 +876,14 @@ for (const condition of ['window-blur', 'feature-disabled', 'profile-change'] as
     assert.deepEqual(window.extension.claudeWeeklyQuotaHistory, []);
   });
 }
+
+test('a failed quota history write is logged by error code only', async (t) => {
+  const clock = controlledClock(t);
+  const storeFile = sharedStoreFile();
+  fs.writeFileSync(storeFile, '{broken-json fixture-canary');
+  const window = editorWindow(storeFile, claudeProfile('fixture-refresh-a'));
+  window.api.status = 200;
+  window.api.payload = usage(clock.now(), 37, 12);
+  assert.equal(barText(await window.refresh()), '5h 37% · wk 12%', 'the request itself still succeeds');
+  assert.deepEqual(window.logs, ['quota-history: write-failed=quota-observation-store-quarantined']);
+});

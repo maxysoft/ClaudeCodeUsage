@@ -684,6 +684,10 @@ empty schema-2 document and removes only its exact quarantine/interrupted-write
 siblings under the same cross-process lease. A provider/account-only clear
 fails closed when quarantined data or an unresolved legacy migration cannot be
 assigned safely; the user may then explicitly choose the all-history clear.
+A row that fails validation inside an otherwise valid schema-2 store (for
+example a reading more than a day in the future) is dropped on load and logged
+as `quota-history: dropped-rows=<n>`; the next write or scoped clear rewrites
+the file without it. Malformed or future-schema files are still quarantined whole.
 Every clear that covers Claude, including Clear All, also removes the
 `quota-scope-labels-v1.json` scope-name list and its interrupted-write
 siblings under that lease; a Codex-only clear keeps it.

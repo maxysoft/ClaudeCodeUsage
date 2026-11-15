@@ -4,6 +4,27 @@ All notable changes to this fork compared to upstream
 [`jack21/ClaudeCodeUsage`](https://github.com/jack21/ClaudeCodeUsage) (last
 upstream merge: 2.5.1 / `a5bc41d`). Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [2.18.1] — 2026-11-15
+
+### Fixed
+
+- **View conversation no longer freezes VS Code** — a code-fence or heading line containing an invisible line separator (U+2028), or a tool result with a very long run of spaces, could hang the extension host until it ran out of memory.
+- **Delete session removes only that session** — a session id such as `memory` could send every project's Claude Code memory folder to the trash. A session's sub-agent folder is now removed only when it belongs to that session. The confirmation names the session from the extension's own data and lists the files it will trash.
+- **AI advice endpoint and keys** — changing the advice API URL to a different host from the dashboard now asks in a VS Code dialog that names the new host. Replacing or deleting a stored API key also asks first. Clearing local advice data uses the same VS Code confirmation as the other local-data actions.
+- **Resume Session** opens the terminal in the session's recorded folder, never a folder chosen by the dashboard page.
+- **Quota after logout or an account switch** — the status bar and dashboard no longer keep showing the previous account's quota.
+- **Quota history** — one invalid reading no longer hides the whole shared history: only that reading is dropped, and the drop is logged. Failed history writes are logged by error code.
+- **Fewer credential reads** — while another window shows a different account's fresh quota, the extension reads Claude credentials (a Keychain call on macOS) once per new reading instead of on every refresh.
+- **Conversation viewer links** — URLs containing `_` or `*` stay intact, link text keeps bold and italic, and text containing a NUL character no longer shows "undefined".
+
+### Changed (fork-specific)
+
+- **Unused code removed** — production helpers that only tests used (URL normalizers in `advisor.ts`, project heatmap and trend projections, the optimizer output parser, and nine more) are deleted with their tests. Re-apply these deletions when merging upstream.
+
+### Upstream alignment
+
+Unchanged from 2.18.0 — aligned with `jack21/ClaudeCodeUsage` v2.5.1 (`a5bc41d`).
+
 ## [2.18.0] — 2026-11-01
 
 ### Added (merged from upstream v2.5.1)

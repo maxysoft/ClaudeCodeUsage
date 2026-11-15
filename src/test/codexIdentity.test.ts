@@ -6,7 +6,6 @@ import * as path from 'node:path';
 
 import {
   CodexSessionTitleCache,
-  loadCodexSessionTitles,
   normalizeRepositoryIdentity,
   parsePseudonymousIdentityKey,
   PseudonymousIdentityKey,
@@ -16,6 +15,9 @@ import {
 } from '../providers/codex/codexIdentity';
 
 const SALT = 'identity-test-salt';
+
+const loadCodexSessionTitles = (root: string, salt: string) =>
+  new CodexSessionTitleCache().load(root, salt);
 
 test('session title cache reuses only an identical verified file stamp', async () => {
   let stamp = { size: 100, mtimeMs: 1_000, dev: 2, ino: 3 };

@@ -10,7 +10,6 @@ import {
 } from '../adviceEffectiveness/integration';
 import {
   buildAdviceAggregateSnapshot,
-  sendPreparedAdvicePayload,
 } from '../adviceEffectiveness/payload';
 import {
   evidenceFixture,
@@ -102,7 +101,7 @@ test('configured context remains usable when no prompt sample is inside the wind
   assert.equal(result.value.preview.body.includes('私有项目约束'), true);
 });
 
-test('sealed snapshot preview, digest, and future sender share one canonical UTF-8 byte sequence', async () => {
+test('sealed snapshot preview and digest share one canonical UTF-8 byte sequence', () => {
   const result = prepareAdviceSnapshot(state(), {
     aggregate: 'explicit',
     promptSamples: 'explicit',
@@ -118,19 +117,6 @@ test('sealed snapshot preview, digest, and future sender share one canonical UTF
   assert.equal(preview.utf8Bytes, prepared.canonicalBytes.byteLength);
   assert.equal(preview.sha256, expectedDigest);
   assert.equal(prepared.sha256, expectedDigest);
-
-  let sentBytes: Uint8Array | undefined;
-  const response = await sendPreparedAdvicePayload(
-    prepared,
-    async (canonicalBytes, contentType, sha256) => {
-      sentBytes = canonicalBytes;
-      assert.equal(contentType, 'application/json');
-      assert.equal(sha256, expectedDigest);
-      return 'ok';
-    },
-  );
-  assert.equal(response, 'ok');
-  assert.strictEqual(sentBytes, prepared.canonicalBytes);
 });
 
 test('Codex evidence stays local until a provider-discriminated remote aggregate exists', () => {

@@ -221,9 +221,6 @@ export function parseAchievementRecordStore(value: unknown): AchievementRecordSt
   if (Buffer.byteLength(JSON.stringify(result)) > ACHIEVEMENT_RECORD_BYTE_LIMIT) return invalid();
   return result;
 }
-export function recentAchievementRecords(store: AchievementRecordStore): AchievementRecord[] {
-  return store.records.slice(-30).reverse();
-}
 function empty(generation = 1, sequence = 0): AchievementRecordStore {
   return { schemaVersion: 1, generation, sequence, lastNoticeAt: 0, pins: [], records: [], auxiliary: emptyAuxiliary() };
 }

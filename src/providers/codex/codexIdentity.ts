@@ -446,10 +446,3 @@ export class CodexSessionTitleCache {
     this.pending = undefined;
   }
 }
-
-export async function loadCodexSessionTitles(
-  codexHome: string,
-  salt: string,
-): Promise<Map<string, string>> {
-  return new CodexSessionTitleCache().load(codexHome, salt);
-}

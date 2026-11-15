@@ -4,7 +4,6 @@ import * as assert from 'node:assert/strict';
 import {
   buildCodexInsights,
   buildScopedCodexInsights,
-  pasteReadyConstraint,
 } from '../providers/codex/codexInsights';
 import { buildCodexUsageView, CodexUsageScopeView } from '../providers/codex/codexUsage';
 import { snapshotFixture } from './codexFixtures';
@@ -71,7 +70,6 @@ test('no evidence produces no recommendation or generic constraint', () => {
     efforts: [],
   });
   assert.deepEqual(buildCodexInsights(neutral, '7d'), []);
-  assert.equal(pasteReadyConstraint([]), '');
 });
 
 test('auto-review is never labelled independent code review', () => {
@@ -112,8 +110,6 @@ test('high effort only suggests a representative-task A/B comparison', () => {
 
   assert.equal(insight?.evidence.observedEffort, 'high');
   assert.equal(insight?.evidence.highEffortFresh, 400);
-  assert.match(pasteReadyConstraint([insight!]), /representative task/i);
-  assert.doesNotMatch(pasteReadyConstraint([insight!]), /waste|always|must/i);
 });
 
 test('high processed-to-fresh ratio explains cache without premature split advice', () => {
@@ -123,14 +119,6 @@ test('high processed-to-fresh ratio explains cache without premature split advic
 
   assert.equal(insight?.severity, 'info');
   assert.equal(insight?.evidence.processedToFreshRatio, 3);
-  assert.doesNotMatch(pasteReadyConstraint([insight!]), /inefficient|inefficiency/i);
-});
-
-test('paste-ready constraints contain only the triggered kind sentences', () => {
-  const text = pasteReadyConstraint([{ kind: 'cache-context', severity: 'info', scope: 'all', evidence: { cachedInputShare: 0.8 }, proxy: true }]);
-
-  assert.match(text, /cache/i);
-  assert.doesNotMatch(text, /full test|hardening|subagent|representative task/i);
 });
 
 test('partial rolling coverage blocks deterministic advice without gating complete or aggregate scopes', () => {
@@ -155,7 +143,6 @@ test('partial rolling coverage blocks deterministic advice without gating comple
 
   const partialInsights = buildCodexInsights(partial7Days, '7d');
   assert.deepEqual(partialInsights, []);
-  assert.equal(pasteReadyConstraint(partialInsights), '');
   assert.equal(
     buildCodexInsights(complete30Days, '30d').some((item) => item.kind === 'effort-comparison'),
     true,

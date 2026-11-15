@@ -773,6 +773,8 @@ export class ClaudeDataLoader {
     const roots = new Set<string>(this.getClaudePaths());
     if (dataDirectory) { roots.add(dataDirectory); }
     const fileName = sessionId + '.jsonl';
+    // Only a Claude Code session UUID may claim a folder: named folders such as `memory` are never sessions.
+    const ownsFolder = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId);
     const matches: string[] = [];
     const walk = async (dir: string): Promise<void> => {
       let entries;
@@ -781,10 +783,11 @@ export class ClaudeDataLoader {
       } catch {
         return;
       }
+      const hasLog = entries.some((e) => e.isFile() && e.name === fileName);
       for (const e of entries) {
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (e.name === sessionId) {
+          if (ownsFolder && hasLog && e.name === sessionId) {
             matches.push(full); // session's sub-agent container — remove whole
           } else {
             await walk(full);

@@ -127,3 +127,15 @@ test('ai-title is used when no custom-title is present', () => {
   ].join('\n');
   assert.equal(parseConversation(txt).title, 'Auto title');
 });
+
+test('a long whitespace run inside a tool result is clipped in linear time', () => {
+  const jsonl = line({
+    type: 'user',
+    uuid: 'u1',
+    timestamp: '2026-07-01T10:00:00Z',
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'x' + ' '.repeat(200_000) + 'y', is_error: false }] },
+  });
+  const started = Date.now();
+  parseConversation(jsonl);
+  assert.ok(Date.now() - started < 2_000, 'a quadratic trailing-whitespace trim freezes the extension host');
+});

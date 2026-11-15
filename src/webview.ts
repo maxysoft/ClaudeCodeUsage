@@ -50,6 +50,7 @@ import {
   SettingsStore,
   SettingProvider,
   SettingView,
+  dashboardSettingRisk,
   settingAppliesToProvider,
 } from './settings';
 import { buildResumeCommand, isUsableCwd, isValidSessionId, isUnderDir } from './sessionResume';
@@ -151,8 +152,6 @@ import { getDashboardRefreshClientScript } from './dashboardRefreshClient';
 import { getChartAccessibilityClientScript } from './chartAccessibilityClient';
 import {
   ProjectUsageMatrixSnapshot,
-  projectHeatmap,
-  projectTrend,
 } from './projectUsageMatrix';
 import * as os from 'os';
 import * as path from 'path';
@@ -1496,6 +1495,7 @@ export class UsageWebviewProvider {
   // the user edits a setting in the dashboard's ⚙ Settings tab. Both are set by
   // extension.ts right after construction.
   public settings?: SettingsStore;
+  private settingMessages: Promise<void> = Promise.resolve();
   public onSettingsChanged?: (key?: string) => void;
   // Last Usage Optimizer interaction (draft + lens choices + result). Persisted
   // here so an auto-refresh re-render of the webview doesn't wipe a result the
@@ -2307,7 +2307,10 @@ export class UsageWebviewProvider {
   }
 
   private async handleClearAdviceLocalDataMessage(): Promise<void> {
-    const ok = await this.clearAdviceLocalData();
+    let ok = false;
+    try {
+      ok = (await this.onRunLocalDataAction?.('clear-advice-data'))?.ok === true;
+    } catch { /* reported as not cleared */ }
     this.postAdviceMessage({ command: 'adviceClearResult', ok });
   }
 
@@ -2688,7 +2691,7 @@ export class UsageWebviewProvider {
       this.lastHtml = '';
     });
 
-    this.panel.webview.onDidReceiveMessage(async (message) => {
+    const handleMessage = async (message: any): Promise<void> => {
       switch (message.command) {
         case 'projectChartFilter':
           this.handleProjectChartFilter(message);
@@ -3149,7 +3152,7 @@ export class UsageWebviewProvider {
             vscode.window.showWarningMessage(I18n.t.popup.resumeInvalid);
             break;
           }
-          const rawCwd = typeof message.cwd === 'string' ? message.cwd : '';
+          const rawCwd = this.sessionBreakdown.find((s) => s.sessionId === sessionId)?.projectPath || '';
           const cwd = isUsableCwd(rawCwd) ? rawCwd : undefined;
           // The official in-tab view only opens sessions from this project; others
           // go via terminal. A session whose log had no cwd carries the dash-
@@ -3178,16 +3181,18 @@ export class UsageWebviewProvider {
             vscode.window.showWarningMessage(I18n.t.popup.resumeInvalid);
             break;
           }
-          const name = String(message.title || sessionId);
-          const yes = I18n.t.popup.deleteSessionYes;
-          const pick = await vscode.window.showWarningMessage(
-            I18n.t.popup.deleteSessionConfirm.replace('{name}', name),
-            { modal: true, detail: I18n.t.popup.deleteSessionDetail },
-            yes
-          );
-          if (pick !== yes) { break; }
+          const name = this.sessionBreakdown.find((s) => s.sessionId === sessionId)?.title || sessionId;
           const { ClaudeDataLoader } = await import('./dataLoader');
           const targets = await ClaudeDataLoader.findSessionFiles(sessionId, this.dataDirectory);
+          if (targets.length > 0) {
+            const yes = I18n.t.popup.deleteSessionYes;
+            const pick = await vscode.window.showWarningMessage(
+              I18n.t.popup.deleteSessionConfirm.replace('{name}', name),
+              { modal: true, detail: [I18n.t.popup.deleteSessionDetail, '', ...targets].join('\n') },
+              yes
+            );
+            if (pick !== yes) { break; }
+          }
           let deleted = 0;
           for (const f of targets) {
             try {
@@ -3214,35 +3219,46 @@ export class UsageWebviewProvider {
             vscode.window.showWarningMessage(I18n.t.popup.resumeInvalid);
             break;
           }
-          await this.openConversationViewer(sessionId, String(message.title || sessionId));
+          await this.openConversationViewer(
+            sessionId, this.sessionBreakdown.find((s) => s.sessionId === sessionId)?.title || sessionId);
           break;
         }
         case 'updateSetting':
           if (this.settings && typeof message.key === 'string') {
-            const trackSetting = isAchievementSettingKey(message.key);
-            const previous = trackSetting ? this.settings.get(message.key) : undefined;
-            await this.settings.set(message.key, message.value);
-            if ((message.key === 'enableAchievements' || message.key === 'enableShareCard') &&
-                this.settings.get(message.key) === false) this.acceptedAchievementPreview.clear();
-            if (trackSetting) {
-              this.recordAchievementSettingChange(message.key,
-                previous !== this.settings.get(message.key));
-            }
-            if (
-              message.key === 'enableShareCard' &&
-              this.settings.get<boolean>('enableShareCard') === false
-            ) {
-              this.sharingWorkspaceRequested = false;
-            }
-            // Re-apply config. Pass the key so status-bar-only toggles skip the
-            // dashboard reload (which flickers); globalState changes don't fire
-            // onDidChangeConfiguration, so this callback is the only signal.
-            this.onSettingsChanged?.(message.key);
+            try {
+              if (!(await this.confirmDashboardSettingWrite(message.key, message.value))) {
+                this.onSettingsChanged?.();
+                break;
+              }
+              const trackSetting = isAchievementSettingKey(message.key);
+              const previous = trackSetting ? this.settings.get(message.key) : undefined;
+              await this.settings.set(message.key, message.value);
+              if ((message.key === 'enableAchievements' || message.key === 'enableShareCard') &&
+                  this.settings.get(message.key) === false) this.acceptedAchievementPreview.clear();
+              if (trackSetting) {
+                this.recordAchievementSettingChange(message.key,
+                  previous !== this.settings.get(message.key));
+              }
+              if (
+                message.key === 'enableShareCard' &&
+                this.settings.get<boolean>('enableShareCard') === false
+              ) {
+                this.sharingWorkspaceRequested = false;
+              }
+              // Re-apply config. Pass the key so status-bar-only toggles skip the
+              // dashboard reload (which flickers); globalState changes don't fire
+              // onDidChangeConfiguration, so this callback is the only signal.
+              this.onSettingsChanged?.(message.key);
+            } catch { /* unknown key or failed store: setting unchanged */ }
           }
           break;
         case 'resetSetting':
           if (this.settings && typeof message.key === 'string') {
-            await this.settings.reset(message.key);
+            try {
+              if (await this.confirmDashboardSettingWrite(message.key)) {
+                await this.settings.reset(message.key);
+              }
+            } catch { /* unknown key or failed store: setting unchanged */ }
             // Reset re-renders fully so the control visually reverts to default.
             this.onSettingsChanged?.();
           }
@@ -3257,6 +3273,9 @@ export class UsageWebviewProvider {
               // if an old/malformed client includes its key in the request.
               if (d.secret || d.storage === 'secret') continue;
               if (requested && !requested.has(d.key)) {
+                continue;
+              }
+              if (!(await this.confirmDashboardSettingWrite(d.key))) {
                 continue;
               }
               await this.settings.reset(d.key);
@@ -3338,6 +3357,14 @@ export class UsageWebviewProvider {
           break;
         }
       }
+    };
+    this.panel.webview.onDidReceiveMessage((message) => {
+      if (!['updateSetting', 'resetSetting', 'resetAllSettings'].includes(message?.command)) {
+        return handleMessage(message);
+      }
+      const run = this.settingMessages.then(() => handleMessage(message));
+      this.settingMessages = run.catch(() => undefined);
+      return run;
     });
 
     this.updateWebview();
@@ -3664,6 +3691,13 @@ export class UsageWebviewProvider {
     if (changed && this.panel && !this.isLoading && this.setting<boolean>('dashboardAutoRefresh', true)) {
       this.updateWebview();
     }
+  }
+
+  /** Account change: unlike a failed fetch (`updateQuota(null)` keeps the last value), drop it. */
+  clearQuota(): void {
+    if (this.usageLimits === null) return;
+    this.usageLimits = null;
+    if (this.panel && !this.isLoading) this.updateWebview();
   }
 
   /** Existing refresh callbacks only: this patch can withdraw stale forecasts
@@ -8823,6 +8857,20 @@ export class UsageWebviewProvider {
       '" data-sort-cacheread="' + d.totalCacheReadTokens +
       '" data-sort-messages="' + d.messageCount + '"'
     );
+  }
+
+  private async confirmDashboardSettingWrite(key: string, next?: unknown): Promise<boolean> {
+    const risk = dashboardSettingRisk(key, () => this.settings?.get(key), next);
+    if (!risk) {
+      return true;
+    }
+    const popup = I18n.t.popup;
+    const [text, detail, yes] = 'host' in risk
+      ? [popup.adviceHostConfirm.replace('{host}', risk.host), popup.adviceHostDetail, popup.adviceHostYes]
+      : risk.replace
+        ? [popup.secretReplaceConfirm.replace('{name}', risk.secret), popup.secretReplaceDetail, popup.adviceHostYes]
+        : [popup.secretDeleteConfirm.replace('{name}', risk.secret), popup.secretDeleteDetail, popup.deleteSessionYes];
+    return (await vscode.window.showWarningMessage(text, { modal: true, detail }, yes)) === yes;
   }
 
   /** Open a read-only viewer for a past conversation. Reads the session's
@@ -17817,7 +17865,6 @@ document.addEventListener('click', function(event) {
   }
   if (action.getAttribute('data-advice-action') === 'clear') {
     event.preventDefault();
-    if (!window.confirm(__adviceCopy.clearLocalDataConfirm)) { return; }
     action.disabled = true;
     adviceInvalidateAllPreviews();
     vscode.postMessage({ command: 'clearAdviceLocalData' });

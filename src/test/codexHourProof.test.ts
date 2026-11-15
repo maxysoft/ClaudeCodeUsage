@@ -4,7 +4,6 @@ import * as assert from 'node:assert/strict';
 import {
   CODEX_UTC_HOUR_PROOF_VERSION,
   MAX_CODEX_HOURS_PER_FILE,
-  addCodexOutputHour,
   addCodexOutputHourInPlace,
   canonicalCodexOutputHours,
   sanitizeCodexHourProof,
@@ -13,18 +12,19 @@ import {
 const firstHour = Date.parse('2026-10-25T00:00:00.000Z') / 3_600_000;
 
 test('proof records only positive output in distinct absolute UTC hours', () => {
-  let hours: number[] = [];
+  const hours: number[] = [];
   for (const [timestamp, output] of [
     [Date.parse('2026-10-25T00:10:00.000Z'), 1],
     [Date.parse('2026-10-25T00:55:00.000Z'), 9],
     [Date.parse('2026-10-25T01:10:00.000Z'), 0],
     [Date.parse('2026-10-25T01:20:00.000Z'), 1],
   ]) {
-    hours = addCodexOutputHour(hours, timestamp, output)!;
+    addCodexOutputHourInPlace(hours, timestamp, output);
   }
   assert.deepEqual(hours, [firstHour, firstHour + 1]);
-  assert.deepEqual(addCodexOutputHour(hours, Number.NaN, 1), hours);
-  assert.deepEqual(addCodexOutputHour(hours, firstHour * 3_600_000, Number.NaN), hours);
+  addCodexOutputHourInPlace(hours, Number.NaN, 1);
+  addCodexOutputHourInPlace(hours, firstHour * 3_600_000, Number.NaN);
+  assert.deepEqual(hours, [firstHour, firstHour + 1]);
 });
 
 test('owned hour proof can grow in place without copying every historical hour', () => {

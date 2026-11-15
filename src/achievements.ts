@@ -12,7 +12,7 @@ import type { AchievementCalendarSignals, AchievementDayEvidence, AchievementTok
 import { codexCollaborationEvidence, AchievementCollaborationEvidence } from './achievementCollaboration';
 import { RECALIBRATED_ACHIEVEMENT_IDS_V2, isLegacyAchievementId } from './achievementRuleVersions';
 import { LONG_TERM_ACHIEVEMENT_DEFINITIONS, type LongTermAchievementId } from './achievementLongTerm';
-import { mondayOf, parseDayKey } from './dateKeys';
+import { parseDayKey } from './dateKeys';
 
 import { claudeAchievementFamily, codexModelFamily, normalizeCodexAchievementModel,
   type CodexModelFamily, type ClaudeModelFamily } from './achievementModels';
@@ -172,24 +172,6 @@ export function fableAchievementSignals(input: {
     outputSessions: input.sessionEvidence?.fableOutputSessions ?? outputSessionKeys.size,
     allOutputSessions: input.sessionEvidence?.outputSessions ?? allOutputSessionKeys.size,
   };
-}
-
-/** Legacy compatibility helper only; rule-v3 awards use achievementCalendarSignals rolling evidence. */
-export function peakCalendarWeekProcessed(
-  rows: Iterable<{ day: string; processed: number }>,
-  coverageComplete: boolean,
-): number {
-  if (!coverageComplete) return 0;
-  const weeks = new Map<string, number>();
-  for (const { day, processed } of rows) {
-    const timestamp = parseDayKey(day);
-    if (!Number.isFinite(timestamp) || !Number.isSafeInteger(processed) || processed < 0) continue;
-    const monday = new Date(mondayOf(timestamp)).toISOString().slice(0, 10);
-    weeks.set(monday, (weeks.get(monday) ?? 0) + processed);
-  }
-  let peak = 0;
-  for (const value of weeks.values()) if (Number.isSafeInteger(value)) peak = Math.max(peak, value);
-  return peak;
 }
 
 /** Do not turn ambiguous Codex day projections into activity milestones. */

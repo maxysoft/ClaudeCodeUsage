@@ -2,7 +2,6 @@ import { isAdviceIdentifier } from './contract';
 import {
   StoredComparablePair,
   parseStoredComparablePair,
-  toComparableTaskPairs,
 } from './comparisonPairing';
 import {
   AdviceComparisonResultEnvelope,
@@ -24,7 +23,6 @@ export type {
   StoredQualityPass,
   StoredTaskKind,
 } from './comparisonPairing';
-export { toComparableTaskPairs } from './comparisonPairing';
 
 /** Stable key: schema versions migrate in-place instead of changing the key. */
 export const ADVICE_LOCAL_STATE_KEY = 'ccu.adviceEffectiveness.localState';
@@ -691,33 +689,4 @@ export function appendAdviceComparisonResult(
         .slice(-MAX_PERSISTED_ADVICE_COMPARISON_RESULTS),
     },
   };
-}
-
-export interface AdviceRecommendationLineage {
-  provider: 'claude' | 'codex';
-  recommendationId: string;
-}
-
-/**
- * Select a stable recommendation lineage across advice instances. adviceId is
- * deliberately retained on every pair as an audit field, but is not part of
- * lineage identity because advice instances rotate with their observation day.
- * The downstream comparator remains responsible for rejecting mixed task,
- * model, effort, metric-version, rubric, or primary-metric cohorts.
- */
-export function selectStoredComparablePairLineage(
-  pairs: readonly StoredComparablePair[],
-  lineage: AdviceRecommendationLineage,
-): StoredComparablePair[] {
-  if (
-    (lineage.provider !== 'claude' && lineage.provider !== 'codex') ||
-    !isAdviceIdentifier(lineage.recommendationId)
-  ) {
-    return [];
-  }
-  return pairs.filter(
-    (pair) =>
-      pair.context.provider === lineage.provider &&
-      pair.recommendationId === lineage.recommendationId,
-  );
 }
